@@ -1,0 +1,8 @@
+# انسخ هذا الملف إلى .dev.vars للتطوير المحلي (لا تُودِعه في Git)
+# للإنتاج استخدم: wrangler secret put ANTHROPIC_API_KEY  و  wrangler secret put JWT_SECRET
+
+# مفتاح Claude API من https://console.anthropic.com
+ANTHROPIC_API_KEY = "sk-ant-..."
+
+# سرّ توقيع الجلسات (JWT) — سلسلة عشوائية طويلة
+JWT_SECRET = "استبدلني-بسلسلة-عشوائية-طويلة-وآمنة"
