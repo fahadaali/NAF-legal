@@ -1,0 +1,300 @@
+import { useEffect, useRef, useState } from 'react';
+import { api, Message, Attachment, streamChat } from '../lib/api';
+import { CONSULTATIONS, labelFor } from '../lib/consultations';
+import { renderMarkdown } from '../lib/markdown';
+
+interface Props {
+  conversationId: string | null;
+  onConversationChange: (id: string) => void;
+  onToggleSidebar: () => void;
+}
+
+interface UiMessage extends Message {
+  citations?: any[];
+  clarifying?: boolean;
+  streaming?: boolean;
+}
+
+export default function ChatView({ conversationId, onConversationChange, onToggleSidebar }: Props) {
+  const [convType, setConvType] = useState<string | null>(null);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [input, setInput] = useState('');
+  const [internet, setInternet] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const messagesEnd = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (conversationId) {
+      api.getConversation(conversationId).then((r) => {
+        setConvType(r.conversation.consultation_type);
+        setMessages(
+          r.messages.map((m) => {
+            let citations, clarifying;
+            try {
+              const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
+              citations = meta.citations;
+              clarifying = meta.clarifying;
+            } catch {}
+            return { ...m, citations, clarifying };
+          })
+        );
+        setAttachments(r.attachments);
+      });
+    } else {
+      setConvType(null);
+      setMessages([]);
+      setAttachments([]);
+    }
+  }, [conversationId]);
+
+  useEffect(() => {
+    messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const autoGrow = () => {
+    const el = textarea.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+    }
+  };
+
+  const startConsultation = async (type: string) => {
+    const conv = await api.createConversation(type);
+    setConvType(type);
+    onConversationChange(conv.id);
+  };
+
+  const doUpload = async (files: FileList | null) => {
+    if (!files?.length || !conversationId) return;
+    setUploading(true);
+    try {
+      for (const f of Array.from(files)) {
+        const r = await api.uploadFile(conversationId, f);
+        setAttachments((a) => [...a, { id: r.id, filename: r.filename, mime: r.mime, size: r.size, created_at: Date.now() }]);
+      }
+    } catch (e: any) {
+      alert(e.message ?? 'فشل رفع الملف');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const send = async () => {
+    if (!input.trim() || !conversationId || sending) return;
+    const text = input.trim();
+    setInput('');
+    if (textarea.current) textarea.current.style.height = 'auto';
+
+    const userMsg: UiMessage = { id: 'u' + Date.now(), role: 'user', content: text, created_at: Date.now() };
+    const asstMsg: UiMessage = { id: 'a' + Date.now(), role: 'assistant', content: '', created_at: Date.now(), streaming: true };
+    setMessages((m) => [...m, userMsg, asstMsg]);
+    setSending(true);
+    setSearching(false);
+
+    let acc = '';
+    let meta: any = {};
+    await streamChat(conversationId, text, internet, {
+      onMeta: (m) => {
+        meta = m;
+        if (m.messageId) asstMsg.id = m.messageId;
+      },
+      onSearch: () => setSearching(true),
+      onDelta: (t) => {
+        acc += t;
+        setSearching(false);
+        setMessages((msgs) => {
+          const copy = [...msgs];
+          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: true, citations: meta.citations, clarifying: meta.clarifying };
+          return copy;
+        });
+      },
+      onDone: () => {
+        setMessages((msgs) => {
+          const copy = [...msgs];
+          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: false, citations: meta.citations, clarifying: meta.clarifying };
+          return copy;
+        });
+        setSending(false);
+        setSearching(false);
+        onConversationChange(conversationId);
+      },
+      onError: (err) => {
+        setMessages((msgs) => {
+          const copy = [...msgs];
+          copy[copy.length - 1] = { ...asstMsg, content: `⚠️ ${err}`, streaming: false };
+          return copy;
+        });
+        setSending(false);
+        setSearching(false);
+      },
+    });
+  };
+
+  // ── شاشة اختيار النوع ──
+  if (!conversationId) {
+    const grouped = CONSULTATIONS.filter((c) => c.group === 'التقاضي');
+    const others = CONSULTATIONS.filter((c) => !c.group);
+    return (
+      <div className="picker">
+        <div className="picker-inner">
+          <h1>كيف يمكن لمستشار ناف مساعدتك اليوم؟</h1>
+          <p className="lead">اختر نوع الاستشارة لبدء محادثة جديدة. جميع المخرجات مسوّدات تخضع لمراجعة محامٍ.</p>
+
+          <div className="picker-group-title">⚖️ التقاضي</div>
+          <div className="cards">
+            {grouped.map((c) => (
+              <button key={c.type} className="card" onClick={() => startConsultation(c.type)}>
+                <div className="card-icon">{c.icon}</div>
+                <div className="card-title">{c.label}</div>
+                <div className="card-desc">{c.description}</div>
+              </button>
+            ))}
+          </div>
+
+          <div className="picker-group-title">خدمات أخرى</div>
+          <div className="cards">
+            {others.map((c) => (
+              <button key={c.type} className="card" onClick={() => startConsultation(c.type)}>
+                <div className="card-icon">{c.icon}</div>
+                <div className="card-title">{c.label}</div>
+                <div className="card-desc">{c.description}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── نافذة المحادثة ──
+  return (
+    <>
+      <div className="chat-header">
+        <button className="icon-btn" style={{ display: 'none' }} onClick={onToggleSidebar}>
+          ☰
+        </button>
+        <span className="ch-title">{messages.find((m) => m.role === 'user')?.content.slice(0, 50) ?? 'محادثة جديدة'}</span>
+        {convType && <span className="ch-badge">{labelFor(convType)}</span>}
+      </div>
+
+      <div className="messages">
+        <div className="messages-inner">
+          {messages.map((m) => (
+            <div key={m.id} className={`msg ${m.role}`}>
+              <div className="msg-avatar">{m.role === 'user' ? 'أنت' : 'ن'}</div>
+              <div className="msg-body">
+                <div className="msg-role">{m.role === 'user' ? 'أنت' : 'مستشار ناف'}</div>
+                <div className="msg-content">
+                  {m.streaming && !m.content ? (
+                    <div className="typing-dots">
+                      {searching && <span style={{ fontSize: 13, marginInlineEnd: 8 }}>🔎 يبحث في المصادر…</span>}
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                    </div>
+                  ) : (
+                    <div dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
+                  )}
+                  {m.clarifying && <div className="clarify-note">⏸ بانتظار توضيحك للمتابعة</div>}
+                  {m.citations && m.citations.length > 0 && (
+                    <div className="citations">
+                      <span>المصادر:</span>
+                      {m.citations.map((c: any, i: number) => (
+                        <span key={i} className="citation-chip">
+                          {c.title}
+                          {c.ref ? ` — ${c.ref}` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {m.role === 'assistant' && !m.streaming && m.content && !m.clarifying && (
+                  <div className="msg-actions">
+                    <a href={api.exportUrl(m.id, 'docx')} download>
+                      <button>⬇ تصدير Word</button>
+                    </a>
+                    <a href={api.exportUrl(m.id, 'txt')} download>
+                      <button>⬇ نص</button>
+                    </a>
+                    <button onClick={() => navigator.clipboard.writeText(m.content)}>نسخ</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={messagesEnd} />
+        </div>
+      </div>
+
+      <div className="composer">
+        <div className="composer-inner">
+          {attachments.length > 0 && (
+            <div className="attachments-row">
+              {attachments.map((a) => (
+                <span key={a.id} className="attach-chip">
+                  📎 {a.filename}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="composer-box">
+            <input
+              ref={fileInput}
+              type="file"
+              hidden
+              multiple
+              accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"
+              onChange={(e) => {
+                doUpload(e.target.files);
+                e.target.value = '';
+              }}
+            />
+            <button
+              className="icon-btn"
+              title="رفع ملف"
+              onClick={() => fileInput.current?.click()}
+              disabled={uploading}
+            >
+              {uploading ? <span className="spinner" /> : '📎'}
+            </button>
+            <button
+              className={`icon-btn ${internet ? 'on' : ''}`}
+              title="البحث في الإنترنت"
+              onClick={() => setInternet((v) => !v)}
+            >
+              🌐
+            </button>
+            <textarea
+              ref={textarea}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                autoGrow();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder="اكتب رسالتك… (Enter للإرسال، Shift+Enter لسطر جديد)"
+              rows={1}
+            />
+            <button className="send-btn" onClick={send} disabled={sending || !input.trim()}>
+              {sending ? <span className="spinner" /> : '➤'}
+            </button>
+          </div>
+          <div className="composer-hint">
+            {internet ? '🌐 البحث في الإنترنت مُفعَّل' : 'يعتمد الرد على قاعدة المعرفة النظامية'}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
