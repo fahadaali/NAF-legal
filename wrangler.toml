@@ -1,0 +1,62 @@
+name = "naf-legal"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# الواجهة الثابتة (Vite build) تُقدَّم عبر Workers Assets
+[assets]
+directory = "./web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# ── قاعدة البيانات D1 ──
+[[d1_databases]]
+binding = "DB"
+database_name = "naf_legal"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "migrations"
+
+# ── تخزين الملفات R2 ──
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "naf-legal-files"
+
+# ── البحث المتجهي Vectorize ──
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "naf-legal-kb"
+
+# ── الذكاء الاصطناعي للتضمينات Workers AI ──
+[ai]
+binding = "AI"
+
+# ── الجلسات وحدود المعدل KV ──
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_KV_ID"
+
+# ── المعالجة غير المتزامنة Queues ──
+[[queues.producers]]
+binding = "QUEUE"
+queue = "naf-legal-ingest"
+
+[[queues.consumers]]
+queue = "naf-legal-ingest"
+max_batch_size = 5
+max_retries = 3
+
+# ── المهام المجدولة (تتبّع الأنظمة) ──
+[triggers]
+crons = ["0 3 * * *"]
+
+[vars]
+# القيم غير السرّية فقط. الأسرار عبر: wrangler secret put
+APP_NAME = "مستشار ناف"
+PLANNER_MODEL = "claude-haiku-4-5-20251001"
+GENERATION_MODEL = "claude-sonnet-5"
+EMBEDDING_MODEL = "@cf/baai/bge-m3"
+DATA_REGION = "auto"
+
+# الأسرار المطلوبة (لا تُوضع هنا):
+#   ANTHROPIC_API_KEY  — مفتاح Claude API
+#   JWT_SECRET         — سرّ توقيع الجلسات

@@ -1,0 +1,57 @@
+// أنواع البيئة (bindings) والسياق المشترك
+
+export interface Env {
+  DB: D1Database;
+  R2: R2Bucket;
+  VECTORIZE: VectorizeIndex;
+  AI: Ai;
+  KV: KVNamespace;
+  QUEUE: Queue<IngestJob>;
+  ASSETS: Fetcher;
+  // vars
+  APP_NAME: string;
+  PLANNER_MODEL: string;
+  GENERATION_MODEL: string;
+  EMBEDDING_MODEL: string;
+  DATA_REGION: string;
+  // secrets
+  ANTHROPIC_API_KEY: string;
+  JWT_SECRET: string;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  role: 'user' | 'admin';
+  name?: string;
+}
+
+export type Variables = {
+  user: AuthUser;
+};
+
+export interface IngestJob {
+  kb_document_id: string;
+}
+
+// أنواع الاستشارات (§4)
+export type ConsultationType =
+  | 'litigation.statement_of_claim'
+  | 'litigation.reply_memo'
+  | 'litigation.objection'
+  | 'litigation.judgment_analysis'
+  | 'contract'
+  | 'policy'
+  | 'consultation';
+
+export interface PlannerOutput {
+  consultation_type: ConsultationType;
+  needs_knowledge_base: boolean;
+  kb_queries: string[];
+  needs_internet_search: boolean;
+  internet_queries: string[];
+  needs_uploaded_files: boolean;
+  target_regulations: string[];
+  clarifying_questions: string[];
+  output_format: 'text' | 'docx';
+}
