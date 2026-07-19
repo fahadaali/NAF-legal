@@ -6,28 +6,45 @@ interface Props {
   user: User;
   open: boolean;
   activeConv: string | null;
-  view: 'chat' | 'admin';
+  view: 'chat' | 'admin' | 'tools';
   refreshKey: number;
   onSelectConv: (id: string) => void;
   onNewChat: () => void;
   onOpenAdmin: () => void;
+  onOpenTools: () => void;
   onLogout: () => void;
 }
 
 export default function Sidebar(props: Props) {
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [search, setSearch] = useState('');
+  const [searchMode, setSearchMode] = useState<string>('');
 
-  const load = (q?: string) => {
-    api.listConversations(q).then((r) => setConvs(r.conversations)).catch(() => {});
+  const load = () => {
+    api.listConversations().then((r) => setConvs(r.conversations)).catch(() => {});
   };
 
   useEffect(() => {
-    load();
+    if (!search) { setSearchMode(''); load(); }
   }, [props.refreshKey]);
 
   useEffect(() => {
-    const t = setTimeout(() => load(search || undefined), 250);
+    if (!search) { setSearchMode(''); load(); return; }
+    const t = setTimeout(() => {
+      // بحث دلالي في سجل المحادثات مع رجوع نصّي (§3)
+      api.search(search).then((r) => {
+        setSearchMode(r.mode);
+        setConvs(
+          r.results.map((x: any) => ({
+            id: x.conversationId ?? x.id,
+            title: x.title,
+            consultation_type: null,
+            created_at: 0,
+            updated_at: 0,
+          }))
+        );
+      }).catch(() => {});
+    }, 350);
     return () => clearTimeout(t);
   }, [search]);
 
@@ -35,7 +52,7 @@ export default function Sidebar(props: Props) {
     e.stopPropagation();
     if (!confirm('حذف هذه المحادثة؟')) return;
     await api.deleteConversation(id);
-    load(search || undefined);
+    load();
     if (props.activeConv === id) props.onNewChat();
   };
 
@@ -58,8 +75,11 @@ export default function Sidebar(props: Props) {
       </button>
 
       <div className="search-box">
-        <input placeholder="بحث في المحادثات…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input placeholder="بحث دلالي في محادثاتك…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        {searchMode === 'semantic' && <div className="search-mode">🔎 بحث دلالي</div>}
       </div>
+
+      <button className="tools-link" onClick={props.onOpenTools}>🧰 الأدوات القانونية</button>
 
       <div className="conv-list">
         {convs.length === 0 && <div className="empty-state" style={{ fontSize: 13 }}>لا توجد محادثات بعد</div>}

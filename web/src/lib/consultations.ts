@@ -54,6 +54,12 @@ export const CONSULTATIONS: ConsultationOption[] = [
     description: 'رأي قانوني مسبَّب مع الإسناد لمواد نظامية محدّدة.',
     icon: '💬',
   },
+  {
+    type: 'document_review',
+    label: 'مراجعة وتدقيق مستند',
+    description: 'رفع عقد/مذكرة والحصول على تحليل مخاطر بندًا ببند مع مقترحات.',
+    icon: '🔎',
+  },
 ];
 
 export function labelFor(type: string | null | undefined): string {

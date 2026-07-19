@@ -63,8 +63,8 @@ app.post('/upload/:conversationId', async (c) => {
   });
 });
 
-// تصدير رسالة إلى Word أو نص
-app.post('/export/:messageId', async (c) => {
+// تصدير رسالة إلى Word أو نص (GET ليعمل مع روابط التنزيل المباشرة)
+app.get('/export/:messageId', async (c) => {
   const user = c.get('user');
   const messageId = c.req.param('messageId');
   const format = c.req.query('format') === 'txt' ? 'txt' : 'docx';

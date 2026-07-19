@@ -13,6 +13,7 @@ interface UiMessage extends Message {
   citations?: any[];
   clarifying?: boolean;
   streaming?: boolean;
+  verification?: { verified: boolean; unsupported: string[]; note: string } | null;
 }
 
 export default function ChatView({ conversationId, onConversationChange, onToggleSidebar }: Props) {
@@ -21,12 +22,16 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [input, setInput] = useState('');
   const [internet, setInternet] = useState(false);
+  const [bilingual, setBilingual] = useState(false);
   const [sending, setSending] = useState(false);
   const [searching, setSearching] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
   const messagesEnd = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<Blob[]>([]);
 
   useEffect(() => {
     if (conversationId) {
@@ -34,13 +39,14 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
         setConvType(r.conversation.consultation_type);
         setMessages(
           r.messages.map((m) => {
-            let citations, clarifying;
+            let citations, clarifying, verification;
             try {
               const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
               citations = meta.citations;
               clarifying = meta.clarifying;
+              verification = meta.verification;
             } catch {}
-            return { ...m, citations, clarifying };
+            return { ...m, citations, clarifying, verification };
           })
         );
         setAttachments(r.attachments);
@@ -99,12 +105,16 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
 
     let acc = '';
     let meta: any = {};
-    await streamChat(conversationId, text, internet, {
+    let verification: any = null;
+    await streamChat(conversationId, text, internet, bilingual, {
       onMeta: (m) => {
         meta = m;
         if (m.messageId) asstMsg.id = m.messageId;
       },
       onSearch: () => setSearching(true),
+      onVerify: (v) => {
+        verification = v;
+      },
       onDelta: (t) => {
         acc += t;
         setSearching(false);
@@ -117,7 +127,7 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
       onDone: () => {
         setMessages((msgs) => {
           const copy = [...msgs];
-          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: false, citations: meta.citations, clarifying: meta.clarifying };
+          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: false, citations: meta.citations, clarifying: meta.clarifying, verification };
           return copy;
         });
         setSending(false);
@@ -134,6 +144,69 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
         setSearching(false);
       },
     });
+  };
+
+  // تسجيل صوتي للوقائع ثم تفريغه عربيًا (§3)
+  const toggleRecording = async () => {
+    if (recording) {
+      recorder.current?.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunks.current = [];
+      mr.ondataavailable = (e) => chunks.current.push(e.data);
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        const blob = new Blob(chunks.current, { type: 'audio/webm' });
+        try {
+          const r = await api.transcribe(blob);
+          if (r.text) setInput((v) => (v ? v + ' ' : '') + r.text);
+        } catch (e: any) {
+          alert(e.message ?? 'تعذّر التفريغ الصوتي');
+        }
+      };
+      mr.start();
+      recorder.current = mr;
+      setRecording(true);
+    } catch {
+      alert('تعذّر الوصول للميكروفون');
+    }
+  };
+
+  // تصدير PDF عبر طباعة المتصفّح (يدعم العربية أصلًا) (§4)
+  const exportPdf = (m: UiMessage) => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>مستشار ناف</title>
+      <style>body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.9;padding:40px;max-width:800px;margin:auto}
+      h1,h2,h3{color:#0f766e}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:6px}
+      .disc{margin-top:40px;font-size:12px;color:#888;border-top:1px solid #ddd;padding-top:10px}</style></head>
+      <body>${renderMarkdown(m.content)}<div class="disc">هذا المحتوى مسودّة مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.</div>
+      <script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.close();
+  };
+
+  // مشاركة المسودّة مع محامٍ للمراجعة (§3)
+  const shareDraft = async (m: UiMessage) => {
+    const label = prompt('اسم/صفة المراجِع (اختياري):') ?? undefined;
+    try {
+      const r = await api.createShare(m.id, label);
+      const url = `${location.origin}${r.url}`;
+      await navigator.clipboard.writeText(url).catch(() => {});
+      alert(`تم إنشاء رابط المراجعة ونسخه:\n${url}`);
+    } catch (e: any) {
+      alert(e.message ?? 'تعذّر إنشاء الرابط');
+    }
+  };
+
+  const sendFeedback = async (m: UiMessage, rating: number) => {
+    try {
+      await api.sendFeedback(m.id, rating);
+      alert(rating === 1 ? 'شكرًا لتقييمك 👍' : 'شكرًا، سنعمل على التحسين 👎');
+    } catch {}
   };
 
   // ── شاشة اختيار النوع ──
@@ -202,6 +275,13 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
                     <div dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
                   )}
                   {m.clarifying && <div className="clarify-note">⏸ بانتظار توضيحك للمتابعة</div>}
+                  {m.verification && !m.streaming && (
+                    <div className={`verify-badge ${m.verification.verified ? 'ok' : 'warn'}`}>
+                      {m.verification.verified
+                        ? '✓ تحقّق الإسناد: كل المواد المذكورة مسنودة في قاعدة المعرفة'
+                        : `⚠ مواد بحاجة لتأكيد يدوي: ${m.verification.unsupported.join('، ')}`}
+                    </div>
+                  )}
                   {m.citations && m.citations.length > 0 && (
                     <div className="citations">
                       <span>المصادر:</span>
@@ -217,12 +297,16 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
                 {m.role === 'assistant' && !m.streaming && m.content && !m.clarifying && (
                   <div className="msg-actions">
                     <a href={api.exportUrl(m.id, 'docx')} download>
-                      <button>⬇ تصدير Word</button>
+                      <button>⬇ Word</button>
                     </a>
+                    <button onClick={() => exportPdf(m)}>⬇ PDF</button>
                     <a href={api.exportUrl(m.id, 'txt')} download>
                       <button>⬇ نص</button>
                     </a>
                     <button onClick={() => navigator.clipboard.writeText(m.content)}>نسخ</button>
+                    <button onClick={() => shareDraft(m)}>🔗 مشاركة للمراجعة</button>
+                    <button onClick={() => sendFeedback(m, 1)} title="مفيد">👍</button>
+                    <button onClick={() => sendFeedback(m, -1)} title="يحتاج تحسين">👎</button>
                   </div>
                 )}
               </div>
@@ -269,6 +353,20 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
               onClick={() => setInternet((v) => !v)}
             >
               🌐
+            </button>
+            <button
+              className={`icon-btn ${recording ? 'on rec' : ''}`}
+              title="إدخال صوتي (تفريغ عربي)"
+              onClick={toggleRecording}
+            >
+              {recording ? '⏹' : '🎙'}
+            </button>
+            <button
+              className={`icon-btn ${bilingual ? 'on' : ''}`}
+              title="مخرَج ثنائي اللغة (عربي/إنجليزي)"
+              onClick={() => setBilingual((v) => !v)}
+            >
+              ع/EN
             </button>
             <textarea
               ref={textarea}

@@ -4,11 +4,17 @@ import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import Admin from './components/Admin';
+import Tools from './components/Tools';
+import ReviewPage from './components/ReviewPage';
 
 export default function App() {
+  // مسار المراجعة العامة (بلا مصادقة)
+  const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
+  if (reviewMatch) return <ReviewPage token={reviewMatch[1]} />;
+
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'chat' | 'admin'>('chat');
+  const [view, setView] = useState<'chat' | 'admin' | 'tools'>('chat');
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -43,7 +49,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <div className="main">
-        {view === 'chat' ? (
+        {view === 'chat' && (
           <ChatView
             key={activeConv ?? 'new'}
             conversationId={activeConv}
@@ -53,9 +59,9 @@ export default function App() {
             }}
             onToggleSidebar={() => setSidebarOpen((o) => !o)}
           />
-        ) : (
-          <Admin />
         )}
+        {view === 'admin' && <Admin />}
+        {view === 'tools' && <Tools />}
         <div className="disclaimer-bar">
           كل مخرجات المنصّة مسوّدات مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.
         </div>
@@ -78,6 +84,7 @@ export default function App() {
           setSidebarOpen(false);
         }}
         onOpenAdmin={() => setView('admin')}
+        onOpenTools={() => setView('tools')}
         onLogout={handleLogout}
       />
     </div>
