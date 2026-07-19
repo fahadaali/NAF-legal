@@ -1,5 +1,6 @@
 // المُخطِّط (Planner) — §5: يحلّل رسالة المستخدم وينتج خطة JSON
 import { callClaude } from './claude';
+import { logUsage, usageFromRaw } from './usage';
 import type { Env, PlannerOutput, ConsultationType } from '../types';
 
 const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشارات قانونية سعودية. مهمّتك تحليل رسالة المستخدم ونوع الاستشارة المختار، وإنتاج خطة تنفيذ بصيغة JSON فقط دون أي نص إضافي.
@@ -28,7 +29,8 @@ export async function runPlanner(
   userMessage: string,
   selectedType: string | undefined,
   hasAttachments: boolean,
-  forceInternet: boolean
+  forceInternet: boolean,
+  userId?: string
 ): Promise<PlannerOutput> {
   const context = `نوع الاستشارة المختار: ${selectedType ?? 'غير محدّد'}
 هل رفع المستخدم ملفات؟ ${hasAttachments ? 'نعم' : 'لا'}
@@ -38,13 +40,14 @@ export async function runPlanner(
 ${userMessage}`;
 
   try {
-    const { text } = await callClaude(env, {
+    const { text, raw } = await callClaude(env, {
       model: env.PLANNER_MODEL,
       system: PLANNER_SYSTEM,
       messages: [{ role: 'user', content: context }],
       max_tokens: 1024,
       temperature: 0,
     });
+    await logUsage(env, { userId, kind: 'planner', model: env.PLANNER_MODEL, ...usageFromRaw(raw) });
     const plan = extractJson(text);
     return normalize(plan, selectedType, hasAttachments, forceInternet);
   } catch (e) {

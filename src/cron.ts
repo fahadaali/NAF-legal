@@ -48,6 +48,45 @@ export async function runTrackingScan(env: Env): Promise<ScanResult> {
   return { checked: docs.results?.length ?? 0, flagged, new_suggested: 0 };
 }
 
+// ── خلاصة أخبار جريدة أم القرى: أنظمة جديدة/تعديلات (§5) ──
+export async function runNewsDigest(env: Env): Promise<{ found: number }> {
+  const system = `أنت راصد تشريعي. ابحث في جريدة أم القرى الرسمية عن أحدث ما نُشر من أنظمة جديدة أو تعديلات نظامية.
+أعِد JSON فقط: {"items":[{"title":"...","summary":"...","url":"...","published":"...","kind":"new_regulation|amendment|other"}]}
+اقتصر على ما هو نظامي فعلًا، وبحدّ أقصى 10 عناصر.`;
+
+  try {
+    const { text } = await callClaude(env, {
+      model: env.PLANNER_MODEL,
+      system,
+      messages: [{ role: 'user', content: 'ما أحدث الأنظمة والتعديلات المنشورة في جريدة أم القرى؟' }],
+      tools: [webSearchTool(['uqn.gov.sa'])],
+      max_tokens: 2000,
+      temperature: 0,
+    });
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { found: 0 };
+    const parsed = JSON.parse(m[0]);
+    const items: any[] = Array.isArray(parsed.items) ? parsed.items : [];
+    let found = 0;
+    for (const it of items.slice(0, 10)) {
+      if (!it.title) continue;
+      // تجنّب التكرار حسب العنوان
+      const exists = await env.DB.prepare('SELECT id FROM news_digest WHERE title = ?').bind(it.title).first();
+      if (exists) continue;
+      await env.DB.prepare(
+        'INSERT INTO news_digest (id, title, summary, url, published, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+        .bind(crypto.randomUUID(), it.title, it.summary ?? null, it.url ?? null, it.published ?? null, it.kind ?? 'other', Date.now())
+        .run();
+      found++;
+    }
+    return { found };
+  } catch (e) {
+    console.error('فشل خلاصة الأخبار:', e);
+    return { found: 0 };
+  }
+}
+
 // يسأل Claude مع بحث مقيّد بالمصادر الرسمية
 async function checkRegulation(env: Env, title: string): Promise<{ changed: boolean; summary: string }> {
   const system = `أنت مراقب تشريعات سعودي. باستخدام البحث في المصادر الرسمية فقط، تحقّق مما إذا صدر تعديل حديث على النظام المذكور خلال الفترة الأخيرة.

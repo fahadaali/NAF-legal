@@ -2,11 +2,18 @@
 // ننشئ حاوية ZIP بإدخالات مخزَّنة (بدون ضغط) مع CRC32.
 import { DISCLAIMER } from './prompts';
 
-export function buildDocx(title: string, markdown: string): Uint8Array {
+export interface Letterhead {
+  bytes: Uint8Array;
+  ext: 'png' | 'jpeg';
+}
+
+export function buildDocx(title: string, markdown: string, letterhead?: Letterhead): Uint8Array {
   const body = markdownToDocXml(markdown);
+  const banner = letterhead ? letterheadPara() : '';
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
 <w:body>
+${banner}
 ${headingPara(title, 32, true)}
 ${body}
 ${dividerPara()}
@@ -15,11 +22,16 @@ ${para(DISCLAIMER, { size: 18, italic: true, color: '888888' })}
 </w:body>
 </w:document>`;
 
-  const files: Record<string, string> = {
+  const ctExtra = letterhead
+    ? `<Default Extension="${letterhead.ext === 'jpeg' ? 'jpeg' : 'png'}" ContentType="image/${letterhead.ext}"/>`
+    : '';
+
+  const files: Record<string, string | Uint8Array> = {
     '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
+${ctExtra}
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 </Types>`,
     '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -29,7 +41,31 @@ ${para(DISCLAIMER, { size: 18, italic: true, color: '888888' })}
     'word/document.xml': documentXml,
   };
 
+  if (letterhead) {
+    const imgName = `image1.${letterhead.ext === 'jpeg' ? 'jpeg' : 'png'}`;
+    files[`word/media/${imgName}`] = letterhead.bytes;
+    files['word/_rels/document.xml.rels'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rIdImg1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${imgName}"/>
+</Relationships>`;
+  }
+
   return zip(files);
+}
+
+// فقرة تحتوي صورة الرأسية بعرض المحتوى (~6.3 بوصة) وارتفاع ~1.3 بوصة
+function letterheadPara(): string {
+  const cx = 5760720; // العرض بوحدة EMU
+  const cy = 1188720; // الارتفاع
+  return `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>
+<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>
+<wp:docPr id="1" name="letterhead"/>
+<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="letterhead"/><pic:cNvPicPr/></pic:nvPicPr>
+<pic:blipFill><a:blip r:embed="rIdImg1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>
+<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>
+</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
 }
 
 // ── تحويل Markdown مبسّط إلى فقرات WordML ──
@@ -110,7 +146,7 @@ function esc(s: string): string {
 }
 
 // ── كاتب ZIP (إدخالات مخزَّنة) مع CRC32 ──
-function zip(files: Record<string, string>): Uint8Array {
+function zip(files: Record<string, string | Uint8Array>): Uint8Array {
   const enc = new TextEncoder();
   const chunks: Uint8Array[] = [];
   const central: Uint8Array[] = [];
@@ -118,7 +154,7 @@ function zip(files: Record<string, string>): Uint8Array {
 
   for (const [name, content] of Object.entries(files)) {
     const nameBytes = enc.encode(name);
-    const data = enc.encode(content);
+    const data = typeof content === 'string' ? enc.encode(content) : content;
     const crc = crc32(data);
     const local = new Uint8Array(30 + nameBytes.length);
     const lv = new DataView(local.buffer);

@@ -4,6 +4,7 @@ export interface Env {
   DB: D1Database;
   R2: R2Bucket;
   VECTORIZE: VectorizeIndex;
+  CONV_VECTORIZE: VectorizeIndex;
   AI: Ai;
   KV: KVNamespace;
   QUEUE: Queue<IngestJob>;
@@ -42,7 +43,8 @@ export type ConsultationType =
   | 'litigation.judgment_analysis'
   | 'contract'
   | 'policy'
-  | 'consultation';
+  | 'consultation'
+  | 'document_review';
 
 export interface PlannerOutput {
   consultation_type: ConsultationType;

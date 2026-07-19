@@ -8,8 +8,13 @@ import chatRoutes from './routes/chat';
 import fileRoutes from './routes/files';
 import kbRoutes from './routes/kb';
 import adminRoutes from './routes/admin';
+import toolsRoutes from './routes/tools';
+import feedbackRoutes from './routes/feedback';
+import foldersRoutes from './routes/folders';
+import sharesRoutes from './routes/shares';
+import searchRoutes from './routes/search';
 import { handleIngest } from './ingest';
-import { runTrackingScan } from './cron';
+import { runTrackingScan, runNewsDigest } from './cron';
 import { verifyJwt } from './lib/crypto';
 import { SESSION_COOKIE } from './lib/auth';
 import type { Env, Variables, IngestJob } from './types';
@@ -42,6 +47,11 @@ app.route('/api/chat', chatRoutes);
 app.route('/api/files', fileRoutes);
 app.route('/api/kb', kbRoutes);
 app.route('/api/admin', adminRoutes);
+app.route('/api/tools', toolsRoutes);
+app.route('/api/feedback', feedbackRoutes);
+app.route('/api/folders', foldersRoutes);
+app.route('/api/shares', sharesRoutes);
+app.route('/api/search', searchRoutes);
 
 // أي مسار /api غير معروف
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));
@@ -59,6 +69,6 @@ export default {
 
   // Cron لتتبّع الأنظمة — §7
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runTrackingScan(env).then(() => {}));
+    ctx.waitUntil(Promise.all([runTrackingScan(env), runNewsDigest(env)]).then(() => {}));
   },
 };

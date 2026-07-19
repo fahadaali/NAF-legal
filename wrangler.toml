@@ -26,6 +26,11 @@ bucket_name = "naf-legal-files"
 binding = "VECTORIZE"
 index_name = "naf-legal-kb"
 
+# فهرس متجهي لبحث سجل المحادثات الدلالي (§3)
+[[vectorize]]
+binding = "CONV_VECTORIZE"
+index_name = "naf-legal-conv"
+
 # ── الذكاء الاصطناعي للتضمينات Workers AI ──
 [ai]
 binding = "AI"

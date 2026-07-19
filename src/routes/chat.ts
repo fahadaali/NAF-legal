@@ -3,9 +3,11 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
-import { retrieve, formatRagContext } from '../lib/rag';
+import { retrieve, formatRagContext, indexConversationMessage } from '../lib/rag';
 import { streamClaude, webSearchTool, OFFICIAL_DOMAINS } from '../lib/claude';
-import { systemPromptFor, DISCLAIMER } from '../lib/prompts';
+import { systemPromptFor, DISCLAIMER, BILINGUAL_INSTRUCTION } from '../lib/prompts';
+import { verifyGrounding } from '../lib/verify';
+import { logUsage } from '../lib/usage';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -15,7 +17,7 @@ app.use('*', requireAuth);
 app.post('/:conversationId', async (c) => {
   const user = c.get('user');
   const conversationId = c.req.param('conversationId');
-  const { message, force_internet } = await c.req.json().catch(() => ({}));
+  const { message, force_internet, bilingual } = await c.req.json().catch(() => ({}));
   if (!message?.trim()) return c.json({ error: 'الرسالة فارغة' }, 400);
 
   // تحقّق الملكية
@@ -50,7 +52,7 @@ app.post('/:conversationId', async (c) => {
     .all<{ role: string; content: string }>();
 
   // [1] المُخطِّط
-  const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet);
+  const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet, user.id);
 
   // حالة الاستيضاح: أوقف التوليد واطرح الأسئلة (§3, §5)
   if (plan.clarifying_questions.length > 0) {
@@ -81,7 +83,8 @@ app.post('/:conversationId', async (c) => {
   }
 
   // [3] تجميع البرومبت
-  const system = systemPromptFor(plan.consultation_type);
+  let system = systemPromptFor(plan.consultation_type);
+  if (bilingual) system += BILINGUAL_INSTRUCTION;
   const attachmentsBlock = hasAttachments
     ? '\n\n<الملفات_المرفوعة>\n' +
       atts.results!.map((a) => `— ${a.filename}:\n${(a.parsed_text ?? '').slice(0, 12000)}`).join('\n\n') +
@@ -119,8 +122,11 @@ app.post('/:conversationId', async (c) => {
   // نلتقط النص كاملًا أثناء التدفّق لنخزّنه في النهاية
   const asstId = uuid();
   let fullText = '';
+  let inputTokens = 0;
+  let outputTokens = 0;
   const encoder = new TextEncoder();
   const env = c.env;
+  const userId = user.id;
 
   const outStream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -145,8 +151,23 @@ app.post('/:conversationId', async (c) => {
             try {
               fullText += JSON.parse(dataLine.slice(6)).text ?? '';
             } catch {}
+          } else if (dataLine && p.includes('event: usage')) {
+            try {
+              const u = JSON.parse(dataLine.slice(6));
+              if (u.input_tokens) inputTokens = u.input_tokens;
+              if (u.output_tokens) outputTokens = u.output_tokens;
+            } catch {}
           }
         }
+      }
+
+      // [5] طبقة التحقّق بعد التوليد (الاقتباس المُتحقَّق منه) — §2
+      let verification = null;
+      try {
+        verification = await verifyGrounding(env, userId, fullText, ragContext, plan.consultation_type);
+      } catch {}
+      if (verification) {
+        controller.enqueue(encoder.encode(`event: verify\ndata: ${JSON.stringify(verification)}\n\n`));
       }
 
       // خزّن رد المساعد
@@ -159,12 +180,30 @@ app.post('/:conversationId', async (c) => {
             conversationId,
             'assistant',
             fullText,
-            JSON.stringify({ plan, citations, output_format: plan.output_format }),
+            JSON.stringify({ plan, citations, output_format: plan.output_format, verification }),
             Date.now()
           )
           .run();
         await touchConversation(env, conversationId, message, conv.title);
+        // لقطة أولى في سجل النُسخ
+        await env.DB.prepare(
+          'INSERT INTO draft_versions (id, message_id, version, content, note, created_at) VALUES (?, ?, 1, ?, ?, ?)'
+        )
+          .bind(uuid(), asstId, fullText, 'النسخة الأولى المولَّدة', Date.now())
+          .run()
+          .catch(() => {});
+        // فهرسة دلالية للرسالتين (§3) — best-effort
+        await indexConversationMessage(env, { messageId: userMsgId, conversationId, userId, role: 'user', content: message, title: conv.title });
+        await indexConversationMessage(env, { messageId: asstId, conversationId, userId, role: 'assistant', content: fullText, title: conv.title });
       }
+      await logUsage(env, {
+        userId,
+        kind: 'generation',
+        model: env.GENERATION_MODEL,
+        inputTokens,
+        outputTokens,
+        consultationType: plan.consultation_type,
+      });
       controller.close();
     },
   });

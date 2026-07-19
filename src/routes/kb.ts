@@ -99,6 +99,72 @@ app.delete('/documents/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── إصدارات الأنظمة (§5): رفع نسخة جديدة مع حفظ القديمة ──
+app.get('/documents/:id/versions', async (c) => {
+  const id = c.req.param('id');
+  const rows = await c.env.DB.prepare(
+    'SELECT id, version, effective_from, effective_to, note, created_at FROM kb_document_versions WHERE kb_document_id = ? ORDER BY version DESC'
+  )
+    .bind(id)
+    .all();
+  return c.json({ versions: rows.results });
+});
+
+app.post('/documents/:id/versions', async (c) => {
+  const id = c.req.param('id');
+  const doc = await c.env.DB.prepare('SELECT title, version FROM kb_documents WHERE id = ?')
+    .bind(id)
+    .first<{ title: string; version: number }>();
+  if (!doc) return c.json({ error: 'غير موجودة' }, 404);
+
+  const form = await c.req.formData();
+  const file = form.get('file');
+  const effectiveFrom = form.get('effective_from')?.toString() ?? null;
+  const note = form.get('note')?.toString() ?? null;
+  if (!(file instanceof File)) return c.json({ error: 'لم يُرفَق ملف النسخة الجديدة' }, 400);
+
+  // 1) احفظ النص الحالي كنسخة سابقة (effective_to = الآن)
+  const oldText = await c.env.R2.get(`kb-text/${id}.txt`);
+  const now = Date.now();
+  const oldVersion = doc.version ?? 1;
+  if (oldText) {
+    const oldKey = `kb-text/${id}.v${oldVersion}.txt`;
+    await c.env.R2.put(oldKey, await oldText.text());
+    await c.env.DB.prepare(
+      `INSERT INTO kb_document_versions (id, kb_document_id, version, text_r2_key, effective_to, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(uuid(), id, oldVersion, oldKey, new Date(now).toISOString().slice(0, 10), 'أُرشِفت عند رفع نسخة أحدث', now)
+      .run();
+  }
+
+  // 2) استخرج نص النسخة الجديدة وخزّنه، وبمّط رقم الإصدار
+  const buf = await file.arrayBuffer();
+  const r2Key = `kb/${id}-v${oldVersion + 1}-${file.name.replace(/[^\w.\-؀-ۿ]/g, '_')}`;
+  await c.env.R2.put(r2Key, buf, { httpMetadata: { contentType: file.type } });
+  let text = '';
+  try {
+    text = await extractText(c.env, buf, file.type, file.name);
+  } catch {}
+  await c.env.R2.put(`kb-text/${id}.txt`, text);
+
+  await c.env.DB.prepare(
+    "UPDATE kb_documents SET version = ?, r2_key = ?, ingest_status = 'pending', needs_update = 0, last_verified = ? WHERE id = ?"
+  )
+    .bind(oldVersion + 1, r2Key, now, id)
+    .run();
+  await c.env.DB.prepare(
+    `INSERT INTO kb_document_versions (id, kb_document_id, version, text_r2_key, effective_from, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(uuid(), id, oldVersion + 1, `kb-text/${id}.txt`, effectiveFrom, note ?? 'النسخة السارية', now)
+    .run();
+
+  await c.env.QUEUE.send({ kb_document_id: id });
+  await audit(c, 'kb.new_version', id, { version: oldVersion + 1 });
+  return c.json({ ok: true, version: oldVersion + 1 });
+});
+
 // إعادة تصنيف/إعادة تضمين
 app.post('/documents/:id/reingest', async (c) => {
   const id = c.req.param('id');

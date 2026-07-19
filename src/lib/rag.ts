@@ -78,6 +78,55 @@ export async function retrieve(env: Env, queries: string[], topK = 5): Promise<R
     .slice(0, topK);
 }
 
+// ── بحث المحادثات الدلالي (§3) ──
+export async function indexConversationMessage(
+  env: Env,
+  opts: { messageId: string; conversationId: string; userId: string; role: string; content: string; title: string }
+): Promise<void> {
+  try {
+    const vec = await embed(env, opts.content.slice(0, 2000));
+    await env.CONV_VECTORIZE.upsert([
+      {
+        id: opts.messageId,
+        values: vec,
+        metadata: {
+          user_id: opts.userId,
+          conversation_id: opts.conversationId,
+          role: opts.role,
+          title: opts.title,
+          snippet: opts.content.slice(0, 300),
+        },
+      },
+    ]);
+  } catch {
+    // Vectorize/AI غير متاح محليًا — يُتجاهل بلا إفشال
+  }
+}
+
+export interface ConvSearchHit {
+  conversationId: string;
+  title: string;
+  snippet: string;
+  score: number;
+}
+
+export async function searchConversations(env: Env, userId: string, query: string, topK = 10): Promise<ConvSearchHit[] | null> {
+  try {
+    const vec = await embed(env, query);
+    const res = await env.CONV_VECTORIZE.query(vec, {
+      topK,
+      returnMetadata: 'all',
+      filter: { user_id: userId },
+    });
+    return (res.matches ?? []).map((m) => {
+      const meta = (m.metadata ?? {}) as any;
+      return { conversationId: meta.conversation_id ?? '', title: meta.title ?? '', snippet: meta.snippet ?? '', score: m.score };
+    });
+  } catch {
+    return null; // إشارة للرجوع إلى البحث النصّي
+  }
+}
+
 // تنسيق سياق RAG لإدراجه في البرومبت مع الإسناد
 export function formatRagContext(results: RagResult[]): string {
   if (!results.length) return '';

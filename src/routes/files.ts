@@ -91,7 +91,20 @@ app.post('/export/:messageId', async (c) => {
     });
   }
 
-  const docx = buildDocx(title, msg.content);
+  // رأسية الشركة إن رُفعت (§2 قوالب)
+  let letterhead;
+  try {
+    const lhMime = await c.env.DB.prepare("SELECT value FROM app_settings WHERE key = 'letterhead_mime'").first<{ value: string }>();
+    if (lhMime?.value) {
+      const obj = await c.env.R2.get('settings/letterhead');
+      if (obj) {
+        const ext = lhMime.value.includes('jp') ? 'jpeg' : 'png';
+        letterhead = { bytes: new Uint8Array(await obj.arrayBuffer()), ext: ext as 'png' | 'jpeg' };
+      }
+    }
+  } catch {}
+
+  const docx = buildDocx(title, msg.content, letterhead);
   const r2Key = `exports/${user.id}/${messageId}.docx`;
   await c.env.R2.put(r2Key, docx, {
     httpMetadata: { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },

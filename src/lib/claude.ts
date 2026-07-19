@@ -108,6 +108,10 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<R
             controller.enqueue(encoder.encode(`event: delta\ndata: ${JSON.stringify({ text: parsed.delta.text })}\n\n`));
           } else if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'web_search_tool_result') {
             controller.enqueue(encoder.encode(`event: search\ndata: ${JSON.stringify({ active: true })}\n\n`));
+          } else if (parsed.type === 'message_start' && parsed.message?.usage) {
+            controller.enqueue(encoder.encode(`event: usage\ndata: ${JSON.stringify({ input_tokens: parsed.message.usage.input_tokens ?? 0 })}\n\n`));
+          } else if (parsed.type === 'message_delta' && parsed.usage) {
+            controller.enqueue(encoder.encode(`event: usage\ndata: ${JSON.stringify({ output_tokens: parsed.usage.output_tokens ?? 0 })}\n\n`));
           }
         } catch {
           // تجاهل الأحداث غير القابلة للتحليل
