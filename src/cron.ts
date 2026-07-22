@@ -48,35 +48,29 @@ export async function runTrackingScan(env: Env): Promise<ScanResult> {
   return { checked: docs.results?.length ?? 0, flagged, new_suggested: 0 };
 }
 
-// ── خلاصة أخبار جريدة أم القرى: أنظمة جديدة/تعديلات (§5) ──
-export async function runNewsDigest(env: Env): Promise<{ found: number }> {
-  const system = `أنت راصد تشريعي. ابحث في جريدة أم القرى الرسمية عن أحدث ما نُشر من أنظمة جديدة أو تعديلات نظامية.
-أعِد JSON فقط: {"items":[{"title":"...","summary":"...","url":"...","published":"...","kind":"new_regulation|amendment|other"}]}
-اقتصر على ما هو نظامي فعلًا، وبحدّ أقصى 10 عناصر.`;
+// ── خلاصة أخبار جريدة أم القرى عبر خلاصة RSS الرسمية (§5) ──
+const UQN_RSS_URL = 'https://www.uqn.gov.sa/rssFeed/21';
 
+export async function runNewsDigest(env: Env): Promise<{ found: number }> {
   try {
-    const { text } = await callClaude(env, {
-      model: env.PLANNER_MODEL,
-      system,
-      messages: [{ role: 'user', content: 'ما أحدث الأنظمة والتعديلات المنشورة في جريدة أم القرى؟' }],
-      tools: [webSearchTool(['uqn.gov.sa'])],
-      max_tokens: 2000,
-      temperature: 0,
+    const res = await fetch(UQN_RSS_URL, {
+      headers: { 'user-agent': 'Mozilla/5.0 (compatible; NafAdvisorBot/1.0)', accept: 'application/rss+xml, application/xml, text/xml' },
     });
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) return { found: 0 };
-    const parsed = JSON.parse(m[0]);
-    const items: any[] = Array.isArray(parsed.items) ? parsed.items : [];
+    if (!res.ok) {
+      console.error('فشل جلب خلاصة أم القرى:', res.status);
+      return { found: 0 };
+    }
+    const xml = await res.text();
+    const items = parseRss(xml);
     let found = 0;
-    for (const it of items.slice(0, 10)) {
+    for (const it of items.slice(0, 25)) {
       if (!it.title) continue;
-      // تجنّب التكرار حسب العنوان
       const exists = await env.DB.prepare('SELECT id FROM news_digest WHERE title = ?').bind(it.title).first();
       if (exists) continue;
       await env.DB.prepare(
         'INSERT INTO news_digest (id, title, summary, url, published, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
       )
-        .bind(crypto.randomUUID(), it.title, it.summary ?? null, it.url ?? null, it.published ?? null, it.kind ?? 'other', Date.now())
+        .bind(crypto.randomUUID(), it.title, it.summary ?? null, it.url ?? null, it.published ?? null, classifyKind(it.title + ' ' + (it.summary ?? '')), Date.now())
         .run();
       found++;
     }
@@ -85,6 +79,53 @@ export async function runNewsDigest(env: Env): Promise<{ found: number }> {
     console.error('فشل خلاصة الأخبار:', e);
     return { found: 0 };
   }
+}
+
+interface RssItem {
+  title: string;
+  url?: string;
+  summary?: string;
+  published?: string;
+}
+
+// محلّل RSS مبسّط (بلا اعتماديات): يستخرج عناصر <item>
+function parseRss(xml: string): RssItem[] {
+  const items: RssItem[] = [];
+  const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) ?? [];
+  for (const b of blocks) {
+    items.push({
+      title: clean(pick(b, 'title')),
+      url: clean(pick(b, 'link')),
+      summary: clean(pick(b, 'description')),
+      published: clean(pick(b, 'pubDate')),
+    });
+  }
+  return items;
+}
+
+function pick(block: string, tag: string): string {
+  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
+  const m = block.match(re);
+  return m ? m[1] : '';
+}
+
+function clean(s: string): string {
+  return s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function classifyKind(text: string): string {
+  if (/نظام جديد|إصدار نظام|الموافقة على نظام/.test(text)) return 'new_regulation';
+  if (/تعديل|تعدیل|استبدال المادة|إلغاء المادة/.test(text)) return 'amendment';
+  return 'other';
 }
 
 // يسأل Claude مع بحث مقيّد بالمصادر الرسمية

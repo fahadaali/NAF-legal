@@ -100,11 +100,75 @@ app.delete('/documents/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── الاطلاع على المحتوى: النص المستخرَج والملف الأصلي (PDF/DOCX) ──
+// GET حتى تعمل مع فتح المتصفّح مباشرةً (الجلسة عبر الكوكي).
+app.get('/documents/:id/text', async (c) => {
+  const id = c.req.param('id');
+  const obj = await c.env.R2.get(`kb-text/${id}.txt`);
+  if (!obj) return c.text('لا يوجد نص مستخرَج لهذه الوثيقة.', 404);
+  return new Response(obj.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'content-disposition': 'inline' } });
+});
+
+app.get('/documents/:id/file', async (c) => {
+  const id = c.req.param('id');
+  const doc = await c.env.DB.prepare('SELECT r2_key, title FROM kb_documents WHERE id = ?')
+    .bind(id)
+    .first<{ r2_key: string | null; title: string }>();
+  if (!doc?.r2_key) return c.text('لا يوجد ملف أصلي لهذه الوثيقة.', 404);
+  return serveR2File(c, doc.r2_key, doc.title);
+});
+
+// نص/ملف نسخة محدّدة
+app.get('/documents/:id/versions/:vid/text', async (c) => {
+  const v = await c.env.DB.prepare('SELECT text_r2_key FROM kb_document_versions WHERE id = ? AND kb_document_id = ?')
+    .bind(c.req.param('vid'), c.req.param('id'))
+    .first<{ text_r2_key: string | null }>();
+  if (!v?.text_r2_key) return c.text('لا يوجد نص لهذه النسخة.', 404);
+  const obj = await c.env.R2.get(v.text_r2_key);
+  if (!obj) return c.text('النص غير متوفّر.', 404);
+  return new Response(obj.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'content-disposition': 'inline' } });
+});
+
+app.get('/documents/:id/versions/:vid/file', async (c) => {
+  const v = await c.env.DB.prepare('SELECT file_r2_key FROM kb_document_versions WHERE id = ? AND kb_document_id = ?')
+    .bind(c.req.param('vid'), c.req.param('id'))
+    .first<{ file_r2_key: string | null }>();
+  if (!v?.file_r2_key) return c.text('لا يوجد ملف أصلي لهذه النسخة.', 404);
+  return serveR2File(c, v.file_r2_key, 'version');
+});
+
+// يخدم كائن R2 بنوع المحتوى المخزَّن (عرض داخلي للـ PDF/الصور)
+async function serveR2File(c: any, key: string, name: string): Promise<Response> {
+  const obj = await c.env.R2.get(key);
+  if (!obj) return c.text('الملف غير متوفّر.', 404);
+  const ct = obj.httpMetadata?.contentType || guessType(key);
+  return new Response(obj.body, {
+    headers: {
+      'content-type': ct,
+      'content-disposition': `inline; filename="${encodeURIComponent(name)}"`,
+    },
+  });
+}
+
+function guessType(key: string): string {
+  const ext = (key.split('.').pop() ?? '').toLowerCase();
+  const map: Record<string, string> = {
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    txt: 'text/plain; charset=utf-8',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
+
 // ── إصدارات الأنظمة (§5): رفع نسخة جديدة مع حفظ القديمة ──
 app.get('/documents/:id/versions', async (c) => {
   const id = c.req.param('id');
   const rows = await c.env.DB.prepare(
-    'SELECT id, version, effective_from, effective_to, note, created_at FROM kb_document_versions WHERE kb_document_id = ? ORDER BY version DESC'
+    'SELECT id, version, effective_from, effective_to, note, file_r2_key, created_at FROM kb_document_versions WHERE kb_document_id = ? ORDER BY version DESC'
   )
     .bind(id)
     .all();
@@ -113,9 +177,9 @@ app.get('/documents/:id/versions', async (c) => {
 
 app.post('/documents/:id/versions', async (c) => {
   const id = c.req.param('id');
-  const doc = await c.env.DB.prepare('SELECT title, version FROM kb_documents WHERE id = ?')
+  const doc = await c.env.DB.prepare('SELECT title, version, r2_key FROM kb_documents WHERE id = ?')
     .bind(id)
-    .first<{ title: string; version: number }>();
+    .first<{ title: string; version: number; r2_key: string | null }>();
   if (!doc) return c.json({ error: 'غير موجودة' }, 404);
 
   const form = await c.req.formData();
@@ -124,7 +188,7 @@ app.post('/documents/:id/versions', async (c) => {
   const note = form.get('note')?.toString() ?? null;
   if (!(file instanceof File)) return c.json({ error: 'لم يُرفَق ملف النسخة الجديدة' }, 400);
 
-  // 1) احفظ النص الحالي كنسخة سابقة (effective_to = الآن)
+  // 1) احفظ النص والملف الحاليين كنسخة سابقة (effective_to = الآن)
   const oldText = await c.env.R2.get(`kb-text/${id}.txt`);
   const now = Date.now();
   const oldVersion = doc.version ?? 1;
@@ -132,10 +196,10 @@ app.post('/documents/:id/versions', async (c) => {
     const oldKey = `kb-text/${id}.v${oldVersion}.txt`;
     await c.env.R2.put(oldKey, await oldText.text());
     await c.env.DB.prepare(
-      `INSERT INTO kb_document_versions (id, kb_document_id, version, text_r2_key, effective_to, note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO kb_document_versions (id, kb_document_id, version, text_r2_key, file_r2_key, effective_to, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-      .bind(uuid(), id, oldVersion, oldKey, new Date(now).toISOString().slice(0, 10), 'أُرشِفت عند رفع نسخة أحدث', now)
+      .bind(uuid(), id, oldVersion, oldKey, doc.r2_key, new Date(now).toISOString().slice(0, 10), 'أُرشِفت عند رفع نسخة أحدث', now)
       .run();
   }
 
@@ -155,10 +219,10 @@ app.post('/documents/:id/versions', async (c) => {
     .bind(oldVersion + 1, r2Key, now, id)
     .run();
   await c.env.DB.prepare(
-    `INSERT INTO kb_document_versions (id, kb_document_id, version, text_r2_key, effective_from, note, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO kb_document_versions (id, kb_document_id, version, text_r2_key, file_r2_key, effective_from, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(uuid(), id, oldVersion + 1, `kb-text/${id}.txt`, effectiveFrom, note ?? 'النسخة السارية', now)
+    .bind(uuid(), id, oldVersion + 1, `kb-text/${id}.txt`, r2Key, effectiveFrom, note ?? 'النسخة السارية', now)
     .run();
 
   c.executionCtx.waitUntil(ingestDocument(c.env, id));

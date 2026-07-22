@@ -53,7 +53,7 @@ app.post('/:conversationId', async (c) => {
   const history = { results: (historyDesc.results ?? []).slice().reverse() };
 
   // [1] المُخطِّط
-  const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet, user.id);
+  const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet, user.id, history.results);
 
   // حالة الاستيضاح: أوقف التوليد واطرح الأسئلة (§3, §5)
   if (plan.clarifying_questions.length > 0) {
