@@ -20,24 +20,40 @@ app.get('/documents', async (c) => {
   return c.json({ documents: rows.results });
 });
 
-// رفع وثيقة نظام: تخزين + استخراج + تصنيف تلقائي + جدولة التضمين
+// رفع وثيقة نظام: ملف أو نص → تخزين + استخراج + تصنيف تلقائي + جدولة التضمين
 app.post('/documents', async (c) => {
   const form = await c.req.formData();
   const file = form.get('file');
-  if (!(file instanceof File)) return c.json({ error: 'لم يُرفَق ملف' }, 400);
+  const pastedText = (form.get('text')?.toString() ?? '').trim();
+  const providedTitle = (form.get('title')?.toString() ?? '').trim();
 
-  const buf = await file.arrayBuffer();
   const id = uuid();
-  const r2Key = `kb/${id}-${file.name.replace(/[^\w.\-؀-ۿ]/g, '_')}`;
-  await c.env.R2.put(r2Key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
-
+  let r2Key: string;
   let text = '';
-  try {
-    text = await extractText(c.env, buf, file.type, file.name);
-  } catch {}
+  let sampleName: string;
+
+  if (file instanceof File) {
+    // ── وضع الملف ──
+    const buf = await file.arrayBuffer();
+    r2Key = `kb/${id}-${file.name.replace(/[^\w.\-؀-ۿ]/g, '_')}`;
+    await c.env.R2.put(r2Key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
+    try {
+      text = await extractText(c.env, buf, file.type, file.name);
+    } catch {}
+    sampleName = file.name;
+  } else if (pastedText) {
+    // ── وضع النص الملصوق ──
+    text = pastedText;
+    const safeTitle = (providedTitle || 'نص').replace(/[^\w.\-؀-ۿ]/g, '_').slice(0, 60);
+    r2Key = `kb/${id}-${safeTitle}.txt`;
+    await c.env.R2.put(r2Key, text, { httpMetadata: { contentType: 'text/plain; charset=utf-8' } });
+    sampleName = providedTitle || 'نص ملصوق';
+  } else {
+    return c.json({ error: 'أرفِق ملفًا أو الصق نصًّا' }, 400);
+  }
 
   // تصنيف تلقائي عبر Claude
-  const meta = await classifyDocument(c.env, file.name, text.slice(0, 6000));
+  const meta = await classifyDocument(c.env, sampleName, text.slice(0, 6000));
 
   await c.env.DB.prepare(
     `INSERT INTO kb_documents
@@ -46,7 +62,7 @@ app.post('/documents', async (c) => {
   )
     .bind(
       id,
-      meta.title || file.name,
+      providedTitle || meta.title || sampleName,
       meta.source_authority ?? null,
       meta.decree_number ?? null,
       meta.issue_date ?? null,
@@ -58,13 +74,11 @@ app.post('/documents', async (c) => {
     )
     .run();
 
-  // خزّن النص المستخرَج مؤقتًا في R2 لاستخدامه في التضمين
+  // خزّن النص المستخرَج للتضمين
   await c.env.R2.put(`kb-text/${id}.txt`, text);
 
-  // جدولة التضمين عبر Queue
   c.executionCtx.waitUntil(ingestDocument(c.env, id));
-
-  await audit(c, 'kb.upload', id, { title: meta.title, category: meta.category });
+  await audit(c, 'kb.upload', id, { title: providedTitle || meta.title, category: meta.category, mode: file instanceof File ? 'file' : 'text' });
   return c.json({ id, metadata: meta, ingest_status: 'pending' });
 });
 

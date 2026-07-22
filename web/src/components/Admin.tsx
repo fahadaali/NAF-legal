@@ -63,7 +63,30 @@ function KbTab() {
   const [uploading, setUploading] = useState(false);
   const [versionsFor, setVersionsFor] = useState<string | null>(null);
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
+  const [mode, setMode] = useState<'file' | 'text'>('file');
+  const [pasteTitle, setPasteTitle] = useState('');
+  const [pasteText, setPasteText] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const uploadText = async () => {
+    if (!pasteText.trim()) return alert('الصق نص النظام/اللائحة');
+    if (!pasteTitle.trim()) return alert('أدخل عنوان الوثيقة');
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('text', pasteText);
+      fd.append('title', pasteTitle);
+      const res = await fetch('/api/kb/documents', { method: 'POST', body: fd, credentials: 'same-origin' });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setPasteText('');
+      setPasteTitle('');
+      load();
+    } catch (e: any) {
+      alert(e.message ?? 'فشل الحفظ');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const viewDoc = (d: any) => {
     const kind = fileKind(d.r2_key);
@@ -114,15 +137,41 @@ function KbTab() {
           e.target.value = '';
         }}
       />
-      <div className="dropzone" onClick={() => fileInput.current?.click()}>
-        {uploading ? (
-          <>
-            <span className="spinner" /> جارٍ الرفع والتصنيف…
-          </>
-        ) : (
-          <>📤 ارفع وثيقة نظام/لائحة — سيُصنَّف محتواها ويُضمَّن تلقائيًا</>
-        )}
+      <div className="intake-toggle" style={{ marginBottom: 10 }}>
+        <button className={`seg ${mode === 'file' ? 'on' : ''}`} onClick={() => setMode('file')}>رفع ملف</button>
+        <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق نص</button>
       </div>
+
+      {mode === 'file' ? (
+        <div className="dropzone" onClick={() => fileInput.current?.click()}>
+          {uploading ? (
+            <>
+              <span className="spinner" /> جارٍ الرفع والتصنيف…
+            </>
+          ) : (
+            <>📤 ارفع وثيقة نظام/لائحة (PDF · DOCX · صورة · نص) — سيُستخرج محتواها ويُصنَّف ويُضمَّن تلقائيًا</>
+          )}
+        </div>
+      ) : (
+        <div style={{ marginBottom: 18 }}>
+          <input
+            placeholder="عنوان الوثيقة (مثال: نظام العمل)"
+            value={pasteTitle}
+            onChange={(e) => setPasteTitle(e.target.value)}
+            style={{ width: '100%', padding: 11, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--text)', fontFamily: 'inherit', fontSize: 14 }}
+          />
+          <textarea
+            className="cfg-prompt"
+            style={{ minHeight: 180 }}
+            placeholder="الصق نص النظام/اللائحة هنا…"
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+          />
+          <button className="btn-sm primary" style={{ marginTop: 8 }} onClick={uploadText} disabled={uploading}>
+            {uploading ? <><span className="spinner" /> جارٍ الحفظ والتصنيف…</> : 'حفظ النص وتضمينه'}
+          </button>
+        </div>
+      )}
 
       {docs.length === 0 ? (
         <div className="empty-state">لا توجد وثائق في قاعدة المعرفة بعد</div>
