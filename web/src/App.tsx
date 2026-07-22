@@ -6,12 +6,22 @@ import ChatView from './components/ChatView';
 import Admin from './components/Admin';
 import Tools from './components/Tools';
 import ReviewPage from './components/ReviewPage';
+import { useTheme } from './lib/theme';
+
+export function Aurora() {
+  return (
+    <div className="aurora-bg" aria-hidden>
+      <div className="aurora-glow3" />
+    </div>
+  );
+}
 
 export default function App() {
   // مسار المراجعة العامة (بلا مصادقة)
   const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
   if (reviewMatch) return <ReviewPage token={reviewMatch[1]} />;
 
+  const [theme, toggleTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'chat' | 'admin' | 'tools'>('chat');
@@ -44,10 +54,11 @@ export default function App() {
     );
   }
 
-  if (!user) return <Auth onAuth={setUser} />;
+  if (!user) return <Auth onAuth={setUser} theme={theme} onToggleTheme={toggleTheme} />;
 
   return (
     <div className="app-shell">
+      <Aurora />
       <div className="main">
         {view === 'chat' && (
           <ChatView
@@ -86,6 +97,8 @@ export default function App() {
         onOpenAdmin={() => setView('admin')}
         onOpenTools={() => setView('tools')}
         onLogout={handleLogout}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
     </div>
   );
