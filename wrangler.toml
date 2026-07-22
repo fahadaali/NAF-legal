@@ -52,9 +52,9 @@ crons = ["0 3 * * *"]
 [vars]
 # القيم غير السرّية فقط. الأسرار عبر: wrangler secret put
 APP_NAME = "مستشار ناف"
-# مُوحَّد على Sonnet لكل مراحل Claude (التخطيط/التصنيف/الاستخراج/التحقّق/التوليد)
-PLANNER_MODEL = "claude-sonnet-5"
-GENERATION_MODEL = "claude-sonnet-5"
+# مُوحَّد على Opus 4.8 لكل مراحل Claude (التخطيط/التصنيف/الاستخراج/التحقّق/التوليد)
+PLANNER_MODEL = "claude-opus-4-8"
+GENERATION_MODEL = "claude-opus-4-8"
 EMBEDDING_MODEL = "@cf/baai/bge-m3"
 DATA_REGION = "auto"
 
