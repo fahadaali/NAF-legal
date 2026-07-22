@@ -719,6 +719,35 @@ function SettingsTab() {
       <button className="btn-sm primary" onClick={() => lhInput.current?.click()} disabled={uploading}>
         {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : '📤 رفع صورة الرأسية'}
       </button>
+
+      <div className="section-title">فحص Workers AI (التضمين)</div>
+      <p style={{ color: 'var(--muted)', fontSize: 13 }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
+      <AiCheck />
+    </div>
+  );
+}
+
+function AiCheck() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await api.aiCheck();
+      setResult(r.ok ? `✅ يعمل — النموذج ${r.model} · أبعاد المتجه ${r.dimensions} · ${r.ms}ms` : `❌ لا يعمل — ${r.error}`);
+    } catch (e: any) {
+      setResult(`❌ فشل الفحص — ${e.message ?? ''}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div>
+      <button className="btn-sm primary" onClick={run} disabled={busy}>
+        {busy ? <><span className="spinner" /> جارٍ الفحص…</> : '🔬 فحص Workers AI'}
+      </button>
+      {result && <p style={{ marginTop: 10, fontSize: 13.5 }}>{result}</p>}
     </div>
   );
 }
