@@ -64,10 +64,5 @@ jobs:
       - name: تطبيق ترحيلات قاعدة البيانات
         run: npx wrangler d1 migrations apply naf_legal --remote
 
-      # خطوة لمرّة واحدة: مسح صفّ المستخدم «المعلّق» من محاولة تسجيل فاشلة
-      # قبل ضبط JWT_SECRET. تُحذف هذه الخطوة فور نجاحها.
-      - name: (لمرّة واحدة) تصفير المستخدمين
-        run: npx wrangler d1 execute naf_legal --remote --command "DELETE FROM users;"
-
       - name: النشر
         run: npx wrangler deploy
