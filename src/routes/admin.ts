@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { runTrackingScan, runNewsDigest } from '../cron';
 import { ingestDocument } from '../ingest';
+import { getAllEffectiveConfigs, getEffectiveConfig, defaultConfig } from '../lib/consultationConfig';
 import { uuid, hashPassword } from '../lib/crypto';
 import type { Env, Variables } from '../types';
 
@@ -189,6 +190,34 @@ app.post('/letterhead', async (c) => {
     .run();
   await audit(c, 'settings.letterhead', r2Key, { mime: file.type });
   return c.json({ ok: true, mime: file.type });
+});
+
+// ── إعداد نماذج الاستشارات (البرومبت + الحقول + طلب الملف) ──
+app.get('/consultation-configs', async (c) => {
+  const configs = await getAllEffectiveConfigs(c.env);
+  return c.json({ configs });
+});
+
+app.put('/consultation-configs/:key', async (c) => {
+  const key = c.req.param('key');
+  const body = await c.req.json().catch(() => ({}));
+  // نبني إعدادًا كاملًا فوق الافتراضي لضمان الحقول الأساسية
+  const merged = { ...defaultConfig(key), ...body, key };
+  await c.env.DB.prepare(
+    'INSERT INTO consultation_configs (key, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at'
+  )
+    .bind(key, JSON.stringify(merged), Date.now())
+    .run();
+  await audit(c, 'consultation_config.update', key, {});
+  return c.json({ ok: true, config: merged });
+});
+
+// إعادة نوع استشارة إلى الافتراضي
+app.delete('/consultation-configs/:key', async (c) => {
+  const key = c.req.param('key');
+  await c.env.DB.prepare('DELETE FROM consultation_configs WHERE key = ?').bind(key).run();
+  await audit(c, 'consultation_config.reset', key, {});
+  return c.json({ ok: true, config: await getEffectiveConfig(c.env, key) });
 });
 
 // ── خلاصة أخبار جريدة أم القرى (§5) ──

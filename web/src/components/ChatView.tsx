@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, Message, Attachment, Folder, streamChat } from '../lib/api';
+import { api, Message, Attachment, Folder, ConsultConfig, streamChat } from '../lib/api';
 import { CONSULTATIONS, labelFor } from '../lib/consultations';
 import { renderMarkdown } from '../lib/markdown';
+import IntakeModal from './IntakeModal';
 
 interface Props {
   conversationId: string | null;
+  initialMessage?: string | null;
+  onInitialConsumed?: () => void;
+  onStartConversation?: (conversationId: string, message: string) => void;
   onConversationChange: (id: string) => void;
   onToggleSidebar: () => void;
 }
@@ -16,8 +20,11 @@ interface UiMessage extends Message {
   verification?: { verified: boolean; unsupported: string[]; note: string } | null;
 }
 
-export default function ChatView({ conversationId, onConversationChange, onToggleSidebar }: Props) {
+export default function ChatView({ conversationId, initialMessage, onInitialConsumed, onStartConversation, onConversationChange, onToggleSidebar }: Props) {
   const [convType, setConvType] = useState<string | null>(null);
+  const [configs, setConfigs] = useState<ConsultConfig[]>([]);
+  const [intake, setIntake] = useState<ConsultConfig | null>(null);
+  const autoSent = useRef(false);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -87,11 +94,33 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
     }
   };
 
+  // حمّل إعدادات نماذج الاستشارات (للنافذة المنبثقة)
+  useEffect(() => {
+    if (!conversationId) api.consultationConfigs().then((r) => setConfigs(r.configs)).catch(() => {});
+  }, [conversationId]);
+
+  // فتح نافذة الإدخال عند اختيار نوع
+  const openIntake = (type: string) => {
+    const cfg = configs.find((c) => c.key === type);
+    if (cfg) setIntake(cfg);
+    else startConsultation(type); // احتياط إن لم تُحمّل الإعدادات
+  };
+
   const startConsultation = async (type: string) => {
     const conv = await api.createConversation(type);
     setConvType(type);
     onConversationChange(conv.id);
   };
+
+  // إرسال رسالة البدء تلقائيًا بعد إنشاء المحادثة من النافذة المنبثقة
+  useEffect(() => {
+    if (conversationId && initialMessage && !autoSent.current) {
+      autoSent.current = true;
+      send(initialMessage);
+      onInitialConsumed?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, initialMessage]);
 
   const doUpload = async (files: FileList | null) => {
     if (!files?.length || !conversationId) return;
@@ -108,10 +137,10 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
     }
   };
 
-  const send = async () => {
-    if (!input.trim() || !conversationId || sending) return;
-    const text = input.trim();
-    setInput('');
+  const send = async (explicit?: string) => {
+    const text = (explicit ?? input).trim();
+    if (!text || !conversationId || sending) return;
+    if (!explicit) setInput('');
     if (textarea.current) textarea.current.style.height = 'auto';
 
     const userMsg: UiMessage = { id: 'u' + Date.now(), role: 'user', content: text, created_at: Date.now() };
@@ -248,7 +277,7 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
           <div className="picker-group-title">⚖️ التقاضي</div>
           <div className="cards">
             {grouped.map((c) => (
-              <button key={c.type} className="card" onClick={() => startConsultation(c.type)}>
+              <button key={c.type} className="card" onClick={() => openIntake(c.type)}>
                 <div className="card-icon">{c.icon}</div>
                 <div className="card-title">{c.label}</div>
                 <div className="card-desc">{c.description}</div>
@@ -259,7 +288,7 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
           <div className="picker-group-title">خدمات أخرى</div>
           <div className="cards">
             {others.map((c) => (
-              <button key={c.type} className="card" onClick={() => startConsultation(c.type)}>
+              <button key={c.type} className="card" onClick={() => openIntake(c.type)}>
                 <div className="card-icon">{c.icon}</div>
                 <div className="card-title">{c.label}</div>
                 <div className="card-desc">{c.description}</div>
@@ -267,6 +296,17 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
             ))}
           </div>
         </div>
+
+        {intake && (
+          <IntakeModal
+            config={intake}
+            onClose={() => setIntake(null)}
+            onStart={(convId, message) => {
+              setIntake(null);
+              onStartConversation?.(convId, message);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -420,7 +460,7 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
               placeholder="اكتب رسالتك… (Enter للإرسال، Shift+Enter لسطر جديد)"
               rows={1}
             />
-            <button className="send-btn" onClick={send} disabled={sending || !input.trim()}>
+            <button className="send-btn" onClick={() => send()} disabled={sending || !input.trim()}>
               {sending ? <span className="spinner" /> : '➤'}
             </button>
           </div>

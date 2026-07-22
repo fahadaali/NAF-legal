@@ -13,6 +13,7 @@ import feedbackRoutes from './routes/feedback';
 import foldersRoutes from './routes/folders';
 import sharesRoutes from './routes/shares';
 import searchRoutes from './routes/search';
+import consultationRoutes from './routes/consultations';
 import { runTrackingScan, runNewsDigest } from './cron';
 import { verifyJwt } from './lib/crypto';
 import { SESSION_COOKIE } from './lib/auth';
@@ -51,6 +52,7 @@ app.route('/api/feedback', feedbackRoutes);
 app.route('/api/folders', foldersRoutes);
 app.route('/api/shares', sharesRoutes);
 app.route('/api/search', searchRoutes);
+app.route('/api/consultations', consultationRoutes);
 
 // أي مسار /api غير معروف
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));

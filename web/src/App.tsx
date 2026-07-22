@@ -27,6 +27,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'chat' | 'admin' | 'tools'>('chat');
   const [activeConv, setActiveConv] = useState<string | null>(null);
+  const [pendingInitial, setPendingInitial] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -76,6 +77,13 @@ export default function App() {
           <ChatView
             key={activeConv ?? 'new'}
             conversationId={activeConv}
+            initialMessage={pendingInitial}
+            onInitialConsumed={() => setPendingInitial(null)}
+            onStartConversation={(id, message) => {
+              setPendingInitial(message);
+              setActiveConv(id);
+              refreshConversations();
+            }}
             onConversationChange={(id) => {
               setActiveConv(id);
               refreshConversations();
