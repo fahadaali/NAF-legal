@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, Conversation, User } from '../lib/api';
+import { api, Conversation, Folder, User } from '../lib/api';
 import { iconFor } from '../lib/consultations';
 
 interface Props {
@@ -19,16 +19,35 @@ interface Props {
 
 export default function Sidebar(props: Props) {
   const [convs, setConvs] = useState<Conversation[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [searchMode, setSearchMode] = useState<string>('');
 
   const load = () => {
-    api.listConversations().then((r) => setConvs(r.conversations)).catch(() => {});
+    api.listConversations(undefined, activeFolder ?? undefined).then((r) => setConvs(r.conversations)).catch(() => {});
   };
+  const loadFolders = () => api.folders().then((r) => setFolders(r.folders)).catch(() => {});
 
   useEffect(() => {
     if (!search) { setSearchMode(''); load(); }
-  }, [props.refreshKey]);
+    loadFolders();
+  }, [props.refreshKey, activeFolder]);
+
+  const createFolder = async () => {
+    const name = prompt('اسم القضية الجديدة:');
+    if (!name?.trim()) return;
+    await api.createFolder(name.trim());
+    loadFolders();
+  };
+
+  const removeFolder = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm('حذف هذه القضية؟ (لن تُحذف محادثاتها)')) return;
+    await api.deleteFolder(id);
+    if (activeFolder === id) setActiveFolder(null);
+    loadFolders();
+  };
 
   useEffect(() => {
     if (!search) { setSearchMode(''); load(); return; }
@@ -82,6 +101,25 @@ export default function Sidebar(props: Props) {
       </div>
 
       <button className="tools-link" onClick={props.onOpenTools}>🧰 الأدوات القانونية</button>
+
+      <div className="folder-bar">
+        <button className={`folder-chip ${!activeFolder ? 'active' : ''}`} onClick={() => setActiveFolder(null)}>
+          الكل
+        </button>
+        {folders.map((f) => (
+          <button
+            key={f.id}
+            className={`folder-chip ${activeFolder === f.id ? 'active' : ''}`}
+            onClick={() => setActiveFolder(f.id)}
+            title={`${f.count} محادثة`}
+          >
+            <span className="folder-dot" style={{ background: f.color }} />
+            {f.name}
+            <span className="folder-del" onClick={(e) => removeFolder(e, f.id)}>×</span>
+          </button>
+        ))}
+        <button className="folder-chip add" onClick={createFolder} title="قضية جديدة">＋</button>
+      </div>
 
       <div className="conv-list">
         {convs.length === 0 && <div className="empty-state" style={{ fontSize: 13 }}>لا توجد محادثات بعد</div>}

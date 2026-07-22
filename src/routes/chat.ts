@@ -5,7 +5,7 @@ import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
 import { retrieve, formatRagContext, indexConversationMessage } from '../lib/rag';
 import { streamClaude, webSearchTool, OFFICIAL_DOMAINS } from '../lib/claude';
-import { systemPromptFor, DISCLAIMER, BILINGUAL_INSTRUCTION } from '../lib/prompts';
+import { systemPromptFor, BILINGUAL_INSTRUCTION } from '../lib/prompts';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
 import type { Env, Variables } from '../types';
@@ -44,12 +44,13 @@ app.post('/:conversationId', async (c) => {
     .all<{ filename: string; parsed_text: string }>();
   const hasAttachments = (atts.results?.length ?? 0) > 0;
 
-  // سجل الرسائل السابق (سياق المحادثة)
-  const history = await c.env.DB.prepare(
-    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 40'
+  // سجل الرسائل السابق (سياق المحادثة) — نأخذ أحدث 40 رسالة ثم نعيد ترتيبها زمنيًا
+  const historyDesc = await c.env.DB.prepare(
+    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 40'
   )
     .bind(conversationId)
     .all<{ role: string; content: string }>();
+  const history = { results: (historyDesc.results ?? []).slice().reverse() };
 
   // [1] المُخطِّط
   const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet, user.id);
@@ -246,5 +247,4 @@ function sseOnce(text: string, meta: Record<string, unknown>): Response {
   });
 }
 
-export { DISCLAIMER };
 export default app;

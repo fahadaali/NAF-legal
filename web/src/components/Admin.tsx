@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 
 type Tab = 'kb' | 'tracking' | 'news' | 'analytics' | 'users' | 'settings' | 'audit';
@@ -55,6 +55,7 @@ function statusPill(s: string) {
 function KbTab() {
   const [docs, setDocs] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [versionsFor, setVersionsFor] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const load = () => api.kbDocuments().then((r) => setDocs(r.documents)).catch(() => {});
@@ -128,26 +129,38 @@ function KbTab() {
           </thead>
           <tbody>
             {docs.map((d) => (
-              <tr key={d.id}>
-                <td style={{ fontWeight: 600 }}>
-                  {d.title}
-                  {d.needs_update ? <span className="pill warn" style={{ marginInlineStart: 6 }}>يحتاج مراجعة</span> : null}
-                </td>
-                <td>{d.category ?? '—'}</td>
-                <td>{d.source_authority ?? '—'}</td>
-                <td>{statusPill(d.status)}</td>
-                <td>{statusPill(d.ingest_status)}</td>
-                <td>{d.chunk_count ?? 0}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <VersionUpload docId={d.id} version={d.version} onDone={load} />{' '}
-                  <button className="btn-sm" onClick={() => api.reingestKbDocument(d.id).then(load)}>
-                    إعادة تضمين
-                  </button>{' '}
-                  <button className="btn-sm" onClick={() => del(d.id)}>
-                    حذف
-                  </button>
-                </td>
-              </tr>
+              <Fragment key={d.id}>
+                <tr>
+                  <td style={{ fontWeight: 600 }}>
+                    {d.title}
+                    {d.needs_update ? <span className="pill warn" style={{ marginInlineStart: 6 }}>يحتاج مراجعة</span> : null}
+                  </td>
+                  <td>{d.category ?? '—'}</td>
+                  <td>{d.source_authority ?? '—'}</td>
+                  <td>{statusPill(d.status)}</td>
+                  <td>{statusPill(d.ingest_status)}</td>
+                  <td>{d.chunk_count ?? 0}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <VersionUpload docId={d.id} version={d.version} onDone={load} />{' '}
+                    <button className="btn-sm" onClick={() => setVersionsFor(versionsFor === d.id ? null : d.id)}>
+                      السجل{d.version > 1 ? ` (${d.version})` : ''}
+                    </button>{' '}
+                    <button className="btn-sm" onClick={() => api.reingestKbDocument(d.id).then(load)}>
+                      إعادة تضمين
+                    </button>{' '}
+                    <button className="btn-sm" onClick={() => del(d.id)}>
+                      حذف
+                    </button>
+                  </td>
+                </tr>
+                {versionsFor === d.id && (
+                  <tr>
+                    <td colSpan={7} style={{ background: 'var(--surface-2)' }}>
+                      <VersionsList docId={d.id} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -310,6 +323,31 @@ function VersionUpload({ docId, version, onDone }: { docId: string; version: num
         {busy ? '…' : '⬆ نسخة جديدة'}
       </button>
     </>
+  );
+}
+
+// عرض سجل إصدارات نظام — §5
+function VersionsList({ docId }: { docId: string }) {
+  const [versions, setVersions] = useState<any[] | null>(null);
+  useEffect(() => {
+    api.kbVersions(docId).then((r) => setVersions(r.versions)).catch(() => setVersions([]));
+  }, [docId]);
+  if (versions === null) return <span className="spinner" />;
+  if (!versions.length) return <span style={{ color: 'var(--muted)', fontSize: 13 }}>لا إصدارات سابقة — هذه النسخة الأولى.</span>;
+  return (
+    <div style={{ fontSize: 13 }}>
+      <strong style={{ fontSize: 13.5 }}>سجل الإصدارات:</strong>
+      <ul style={{ margin: '6px 0', paddingInlineStart: 18 }}>
+        {versions.map((v) => (
+          <li key={v.id} style={{ margin: '3px 0' }}>
+            الإصدار {v.version}
+            {v.effective_from ? ` · سريان من ${v.effective_from}` : ''}
+            {v.effective_to ? ` · حتى ${v.effective_to}` : ' · (سارية)'}
+            {v.note ? ` — ${v.note}` : ''}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

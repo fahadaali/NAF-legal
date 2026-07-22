@@ -11,18 +11,24 @@ app.use('*', requireAuth);
 app.get('/', async (c) => {
   const user = c.get('user');
   const q = c.req.query('q');
+  const folder = c.req.query('folder'); // تصفية حسب مجلّد القضية
+  const cols = 'id, title, consultation_type, folder_id, tags_json, created_at, updated_at';
   let rows;
   if (q) {
     rows = await c.env.DB.prepare(
-      `SELECT id, title, consultation_type, created_at, updated_at FROM conversations
-       WHERE user_id = ? AND title LIKE ? ORDER BY updated_at DESC LIMIT 100`
+      `SELECT ${cols} FROM conversations WHERE user_id = ? AND title LIKE ? ORDER BY updated_at DESC LIMIT 100`
     )
       .bind(user.id, `%${q}%`)
       .all();
+  } else if (folder) {
+    rows = await c.env.DB.prepare(
+      `SELECT ${cols} FROM conversations WHERE user_id = ? AND folder_id = ? ORDER BY updated_at DESC LIMIT 100`
+    )
+      .bind(user.id, folder)
+      .all();
   } else {
     rows = await c.env.DB.prepare(
-      `SELECT id, title, consultation_type, created_at, updated_at FROM conversations
-       WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100`
+      `SELECT ${cols} FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100`
     )
       .bind(user.id)
       .all();

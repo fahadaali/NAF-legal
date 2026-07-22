@@ -1,10 +1,10 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 
 // أدوات قانونية مستقلّة: مقارنة نسختين + حاسبة المواعيد
 export default function Tools() {
-  const [tab, setTab] = useState<'compare' | 'deadlines'>('compare');
+  const [tab, setTab] = useState<'compare' | 'deadlines' | 'shares'>('compare');
   return (
     <div className="admin-wrap">
       <div className="admin-inner">
@@ -16,10 +16,65 @@ export default function Tools() {
           <button className={`admin-tab ${tab === 'deadlines' ? 'active' : ''}`} onClick={() => setTab('deadlines')}>
             حاسبة المواعيد
           </button>
+          <button className={`admin-tab ${tab === 'shares' ? 'active' : ''}`} onClick={() => setTab('shares')}>
+            مشاركاتي للمراجعة
+          </button>
         </div>
-        {tab === 'compare' ? <Compare /> : <Deadlines />}
+        {tab === 'compare' && <Compare />}
+        {tab === 'deadlines' && <Deadlines />}
+        {tab === 'shares' && <Shares />}
       </div>
     </div>
+  );
+}
+
+function Shares() {
+  const [shares, setShares] = useState<any[]>([]);
+  const load = () => api.listShares().then((r) => setShares(r.shares)).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const statusLabel: Record<string, string> = {
+    pending: 'بانتظار المراجعة',
+    approved: 'مُعتمَد ✅',
+    changes_requested: 'مطلوب تعديلات ✏️',
+  };
+
+  const copyLink = (token: string) => {
+    navigator.clipboard.writeText(`${location.origin}/review/${token}`).catch(() => {});
+    alert('نُسخ رابط المراجعة');
+  };
+  const del = async (id: string) => {
+    if (!confirm('حذف رابط المشاركة؟')) return;
+    await api.deleteShare(id);
+    load();
+  };
+
+  if (shares.length === 0) return <div className="empty-state">لم تُنشئ روابط مراجعة بعد. استخدم «🔗 مشاركة للمراجعة» أسفل أي مسودّة.</div>;
+  return (
+    <table className="data-table">
+      <thead>
+        <tr><th>المحادثة</th><th>المراجِع</th><th>الحالة</th><th>التعليقات</th><th>التاريخ</th><th></th></tr>
+      </thead>
+      <tbody>
+        {shares.map((s) => (
+          <tr key={s.id}>
+            <td style={{ fontWeight: 600 }}>{s.title}</td>
+            <td>{s.reviewer_label ?? '—'}</td>
+            <td>
+              <span className={`pill ${s.status === 'approved' ? 'active' : s.status === 'pending' ? 'pending' : 'warn'}`}>
+                {statusLabel[s.status]}
+              </span>
+            </td>
+            <td>{s.comment_count}</td>
+            <td>{new Date(s.updated_at).toLocaleDateString('ar-SA')}</td>
+            <td style={{ whiteSpace: 'nowrap' }}>
+              <button className="btn-sm" onClick={() => copyLink(s.token)}>نسخ الرابط</button>{' '}
+              <button className="btn-sm" onClick={() => del(s.id)}>حذف</button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
