@@ -24,6 +24,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // تهيئة أول مسؤول فقط (حين تكون قاعدة المستخدمين فارغة). بعدها التسجيل الذاتي مغلق
 // وتُنشأ الحسابات من لوحة الإدارة.
 app.post('/register', async (c) => {
+  if (!c.env.JWT_SECRET) {
+    return c.json({ error: 'الخادم غير مهيّأ: لم يُضبط JWT_SECRET في إعدادات Cloudflare.' }, 503);
+  }
   const { email, password, name } = await c.req.json().catch(() => ({}));
   if (!email || !EMAIL_RE.test(email)) return c.json({ error: 'بريد إلكتروني غير صالح' }, 400);
   if (!password || password.length < 8) return c.json({ error: 'كلمة المرور يجب ألا تقل عن 8 أحرف' }, 400);
@@ -47,6 +50,9 @@ app.post('/register', async (c) => {
 });
 
 app.post('/login', async (c) => {
+  if (!c.env.JWT_SECRET) {
+    return c.json({ error: 'الخادم غير مهيّأ: لم يُضبط JWT_SECRET في إعدادات Cloudflare.' }, 503);
+  }
   const { email, password } = await c.req.json().catch(() => ({}));
   if (!email || !password) return c.json({ error: 'البيانات ناقصة' }, 400);
 
