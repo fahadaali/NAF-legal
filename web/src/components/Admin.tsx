@@ -151,7 +151,7 @@ function KbTab() {
                   <td>{statusPill(d.ingest_status)}</td>
                   <td>{d.chunk_count ?? 0}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <button className="btn-sm primary" onClick={() => viewDoc(d)}>👁 عرض</button>{' '}
+                    <button className="btn-sm primary" onClick={() => viewDoc(d)}>عرض</button>{' '}
                     <VersionUpload docId={d.id} version={d.version} onDone={load} />{' '}
                     <button className="btn-sm" onClick={() => setVersionsFor(versionsFor === d.id ? null : d.id)}>
                       السجل{d.version > 1 ? ` (${d.version})` : ''}
@@ -420,7 +420,7 @@ function VersionsList({ docId, onView }: { docId: string; onView: (t: ViewerTarg
             {v.effective_to ? ` · حتى ${v.effective_to}` : ' · (سارية)'}
             {v.note ? ` — ${v.note}` : ''}
             {'  '}
-            <button className="btn-sm" style={{ padding: '3px 10px' }} onClick={() => view(v)}>👁 عرض</button>
+            <button className="btn-sm" style={{ padding: '3px 10px' }} onClick={() => view(v)}>عرض</button>
           </li>
         ))}
       </ul>
