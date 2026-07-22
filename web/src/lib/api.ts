@@ -132,6 +132,7 @@ export const api = {
   setRole: (id: string, role: string) =>
     req(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   audit: () => req<{ entries: any[] }>('/admin/audit'),
+  aiCheck: () => req<{ ok: boolean; model: string; dimensions?: number; ms?: number; error?: string }>('/admin/ai-check'),
   analytics: () => req<any>('/admin/analytics'),
   settings: () => req<{ settings: Record<string, string> }>('/admin/settings'),
   saveSettings: (s: Record<string, string>) => req('/admin/settings', { method: 'POST', body: JSON.stringify(s) }),

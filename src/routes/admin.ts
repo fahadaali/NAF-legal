@@ -192,6 +192,19 @@ app.post('/letterhead', async (c) => {
   return c.json({ ok: true, mime: file.type });
 });
 
+// ── فحص Workers AI (التضمين) ──
+app.get('/ai-check', async (c) => {
+  const t0 = Date.now();
+  try {
+    const res: any = await c.env.AI.run(c.env.EMBEDDING_MODEL as any, { text: ['اختبار عمل Workers AI'] });
+    const vec = res?.data?.[0] ?? res?.[0];
+    if (!Array.isArray(vec)) return c.json({ ok: false, error: 'لم يُرجِع النموذج متجهًا صالحًا' }, 502);
+    return c.json({ ok: true, model: c.env.EMBEDDING_MODEL, dimensions: vec.length, ms: Date.now() - t0 });
+  } catch (e: any) {
+    return c.json({ ok: false, model: c.env.EMBEDDING_MODEL, error: String(e?.message ?? e) }, 502);
+  }
+});
+
 // ── إعداد نماذج الاستشارات (البرومبت + الحقول + طلب الملف) ──
 app.get('/consultation-configs', async (c) => {
   const configs = await getAllEffectiveConfigs(c.env);
