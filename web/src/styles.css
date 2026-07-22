@@ -427,6 +427,13 @@ a { color: var(--accent); }
 .pill.warn { background: color-mix(in srgb, var(--primary) 20%, transparent); color: var(--primary-strong); }
 .pill.error { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
 .pill.pending { background: var(--surface-2); color: var(--muted); }
+.user-add-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.user-add-row input, .user-add-row select {
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2);
+  color: var(--text); font-family: inherit; font-size: 13.5px;
+}
+.user-add-row input { min-width: 200px; }
+.user-add-row input:focus, .user-add-row select:focus { outline: none; border-color: var(--primary); }
 .admin-actions { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .btn-sm {
   padding: 8px 15px; border: 1px solid var(--border); background: var(--surface-2);

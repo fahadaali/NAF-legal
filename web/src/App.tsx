@@ -6,6 +6,7 @@ import ChatView from './components/ChatView';
 import Admin from './components/Admin';
 import Tools from './components/Tools';
 import ReviewPage from './components/ReviewPage';
+import ChangePassword from './components/ChangePassword';
 import { useTheme } from './lib/theme';
 
 export function Aurora() {
@@ -55,6 +56,17 @@ export default function App() {
   }
 
   if (!user) return <Auth onAuth={setUser} theme={theme} onToggleTheme={toggleTheme} />;
+
+  // بوابة أول دخول: إجبار تعيين كلمة مرور جديدة
+  if (user.must_change_password) {
+    return (
+      <ChangePassword
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onDone={() => setUser({ ...user, must_change_password: false })}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">

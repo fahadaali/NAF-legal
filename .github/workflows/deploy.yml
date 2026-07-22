@@ -1,0 +1,46 @@
+name: نشر مستشار ناف على Cloudflare
+
+# نشر تلقائي عند الدفع إلى main. يتطلّب سرّين في إعدادات المستودع:
+#   CLOUDFLARE_API_TOKEN  — رمز API بصلاحية تعديل Workers
+#   CLOUDFLARE_ACCOUNT_ID — معرّف الحساب
+# الأسرار داخل الـ Worker (ANTHROPIC_API_KEY / JWT_SECRET) تُضبط مرّة واحدة عبر:
+#   npx wrangler secret put ANTHROPIC_API_KEY
+#   npx wrangler secret put JWT_SECRET
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: تثبيت الاعتماديات
+        run: |
+          npm ci
+          npm --prefix web ci
+
+      - name: بناء الواجهة
+        run: npm run build:web
+
+      - name: تطبيق ترحيلات D1
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: d1 migrations apply naf_legal --remote
+
+      - name: النشر
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

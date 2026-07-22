@@ -4,6 +4,7 @@ export interface User {
   email: string;
   role: 'user' | 'admin';
   name?: string;
+  must_change_password?: boolean;
 }
 
 export interface Conversation {
@@ -58,6 +59,8 @@ export const api = {
   register: (email: string, password: string, name: string) =>
     req<{ user: User }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
   logout: () => req('/auth/logout', { method: 'POST' }),
+  changePassword: (new_password: string, current_password?: string) =>
+    req('/auth/change-password', { method: 'POST', body: JSON.stringify({ new_password, current_password }) }),
 
   // المحادثات
   listConversations: (q?: string, folder?: string) => {
@@ -95,6 +98,11 @@ export const api = {
   resolveTracking: (id: string) => req(`/admin/tracking/${id}/resolve`, { method: 'POST' }),
   scanTracking: () => req<{ checked: number; flagged: number }>('/admin/tracking/scan', { method: 'POST' }),
   users: () => req<{ users: User[] }>('/admin/users'),
+  createUser: (email: string, role: string, name?: string) =>
+    req<{ user: User; default_password: string }>('/admin/users', { method: 'POST', body: JSON.stringify({ email, role, name }) }),
+  resetPassword: (id: string) =>
+    req<{ default_password: string }>(`/admin/users/${id}/reset-password`, { method: 'POST' }),
+  deleteUser: (id: string) => req(`/admin/users/${id}`, { method: 'DELETE' }),
   setRole: (id: string, role: string) =>
     req(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   audit: () => req<{ entries: any[] }>('/admin/audit'),

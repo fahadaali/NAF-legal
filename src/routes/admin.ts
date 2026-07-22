@@ -2,8 +2,12 @@
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { runTrackingScan, runNewsDigest } from '../cron';
-import { uuid } from '../lib/crypto';
+import { uuid, hashPassword } from '../lib/crypto';
 import type { Env, Variables } from '../types';
+
+// كلمة المرور الافتراضية للحسابات الجديدة (تُغيَّر إجباريًا عند أول دخول)
+const DEFAULT_PASSWORD = '1234';
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth, requireAdmin);
@@ -11,9 +15,29 @@ app.use('*', requireAuth, requireAdmin);
 // إدارة المستخدمين
 app.get('/users', async (c) => {
   const rows = await c.env.DB.prepare(
-    'SELECT id, email, role, name, created_at FROM users ORDER BY created_at DESC LIMIT 500'
+    'SELECT id, email, role, name, must_change_password, created_at FROM users ORDER BY created_at DESC LIMIT 500'
   ).all();
   return c.json({ users: rows.results });
+});
+
+// إنشاء حساب جديد بكلمة مرور افتراضية (1234) مع إجبار التغيير عند أول دخول
+app.post('/users', async (c) => {
+  const { email, role, name } = await c.req.json().catch(() => ({}));
+  if (!email || !EMAIL_RE.test(email)) return c.json({ error: 'بريد إلكتروني غير صالح' }, 400);
+  if (!['user', 'admin'].includes(role)) return c.json({ error: 'دور غير صالح' }, 400);
+
+  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  if (existing) return c.json({ error: 'البريد الإلكتروني مسجّل مسبقًا' }, 409);
+
+  const id = uuid();
+  const hash = await hashPassword(DEFAULT_PASSWORD);
+  await c.env.DB.prepare(
+    'INSERT INTO users (id, email, password_hash, role, name, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)'
+  )
+    .bind(id, email, hash, role, name ?? null, Date.now())
+    .run();
+  await audit(c, 'user.create', id, { email, role });
+  return c.json({ user: { id, email, role, name, must_change_password: true }, default_password: DEFAULT_PASSWORD });
 });
 
 app.patch('/users/:id/role', async (c) => {
@@ -22,6 +46,29 @@ app.patch('/users/:id/role', async (c) => {
   if (!['user', 'admin'].includes(role)) return c.json({ error: 'دور غير صالح' }, 400);
   await c.env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(role, id).run();
   await audit(c, 'user.role_change', id, { role });
+  return c.json({ ok: true });
+});
+
+// إعادة تعيين كلمة المرور إلى الافتراضية (1234) مع إجبار التغيير
+app.post('/users/:id/reset-password', async (c) => {
+  const id = c.req.param('id');
+  const hash = await hashPassword(DEFAULT_PASSWORD);
+  const res = await c.env.DB.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?')
+    .bind(hash, id)
+    .run();
+  if (!res.meta.changes) return c.json({ error: 'المستخدم غير موجود' }, 404);
+  await audit(c, 'user.reset_password', id, {});
+  return c.json({ ok: true, default_password: DEFAULT_PASSWORD });
+});
+
+// حذف مستخدم (مع منع حذف النفس)
+app.delete('/users/:id', async (c) => {
+  const id = c.req.param('id');
+  const me = c.get('user');
+  if (id === me.id) return c.json({ error: 'لا يمكنك حذف حسابك' }, 400);
+  const res = await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+  if (!res.meta.changes) return c.json({ error: 'المستخدم غير موجود' }, 404);
+  await audit(c, 'user.delete', id, {});
   return c.json({ ok: true });
 });
 
