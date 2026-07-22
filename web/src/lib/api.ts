@@ -24,6 +24,28 @@ export interface Folder {
   count: number;
 }
 
+export type FieldType = 'text' | 'number' | 'textarea';
+export interface FieldDef {
+  key: string;
+  label: string;
+  type: FieldType;
+  required?: boolean;
+  placeholder?: string;
+}
+export interface FileRequest {
+  enabled: boolean;
+  label: string;
+  required: boolean;
+  allow_text: boolean;
+}
+export interface ConsultConfig {
+  key: string;
+  label: string;
+  system_prompt?: string;
+  file: FileRequest;
+  fields: FieldDef[];
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -137,6 +159,14 @@ export const api = {
 
   // البحث الدلالي
   search: (q: string) => req<{ results: any[]; mode: string }>(`/search?q=${encodeURIComponent(q)}`),
+
+  // إعداد نماذج الاستشارات
+  consultationConfigs: () => req<{ configs: ConsultConfig[] }>('/consultations/configs'),
+  adminConsultationConfigs: () => req<{ configs: ConsultConfig[] }>('/admin/consultation-configs'),
+  saveConsultationConfig: (key: string, config: ConsultConfig) =>
+    req<{ config: ConsultConfig }>(`/admin/consultation-configs/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(config) }),
+  resetConsultationConfig: (key: string) =>
+    req<{ config: ConsultConfig }>(`/admin/consultation-configs/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   // الأدوات القانونية
   compare: (text_a: string, text_b: string) =>

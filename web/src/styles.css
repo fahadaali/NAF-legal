@@ -520,6 +520,39 @@ a { color: var(--accent); }
   font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14.5px; line-height: 1.9; color: var(--text);
 }
 
+/* نافذة الإدخال الأولي */
+.modal-card.intake { height: auto; max-height: 92vh; width: min(680px, 96vw); }
+.modal-body.intake-body { padding: 20px 22px; }
+.intake-textarea {
+  width: 100%; min-height: 84px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2); color: var(--text); font-family: inherit; font-size: 14px; line-height: 1.8;
+  resize: none; overflow: hidden;
+}
+.intake-textarea:focus { outline: none; border-color: var(--primary); }
+.intake-toggle { display: flex; gap: 6px; margin-bottom: 8px; }
+.intake-toggle .seg {
+  padding: 6px 14px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+  border-radius: 8px; font-size: 12.5px; font-weight: 600;
+}
+.intake-toggle .seg.on { background: linear-gradient(135deg, var(--primary-strong), var(--primary)); color: var(--primary-contrast); border-color: transparent; }
+.modal-foot {
+  display: flex; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* بنّاء نماذج الاستشارات في الإعدادات */
+.cfg-field-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.cfg-field-row input, .cfg-field-row select {
+  padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);
+  color: var(--text); font-family: inherit; font-size: 13px;
+}
+.cfg-field-row input:focus, .cfg-field-row select:focus { outline: none; border-color: var(--primary); }
+.cfg-prompt {
+  width: 100%; min-height: 200px; padding: 13px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2); color: var(--text); font-family: inherit; font-size: 13.5px; line-height: 1.8; resize: vertical;
+}
+.cfg-prompt:focus { outline: none; border-color: var(--primary); }
+
 .spinner {
   width: 18px; height: 18px; border: 2px solid var(--border-strong); border-top-color: var(--primary);
   border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle;

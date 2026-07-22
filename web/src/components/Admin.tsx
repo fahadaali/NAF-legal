@@ -1,16 +1,17 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { api } from '../lib/api';
+import { api, ConsultConfig, FieldDef, FieldType } from '../lib/api';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
 
-type Tab = 'kb' | 'tracking' | 'news' | 'analytics' | 'users' | 'settings' | 'audit';
+type Tab = 'kb' | 'tracking' | 'news' | 'forms' | 'analytics' | 'users' | 'settings' | 'audit';
 
 const TABS: [Tab, string][] = [
   ['kb', 'قاعدة المعرفة'],
   ['tracking', 'تتبّع الأنظمة'],
   ['news', 'خلاصة الأخبار'],
+  ['forms', 'نماذج الاستشارات'],
   ['analytics', 'التحليلات'],
   ['users', 'المستخدمون'],
   ['settings', 'الإعدادات'],
@@ -33,6 +34,7 @@ export default function Admin() {
         {tab === 'kb' && <KbTab />}
         {tab === 'tracking' && <TrackingTab />}
         {tab === 'news' && <NewsTab />}
+        {tab === 'forms' && <FormsTab />}
         {tab === 'analytics' && <AnalyticsTab />}
         {tab === 'users' && <UsersTab />}
         {tab === 'settings' && <SettingsTab />}
@@ -463,6 +465,123 @@ function NewsTab() {
           </tbody>
         </table>
       )}
+    </div>
+  );
+}
+
+// بنّاء نماذج الاستشارات: البرومبت + طلب الملف + الحقول
+function FormsTab() {
+  const [configs, setConfigs] = useState<ConsultConfig[]>([]);
+  const [key, setKey] = useState<string>('');
+  const [draft, setDraft] = useState<ConsultConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () =>
+    api.adminConsultationConfigs().then((r) => {
+      setConfigs(r.configs);
+      if (!key && r.configs.length) {
+        setKey(r.configs[0].key);
+        setDraft(structuredClone(r.configs[0]));
+      }
+    }).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const select = (k: string) => {
+    setKey(k);
+    const c = configs.find((x) => x.key === k);
+    if (c) setDraft(structuredClone(c));
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
+    try {
+      const r = await api.saveConsultationConfig(draft.key, draft);
+      setConfigs((cs) => cs.map((c) => (c.key === draft.key ? r.config : c)));
+      alert('حُفظ الإعداد.');
+    } catch (e: any) {
+      alert(e.message ?? 'فشل الحفظ');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = async () => {
+    if (!draft || !confirm('إعادة هذا النوع إلى الإعداد الافتراضي؟')) return;
+    const r = await api.resetConsultationConfig(draft.key);
+    setDraft(structuredClone(r.config));
+    setConfigs((cs) => cs.map((c) => (c.key === draft.key ? r.config : c)));
+  };
+
+  const setField = (i: number, patch: Partial<FieldDef>) => {
+    if (!draft) return;
+    const fields = draft.fields.map((f, idx) => (idx === i ? { ...f, ...patch } : f));
+    setDraft({ ...draft, fields });
+  };
+  const addField = () => {
+    if (!draft) return;
+    setDraft({ ...draft, fields: [...draft.fields, { key: 'f' + Date.now(), label: 'حقل جديد', type: 'text' as FieldType }] });
+  };
+  const removeField = (i: number) => {
+    if (!draft) return;
+    setDraft({ ...draft, fields: draft.fields.filter((_, idx) => idx !== i) });
+  };
+  const move = (i: number, dir: -1 | 1) => {
+    if (!draft) return;
+    const j = i + dir;
+    if (j < 0 || j >= draft.fields.length) return;
+    const fields = [...draft.fields];
+    [fields[i], fields[j]] = [fields[j], fields[i]];
+    setDraft({ ...draft, fields });
+  };
+
+  if (!draft) return <div className="empty-state"><span className="spinner" /></div>;
+
+  return (
+    <div>
+      <div className="field" style={{ maxWidth: 360 }}>
+        <label>نوع الاستشارة</label>
+        <select value={key} onChange={(e) => select(e.target.value)} style={{ width: '100%', padding: 10, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}>
+          {configs.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
+      </div>
+
+      <div className="section-title">توجيه النظام (البرومبت المُرسَل إلى Claude)</div>
+      <textarea className="cfg-prompt" value={draft.system_prompt ?? ''} onChange={(e) => setDraft({ ...draft, system_prompt: e.target.value })} />
+
+      <div className="section-title">طلب الملف</div>
+      <div className="cfg-field-row">
+        <label><input type="checkbox" checked={draft.file.enabled} onChange={(e) => setDraft({ ...draft, file: { ...draft.file, enabled: e.target.checked } })} /> تفعيل طلب ملف</label>
+        {draft.file.enabled && (
+          <>
+            <input placeholder="اسم المطالبة (مثال: صك الحكم)" value={draft.file.label} onChange={(e) => setDraft({ ...draft, file: { ...draft.file, label: e.target.value } })} style={{ minWidth: 240 }} />
+            <label><input type="checkbox" checked={draft.file.required} onChange={(e) => setDraft({ ...draft, file: { ...draft.file, required: e.target.checked } })} /> إلزامي</label>
+            <label><input type="checkbox" checked={draft.file.allow_text} onChange={(e) => setDraft({ ...draft, file: { ...draft.file, allow_text: e.target.checked } })} /> السماح بلصق النص بدلًا من الملف</label>
+          </>
+        )}
+      </div>
+
+      <div className="section-title">الحقول المطلوب تعبئتها</div>
+      {draft.fields.map((f, i) => (
+        <div className="cfg-field-row" key={f.key}>
+          <input placeholder="اسم الحقل" value={f.label} onChange={(e) => setField(i, { label: e.target.value })} style={{ minWidth: 240 }} />
+          <select value={f.type} onChange={(e) => setField(i, { type: e.target.value as FieldType })}>
+            <option value="text">نص قصير</option>
+            <option value="number">رقم</option>
+            <option value="textarea">فقرة طويلة (تتمدّد)</option>
+          </select>
+          <label><input type="checkbox" checked={!!f.required} onChange={(e) => setField(i, { required: e.target.checked })} /> إلزامي</label>
+          <button className="btn-sm" onClick={() => move(i, -1)} title="أعلى">▲</button>
+          <button className="btn-sm" onClick={() => move(i, 1)} title="أسفل">▼</button>
+          <button className="btn-sm" onClick={() => removeField(i)}>حذف</button>
+        </div>
+      ))}
+      <button className="btn-sm" onClick={addField}>＋ إضافة حقل</button>
+
+      <div className="admin-actions" style={{ marginTop: 22 }}>
+        <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
+        <button className="btn-sm" onClick={reset}>إعادة للافتراضي</button>
+      </div>
     </div>
   );
 }

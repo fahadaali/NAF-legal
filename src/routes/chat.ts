@@ -5,7 +5,8 @@ import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
 import { retrieve, formatRagContext, indexConversationMessage } from '../lib/rag';
 import { streamClaude, webSearchTool, OFFICIAL_DOMAINS } from '../lib/claude';
-import { systemPromptFor, BILINGUAL_INSTRUCTION } from '../lib/prompts';
+import { BILINGUAL_INSTRUCTION } from '../lib/prompts';
+import { getEffectiveConfig } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
 import type { Env, Variables } from '../types';
@@ -83,8 +84,9 @@ app.post('/:conversationId', async (c) => {
     }
   }
 
-  // [3] تجميع البرومبت
-  let system = systemPromptFor(plan.consultation_type);
+  // [3] تجميع البرومبت (يُستخدم البرومبت القابل للتحكّم من الإدارة إن وُجد)
+  const effectiveConfig = await getEffectiveConfig(c.env, plan.consultation_type);
+  let system = effectiveConfig.system_prompt;
   if (bilingual) system += BILINGUAL_INSTRUCTION;
   const attachmentsBlock = hasAttachments
     ? '\n\n<الملفات_المرفوعة>\n' +
