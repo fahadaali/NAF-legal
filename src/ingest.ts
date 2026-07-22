@@ -4,6 +4,11 @@ import { chunkText, embedBatch } from './lib/rag';
 import type { Env } from './types';
 
 export async function ingestDocument(env: Env, docId: string): Promise<void> {
+  // بدون Vectorize لا يمكن التضمين — نُعلّم الوثيقة كجاهزة نصّيًا فقط
+  if (!env.VECTORIZE) {
+    await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'ready', chunk_count = 0 WHERE id = ?").bind(docId).run();
+    return;
+  }
   await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'processing' WHERE id = ?").bind(docId).run();
 
   const doc = await env.DB.prepare('SELECT title, category FROM kb_documents WHERE id = ?')
@@ -25,7 +30,7 @@ export async function ingestDocument(env: Env, docId: string): Promise<void> {
     .first<{ chunk_count: number }>();
   if (oldDoc?.chunk_count) {
     const oldIds = Array.from({ length: oldDoc.chunk_count }, (_, i) => `${docId}:${i}`);
-    await env.VECTORIZE.deleteByIds(oldIds).catch(() => {});
+    await env.VECTORIZE!.deleteByIds(oldIds).catch(() => {});
   }
 
   // ضمّن على دفعات
@@ -44,7 +49,7 @@ export async function ingestDocument(env: Env, docId: string): Promise<void> {
         article_ref: extractArticleRef(chunk),
       },
     }));
-    await env.VECTORIZE.upsert(toUpsert);
+    await env.VECTORIZE!.upsert(toUpsert);
   }
 
   await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'ready', chunk_count = ? WHERE id = ?")

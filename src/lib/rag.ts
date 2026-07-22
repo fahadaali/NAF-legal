@@ -54,11 +54,12 @@ export interface RagResult {
 
 // البحث في Vectorize وإعادة أوثق المقاطع مع الإسناد
 export async function retrieve(env: Env, queries: string[], topK = 5): Promise<RagResult[]> {
+  if (!env.VECTORIZE) return []; // Vectorize غير مُهيّأ — لا استرجاع دلالي
   const seen = new Map<string, RagResult>();
   for (const q of queries) {
     if (!q?.trim()) continue;
     const vector = await embed(env, q);
-    const matches = await env.VECTORIZE.query(vector, { topK, returnMetadata: 'all' });
+    const matches = await env.VECTORIZE!.query(vector, { topK, returnMetadata: 'all' });
     for (const m of matches.matches ?? []) {
       const meta = (m.metadata ?? {}) as any;
       const key = m.id;
@@ -83,9 +84,10 @@ export async function indexConversationMessage(
   env: Env,
   opts: { messageId: string; conversationId: string; userId: string; role: string; content: string; title: string }
 ): Promise<void> {
+  if (!env.CONV_VECTORIZE) return;
   try {
     const vec = await embed(env, opts.content.slice(0, 2000));
-    await env.CONV_VECTORIZE.upsert([
+    await env.CONV_VECTORIZE!.upsert([
       {
         id: opts.messageId,
         values: vec,
@@ -111,9 +113,10 @@ export interface ConvSearchHit {
 }
 
 export async function searchConversations(env: Env, userId: string, query: string, topK = 10): Promise<ConvSearchHit[] | null> {
+  if (!env.CONV_VECTORIZE) return null; // رجوع إلى البحث النصّي
   try {
     const vec = await embed(env, query);
-    const res = await env.CONV_VECTORIZE.query(vec, {
+    const res = await env.CONV_VECTORIZE!.query(vec, {
       topK,
       returnMetadata: 'all',
       filter: { user_id: userId },

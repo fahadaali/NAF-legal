@@ -42,9 +42,10 @@ jobs:
           set +e
           npx wrangler d1 create naf_legal
           npx wrangler r2 bucket create naf-legal-files
+          npx wrangler kv namespace create KV
+          # فهارس Vectorize اختيارية (تتطلّب صلاحية Vectorize في الرمز):
           npx wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
           npx wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
-          npx wrangler kv namespace create KV
           true
 
       - name: حقن المعرّفات في wrangler.toml

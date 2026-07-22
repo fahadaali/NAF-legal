@@ -91,7 +91,7 @@ app.delete('/documents/:id', async (c) => {
 
   // حذف المتجهات
   const ids = Array.from({ length: doc.chunk_count ?? 0 }, (_, i) => `${id}:${i}`);
-  if (ids.length) await c.env.VECTORIZE.deleteByIds(ids).catch(() => {});
+  if (ids.length) await c.env.VECTORIZE?.deleteByIds(ids).catch(() => {});
   if (doc.r2_key) await c.env.R2.delete(doc.r2_key).catch(() => {});
   await c.env.R2.delete(`kb-text/${id}.txt`).catch(() => {});
   await c.env.DB.prepare('DELETE FROM kb_documents WHERE id = ?').bind(id).run();

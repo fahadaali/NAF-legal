@@ -21,15 +21,17 @@ migrations_dir = "migrations"
 binding = "R2"
 bucket_name = "naf-legal-files"
 
-# ── البحث المتجهي Vectorize ──
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "naf-legal-kb"
-
-# فهرس متجهي لبحث سجل المحادثات الدلالي (§3)
-[[vectorize]]
-binding = "CONV_VECTORIZE"
-index_name = "naf-legal-conv"
+# ── البحث المتجهي Vectorize (اختياري — لتفعيل RAG) ──
+# لتفعيل الاسترجاع الدلالي وبحث المحادثات، أنشئ الفهرسين ثم أزِل التعليق:
+#   wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
+#   wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
+# (يتطلّب أن يملك رمز API صلاحية Vectorize)
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "naf-legal-kb"
+# [[vectorize]]
+# binding = "CONV_VECTORIZE"
+# index_name = "naf-legal-conv"
 
 # ── الذكاء الاصطناعي للتضمينات Workers AI ──
 [ai]
