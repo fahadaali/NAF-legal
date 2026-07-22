@@ -22,7 +22,8 @@ const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشا
 - مهام الصياغة (عقد، صحيفة دعوى، مذكرة، لائحة) تحتاج غالبًا قاعدة المعرفة، و output_format = "docx".
 - فعّل needs_internet_search=true فقط عند مؤشّرات مثل: «آخر تعديل»، «نظام جديد»، «صدر مؤخّرًا»، «خبر»، «حكم حديث».
 - الاستشارة التفسيرية عن نظام مستقر: needs_knowledge_base=true و needs_internet_search=false.
-- إن نقصت معلومة جوهرية لإنجاز المهمة، املأ clarifying_questions ولا تُكمِل التخمين.`;
+- **السياق مهم:** إن وُجد «سجل المحادثة» فالرسالة الحالية غالبًا **متابعة** لما سبق (تعديل، إضافة، تصحيح، سؤال متفرّع). افهمها في ضوء ما دار، ولا تعامِلها كطلب جديد منفصل.
+- لا تطرح clarifying_questions إلا إذا كانت هناك معلومة جوهرية **مفقودة فعلًا** ولا يمكن استنتاجها من سجل المحادثة. في رسائل المتابعة اترك clarifying_questions فارغة غالبًا.`;
 
 export async function runPlanner(
   env: Env,
@@ -30,13 +31,22 @@ export async function runPlanner(
   selectedType: string | undefined,
   hasAttachments: boolean,
   forceInternet: boolean,
-  userId?: string
+  userId?: string,
+  history?: { role: string; content: string }[]
 ): Promise<PlannerOutput> {
+  // آخر بضع رسائل من المحادثة لإعطاء المُخطِّط سياقًا (بدون الرسالة الحالية)
+  const priorTurns = (history ?? [])
+    .filter((m) => m.role !== 'system')
+    .slice(-7, -1)
+    .map((m) => `${m.role === 'user' ? 'المستخدم' : 'المستشار'}: ${m.content.slice(0, 600)}`)
+    .join('\n');
+  const historyBlock = priorTurns ? `سجل المحادثة (الأحدث في الأسفل):\n${priorTurns}\n\n` : '';
+
   const context = `نوع الاستشارة المختار: ${selectedType ?? 'غير محدّد'}
 هل رفع المستخدم ملفات؟ ${hasAttachments ? 'نعم' : 'لا'}
 هل فعّل المستخدم البحث في الإنترنت يدويًا؟ ${forceInternet ? 'نعم' : 'لا'}
 
-رسالة المستخدم:
+${historyBlock}رسالة المستخدم الحالية:
 ${userMessage}`;
 
   try {

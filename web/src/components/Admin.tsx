@@ -141,6 +141,8 @@ function KbTab() {
                   <td>{statusPill(d.ingest_status)}</td>
                   <td>{d.chunk_count ?? 0}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
+                    <a href={api.kbTextUrl(d.id)} target="_blank" rel="noopener"><button className="btn-sm">📄 النص</button></a>{' '}
+                    <a href={api.kbFileUrl(d.id)} target="_blank" rel="noopener"><button className="btn-sm">📎 الملف</button></a>{' '}
                     <VersionUpload docId={d.id} version={d.version} onDone={load} />{' '}
                     <button className="btn-sm" onClick={() => setVersionsFor(versionsFor === d.id ? null : d.id)}>
                       السجل{d.version > 1 ? ` (${d.version})` : ''}
@@ -394,11 +396,16 @@ function VersionsList({ docId }: { docId: string }) {
       <strong style={{ fontSize: 13.5 }}>سجل الإصدارات:</strong>
       <ul style={{ margin: '6px 0', paddingInlineStart: 18 }}>
         {versions.map((v) => (
-          <li key={v.id} style={{ margin: '3px 0' }}>
+          <li key={v.id} style={{ margin: '5px 0' }}>
             الإصدار {v.version}
             {v.effective_from ? ` · سريان من ${v.effective_from}` : ''}
             {v.effective_to ? ` · حتى ${v.effective_to}` : ' · (سارية)'}
             {v.note ? ` — ${v.note}` : ''}
+            {'  '}
+            <a href={api.kbVersionTextUrl(docId, v.id)} target="_blank" rel="noopener" style={{ marginInlineStart: 6 }}>📄 النص</a>
+            {v.file_r2_key && (
+              <a href={api.kbVersionFileUrl(docId, v.id)} target="_blank" rel="noopener" style={{ marginInlineStart: 8 }}>📎 الملف</a>
+            )}
           </li>
         ))}
       </ul>
