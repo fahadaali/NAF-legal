@@ -45,7 +45,6 @@ jobs:
           npx wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
           npx wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
           npx wrangler kv namespace create KV
-          npx wrangler queues create naf-legal-ingest
           true
 
       - name: حقن المعرّفات في wrangler.toml

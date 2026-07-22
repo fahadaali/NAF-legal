@@ -7,7 +7,6 @@ export interface Env {
   CONV_VECTORIZE: VectorizeIndex;
   AI: Ai;
   KV: KVNamespace;
-  QUEUE: Queue<IngestJob>;
   ASSETS: Fetcher;
   // vars
   APP_NAME: string;
@@ -30,10 +29,6 @@ export interface AuthUser {
 export type Variables = {
   user: AuthUser;
 };
-
-export interface IngestJob {
-  kb_document_id: string;
-}
 
 // أنواع الاستشارات (§4)
 export type ConsultationType =
