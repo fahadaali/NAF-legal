@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { runTrackingScan, runNewsDigest } from '../cron';
+import { ingestDocument } from '../ingest';
 import { uuid, hashPassword } from '../lib/crypto';
 import type { Env, Variables } from '../types';
 
@@ -229,7 +230,7 @@ async function ingestFromUrl(env: Env, docId: string, url: string) {
     const html = await res.text();
     const text = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     await env.R2.put(`kb-text/${docId}.txt`, text);
-    await env.QUEUE.send({ kb_document_id: docId });
+    await ingestDocument(env, docId);
   } catch {
     await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'error' WHERE id = ?").bind(docId).run();
   }

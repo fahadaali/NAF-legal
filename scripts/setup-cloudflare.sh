@@ -56,10 +56,6 @@ else
 fi
 
 # ── Queue ──
-say "إنشاء طابور المعالجة (naf-legal-ingest)"
-npx wrangler queues create naf-legal-ingest 2>&1 || echo "(قد يكون موجودًا)"
-ok "Queue جاهز"
-
 # ── الأسرار ──
 say "الأسرار المطلوبة (تُدخَل مرّة واحدة)"
 echo "شغّل الأوامر التالية وأدخِل القيم عند الطلب:"

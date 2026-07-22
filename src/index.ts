@@ -13,11 +13,10 @@ import feedbackRoutes from './routes/feedback';
 import foldersRoutes from './routes/folders';
 import sharesRoutes from './routes/shares';
 import searchRoutes from './routes/search';
-import { handleIngest } from './ingest';
 import { runTrackingScan, runNewsDigest } from './cron';
 import { verifyJwt } from './lib/crypto';
 import { SESSION_COOKIE } from './lib/auth';
-import type { Env, Variables, IngestJob } from './types';
+import type { Env, Variables } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -61,11 +60,6 @@ app.get('*', (c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default {
   fetch: app.fetch,
-
-  // مستهلك Queue للتضمين — §8
-  async queue(batch: MessageBatch<IngestJob>, env: Env): Promise<void> {
-    await handleIngest(batch, env);
-  },
 
   // Cron لتتبّع الأنظمة — §7
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {

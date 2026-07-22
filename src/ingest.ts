@@ -1,20 +1,9 @@
-// مستهلك Queue: تقسيم النص وتوليد التضمينات وتخزينها في Vectorize — §6
+// تقسيم النص وتوليد التضمينات وتخزينها في Vectorize — §6
+// يُستدعى مباشرةً عبر ctx.waitUntil (بلا Queues لدعم الخطة المجانية).
 import { chunkText, embedBatch } from './lib/rag';
-import type { Env, IngestJob } from './types';
+import type { Env } from './types';
 
-export async function handleIngest(batch: MessageBatch<IngestJob>, env: Env): Promise<void> {
-  for (const msg of batch.messages) {
-    try {
-      await ingestDocument(env, msg.body.kb_document_id);
-      msg.ack();
-    } catch (e) {
-      console.error('فشل التضمين:', e);
-      msg.retry();
-    }
-  }
-}
-
-async function ingestDocument(env: Env, docId: string): Promise<void> {
+export async function ingestDocument(env: Env, docId: string): Promise<void> {
   await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'processing' WHERE id = ?").bind(docId).run();
 
   const doc = await env.DB.prepare('SELECT title, category FROM kb_documents WHERE id = ?')

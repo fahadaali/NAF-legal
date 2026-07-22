@@ -4,6 +4,7 @@ import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { extractText } from '../lib/extract';
 import { callClaude } from '../lib/claude';
+import { ingestDocument } from '../ingest';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -61,7 +62,7 @@ app.post('/documents', async (c) => {
   await c.env.R2.put(`kb-text/${id}.txt`, text);
 
   // جدولة التضمين عبر Queue
-  await c.env.QUEUE.send({ kb_document_id: id });
+  c.executionCtx.waitUntil(ingestDocument(c.env, id));
 
   await audit(c, 'kb.upload', id, { title: meta.title, category: meta.category });
   return c.json({ id, metadata: meta, ingest_status: 'pending' });
@@ -160,7 +161,7 @@ app.post('/documents/:id/versions', async (c) => {
     .bind(uuid(), id, oldVersion + 1, `kb-text/${id}.txt`, effectiveFrom, note ?? 'النسخة السارية', now)
     .run();
 
-  await c.env.QUEUE.send({ kb_document_id: id });
+  c.executionCtx.waitUntil(ingestDocument(c.env, id));
   await audit(c, 'kb.new_version', id, { version: oldVersion + 1 });
   return c.json({ ok: true, version: oldVersion + 1 });
 });
@@ -169,7 +170,7 @@ app.post('/documents/:id/versions', async (c) => {
 app.post('/documents/:id/reingest', async (c) => {
   const id = c.req.param('id');
   await c.env.DB.prepare("UPDATE kb_documents SET ingest_status = 'pending' WHERE id = ?").bind(id).run();
-  await c.env.QUEUE.send({ kb_document_id: id });
+  c.executionCtx.waitUntil(ingestDocument(c.env, id));
   await audit(c, 'kb.reingest', id, {});
   return c.json({ ok: true });
 });
