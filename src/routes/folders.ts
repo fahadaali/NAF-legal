@@ -7,7 +7,8 @@ import type { Env, Variables } from '../types';
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth);
 
-const COLORS = ['#0f766e', '#b08d57', '#3b82f6', '#8b5cf6', '#ef4444', '#10b981'];
+// ألوان متناغمة مع هوية الشعار (كحلي/بيج/أزرق فولاذي)
+const COLORS = ['#b8a488', '#86a6d4', '#6fca9a', '#c2ad8e', '#8f9bb3', '#d0a879'];
 
 app.get('/', async (c) => {
   const user = c.get('user');

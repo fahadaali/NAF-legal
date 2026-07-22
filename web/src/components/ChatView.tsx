@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, Message, Attachment, streamChat } from '../lib/api';
+import { api, Message, Attachment, Folder, streamChat } from '../lib/api';
 import { CONSULTATIONS, labelFor } from '../lib/consultations';
 import { renderMarkdown } from '../lib/markdown';
 
@@ -20,6 +20,9 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
   const [convType, setConvType] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [convFolder, setConvFolder] = useState<string>('');
+  const [feedback, setFeedback] = useState<Record<string, number>>({});
   const [input, setInput] = useState('');
   const [internet, setInternet] = useState(false);
   const [bilingual, setBilingual] = useState(false);
@@ -34,22 +37,36 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
   const chunks = useRef<Blob[]>([]);
 
   useEffect(() => {
+    api.folders().then((r) => setFolders(r.folders)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (conversationId) {
       api.getConversation(conversationId).then((r) => {
         setConvType(r.conversation.consultation_type);
-        setMessages(
-          r.messages.map((m) => {
-            let citations, clarifying, verification;
-            try {
-              const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
-              citations = meta.citations;
-              clarifying = meta.clarifying;
-              verification = meta.verification;
-            } catch {}
-            return { ...m, citations, clarifying, verification };
-          })
-        );
+        setConvFolder((r.conversation as any).folder_id ?? '');
+        const msgs = r.messages.map((m) => {
+          let citations, clarifying, verification;
+          try {
+            const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
+            citations = meta.citations;
+            clarifying = meta.clarifying;
+            verification = meta.verification;
+          } catch {}
+          return { ...m, citations, clarifying, verification };
+        });
+        setMessages(msgs);
         setAttachments(r.attachments);
+        // حمّل تقييمات المستخدم لرسائل المساعد لإبراز الحالة الحالية
+        Promise.all(
+          msgs
+            .filter((m) => m.role === 'assistant')
+            .map((m) => api.getFeedback(m.id).then((f) => [m.id, f.feedback?.rating] as const).catch(() => [m.id, undefined] as const))
+        ).then((pairs) => {
+          const map: Record<string, number> = {};
+          for (const [id, r] of pairs) if (r) map[id] = r;
+          setFeedback(map);
+        });
       });
     } else {
       setConvType(null);
@@ -203,10 +220,19 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
   };
 
   const sendFeedback = async (m: UiMessage, rating: number) => {
+    const next = feedback[m.id] === rating ? 0 : rating; // إلغاء عند إعادة النقر
+    setFeedback((f) => ({ ...f, [m.id]: next }));
+    if (next === 0) return;
     try {
-      await api.sendFeedback(m.id, rating);
-      alert(rating === 1 ? 'شكرًا لتقييمك 👍' : 'شكرًا، سنعمل على التحسين 👎');
+      await api.sendFeedback(m.id, next);
     } catch {}
+  };
+
+  const assignFolder = async (folderId: string) => {
+    if (!conversationId) return;
+    setConvFolder(folderId);
+    await api.assignFolder(conversationId, folderId || null).catch(() => {});
+    onConversationChange(conversationId); // حدّث الشريط الجانبي
   };
 
   // ── شاشة اختيار النوع ──
@@ -253,6 +279,16 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
           ☰
         </button>
         <span className="ch-title">{messages.find((m) => m.role === 'user')?.content.slice(0, 50) ?? 'محادثة جديدة'}</span>
+        {folders.length > 0 && (
+          <select className="folder-select" value={convFolder} onChange={(e) => assignFolder(e.target.value)} title="ربط بقضية">
+            <option value="">📁 بدون قضية</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        )}
         {convType && <span className="ch-badge">{labelFor(convType)}</span>}
       </div>
 
@@ -305,8 +341,8 @@ export default function ChatView({ conversationId, onConversationChange, onToggl
                     </a>
                     <button onClick={() => navigator.clipboard.writeText(m.content)}>نسخ</button>
                     <button onClick={() => shareDraft(m)}>🔗 مشاركة للمراجعة</button>
-                    <button onClick={() => sendFeedback(m, 1)} title="مفيد">👍</button>
-                    <button onClick={() => sendFeedback(m, -1)} title="يحتاج تحسين">👎</button>
+                    <button className={feedback[m.id] === 1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, 1)} title="مفيد">👍</button>
+                    <button className={feedback[m.id] === -1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, -1)} title="يحتاج تحسين">👎</button>
                   </div>
                 )}
               </div>

@@ -10,8 +10,17 @@ export interface Conversation {
   id: string;
   title: string;
   consultation_type: string | null;
+  folder_id?: string | null;
+  tags_json?: string | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  color: string;
+  count: number;
 }
 
 export interface Message {
@@ -51,8 +60,13 @@ export const api = {
   logout: () => req('/auth/logout', { method: 'POST' }),
 
   // المحادثات
-  listConversations: (q?: string) =>
-    req<{ conversations: Conversation[] }>(`/conversations${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  listConversations: (q?: string, folder?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (folder) params.set('folder', folder);
+    const qs = params.toString();
+    return req<{ conversations: Conversation[] }>(`/conversations${qs ? `?${qs}` : ''}`);
+  },
   createConversation: (consultation_type: string) =>
     req<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ consultation_type }) }),
   getConversation: (id: string) =>
@@ -97,8 +111,8 @@ export const api = {
     req(`/feedback/${messageId}`, { method: 'POST', body: JSON.stringify({ rating, comment }) }),
 
   // القضايا والوسوم
-  folders: () => req<{ folders: any[] }>('/folders'),
-  createFolder: (name: string) => req<any>('/folders', { method: 'POST', body: JSON.stringify({ name }) }),
+  folders: () => req<{ folders: Folder[] }>('/folders'),
+  createFolder: (name: string) => req<Folder>('/folders', { method: 'POST', body: JSON.stringify({ name }) }),
   deleteFolder: (id: string) => req(`/folders/${id}`, { method: 'DELETE' }),
   assignFolder: (conversation_id: string, folder_id: string | null) =>
     req('/folders/assign', { method: 'POST', body: JSON.stringify({ conversation_id, folder_id }) }),
