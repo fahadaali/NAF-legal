@@ -75,26 +75,46 @@ npm run dev                      # http://localhost:8787
 
 ## النشر إلى Cloudflare
 
+### الطريقة السريعة (سكربت موحّد)
+
 ```bash
-# أنشئ الموارد مرّة واحدة، وحدّث المعرّفات في wrangler.toml
-wrangler d1 create naf_legal
+npx wrangler login                 # مرّة واحدة (يفتح المتصفّح)
+bash scripts/setup-cloudflare.sh   # يُنشئ D1/R2/Vectorize×2/KV/Queue ويحدّث wrangler.toml
+npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put JWT_SECRET # مثال لتوليد قيمة: openssl rand -hex 32
+npm run deploy
+```
+
+### يدويًا (تفصيليًا)
+
+```bash
+wrangler d1 create naf_legal                                            # ← ضع database_id في wrangler.toml
 wrangler r2 bucket create naf-legal-files
-wrangler vectorize create naf-legal-kb --dimensions=1024 --metric=cosine
-wrangler kv namespace create KV
+wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
+wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
+wrangler kv namespace create KV                                         # ← ضع id في wrangler.toml
 wrangler queues create naf-legal-ingest
 
-# أسرار الإنتاج
 wrangler secret put ANTHROPIC_API_KEY
 wrangler secret put JWT_SECRET
 
-# الترحيل والنشر
 npm run db:migrate:remote
 npm run deploy
 ```
 
 > بُعد المتجهات `1024` مطابق لنموذج `@cf/baai/bge-m3`.
 
-**أول مستخدم يُسجَّل يصبح مسؤولًا تلقائيًا** (يملك لوحة الإدارة).
+### النشر التلقائي (GitHub Actions)
+
+يوجد `/.github/workflows/deploy.yml` ينشر عند كل دفع إلى `main`. أضِف في إعدادات المستودع سرّين:
+`CLOUDFLARE_API_TOKEN` و`CLOUDFLARE_ACCOUNT_ID` (أسرار الـ Worker تُضبط مرّة واحدة عبر `wrangler secret put`).
+
+### نموذج الحسابات وتسجيل الدخول
+
+- عند أول تشغيل: افتح الموقع وأنشئ **حساب المسؤول الأول** (متاح فقط عندما تكون قاعدة المستخدمين فارغة؛ بعدها يُغلق التسجيل الذاتي).
+- المسؤول يضيف بقية المستخدمين من **لوحة الإدارة › المستخدمون** (البريد + الدور). كلمة المرور الافتراضية لأي حساب جديد: **`1234`**.
+- عند أول دخول للمستخدم بكلمة `1234`، يُطلب منه **تعيين كلمة مرور جديدة** تُحفظ في قاعدة البيانات، فيدخل بعدها دائمًا بالبريد وكلمة المرور الجديدة.
+- يستطيع المسؤول **تصفير** كلمة مرور أي مستخدم إلى `1234` (فيُطلب منه تغييرها مجددًا) أو حذف الحساب.
 
 ---
 

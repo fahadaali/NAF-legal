@@ -76,8 +76,8 @@ export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: Use
         <div className="auth-switch">
           {mode === 'login' ? (
             <>
-              ليس لديك حساب؟{' '}
-              <button onClick={() => { setMode('register'); setError(''); }}>أنشئ حسابًا</button>
+              الحسابات يُنشئها مسؤول النظام. لأول تهيئة فقط:{' '}
+              <button onClick={() => { setMode('register'); setError(''); }}>إنشاء حساب المسؤول الأول</button>
             </>
           ) : (
             <>

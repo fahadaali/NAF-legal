@@ -254,45 +254,100 @@ function TrackingTab() {
 
 function UsersTab() {
   const [users, setUsers] = useState<any[]>([]);
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [role, setRole] = useState('user');
+  const [busy, setBusy] = useState(false);
   const load = () => api.users().then((r) => setUsers(r.users)).catch(() => {});
   useEffect(() => {
     load();
   }, []);
 
+  const addUser = async () => {
+    if (!email.trim()) return alert('أدخل البريد الإلكتروني');
+    setBusy(true);
+    try {
+      const r = await api.createUser(email.trim(), role, name.trim() || undefined);
+      alert(`أُنشئ الحساب.\nكلمة المرور الافتراضية: ${r.default_password}\nسيُطلب من المستخدم تغييرها عند أول دخول.`);
+      setEmail(''); setName(''); setRole('user');
+      load();
+    } catch (e: any) {
+      alert(e.message ?? 'فشل إنشاء الحساب');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async (id: string) => {
+    if (!confirm('إعادة تعيين كلمة المرور إلى 1234؟')) return;
+    const r = await api.resetPassword(id);
+    alert(`أُعيد التعيين. كلمة المرور الافتراضية: ${r.default_password}`);
+    load();
+  };
+
+  const del = async (id: string) => {
+    if (!confirm('حذف هذا المستخدم نهائيًا؟')) return;
+    try { await api.deleteUser(id); load(); } catch (e: any) { alert(e.message); }
+  };
+
   return (
-    <table className="data-table">
-      <thead>
-        <tr>
-          <th>الاسم</th>
-          <th>البريد</th>
-          <th>الدور</th>
-          <th>تاريخ الإنشاء</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {users.map((u) => (
-          <tr key={u.id}>
-            <td>{u.name ?? '—'}</td>
-            <td dir="ltr" style={{ textAlign: 'right' }}>{u.email}</td>
-            <td>
-              <span className={`pill ${u.role === 'admin' ? 'active' : 'pending'}`}>
-                {u.role === 'admin' ? 'مسؤول' : 'مستخدم'}
-              </span>
-            </td>
-            <td>{new Date(u.created_at).toLocaleDateString('ar-SA')}</td>
-            <td>
-              <button
-                className="btn-sm"
-                onClick={() => api.setRole(u.id, u.role === 'admin' ? 'user' : 'admin').then(load)}
-              >
-                {u.role === 'admin' ? 'إلغاء المسؤولية' : 'ترقية لمسؤول'}
-              </button>
-            </td>
+    <div>
+      <div className="section-title">إضافة مستخدم</div>
+      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0 }}>
+        يُنشأ الحساب بكلمة المرور الافتراضية <strong>1234</strong>، ويُطلب من المستخدم تغييرها عند أول دخول.
+      </p>
+      <div className="user-add-row">
+        <input placeholder="البريد الإلكتروني" value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" style={{ textAlign: 'right' }} />
+        <input placeholder="الاسم (اختياري)" value={name} onChange={(e) => setName(e.target.value)} />
+        <select value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="user">مستخدم</option>
+          <option value="admin">مسؤول</option>
+        </select>
+        <button className="btn-sm primary" onClick={addUser} disabled={busy}>
+          {busy ? '…' : '＋ إضافة'}
+        </button>
+      </div>
+
+      <div className="section-title">المستخدمون</div>
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>الاسم</th>
+            <th>البريد</th>
+            <th>الدور</th>
+            <th>الحالة</th>
+            <th>تاريخ الإنشاء</th>
+            <th></th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {users.map((u) => (
+            <tr key={u.id}>
+              <td>{u.name ?? '—'}</td>
+              <td dir="ltr" style={{ textAlign: 'right' }}>{u.email}</td>
+              <td>
+                <span className={`pill ${u.role === 'admin' ? 'active' : 'pending'}`}>
+                  {u.role === 'admin' ? 'مسؤول' : 'مستخدم'}
+                </span>
+              </td>
+              <td>
+                {u.must_change_password
+                  ? <span className="pill warn">بانتظار تغيير كلمة المرور</span>
+                  : <span className="pill ready">نشط</span>}
+              </td>
+              <td>{new Date(u.created_at).toLocaleDateString('ar-SA')}</td>
+              <td style={{ whiteSpace: 'nowrap' }}>
+                <button className="btn-sm" onClick={() => api.setRole(u.id, u.role === 'admin' ? 'user' : 'admin').then(load)}>
+                  {u.role === 'admin' ? 'إلغاء المسؤولية' : 'ترقية لمسؤول'}
+                </button>{' '}
+                <button className="btn-sm" onClick={() => reset(u.id)}>تصفير كلمة المرور</button>{' '}
+                <button className="btn-sm" onClick={() => del(u.id)}>حذف</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
