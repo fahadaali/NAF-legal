@@ -13,6 +13,8 @@ interface Props {
   onOpenAdmin: () => void;
   onOpenTools: () => void;
   onLogout: () => void;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }
 
 export default function Sidebar(props: Props) {
@@ -62,7 +64,7 @@ export default function Sidebar(props: Props) {
     <aside className={`sidebar ${props.open ? 'open' : ''}`}>
       <div className="sidebar-header">
         <div className="brand">
-          <div className="brand-logo">ن</div>
+          <img className="brand-logo-img" src="/logo.jpeg" alt="ناف" />
           <div>
             <div className="brand-name">مستشار ناف</div>
             <div className="brand-sub">الاستشارات القانونية الذكية</div>
@@ -108,14 +110,19 @@ export default function Sidebar(props: Props) {
             </div>
           </div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
-          {props.user.role === 'admin' && (
-            <button className="link-btn" onClick={props.onOpenAdmin}>
-              لوحة الإدارة
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
+            {props.user.role === 'admin' && (
+              <button className="link-btn" onClick={props.onOpenAdmin}>
+                لوحة الإدارة
+              </button>
+            )}
+            <button className="link-btn" onClick={props.onLogout}>
+              خروج
             </button>
-          )}
-          <button className="link-btn" onClick={props.onLogout}>
-            خروج
+          </div>
+          <button className="theme-toggle" onClick={props.onToggleTheme} title="تبديل السمة">
+            {props.theme === 'dark' ? '☀️' : '🌙'}
           </button>
         </div>
       </div>

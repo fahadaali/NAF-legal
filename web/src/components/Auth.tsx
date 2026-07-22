@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { api, User } from '../lib/api';
+import { Aurora } from '../App';
 
-export default function Auth({ onAuth }: { onAuth: (u: User) => void }) {
+export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: User) => void; theme: 'light' | 'dark'; onToggleTheme: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -25,9 +26,13 @@ export default function Auth({ onAuth }: { onAuth: (u: User) => void }) {
 
   return (
     <div className="auth-wrap">
+      <Aurora />
+      <button className="theme-toggle floating" onClick={onToggleTheme} title="تبديل السمة">
+        {theme === 'dark' ? '☀️' : '🌙'}
+      </button>
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="brand-logo">ن</div>
+          <img className="brand-logo-img" src="/logo.jpeg" alt="ناف" />
           <h1>مستشار ناف</h1>
           <p>منصة الاستشارات القانونية الذكية</p>
         </div>
