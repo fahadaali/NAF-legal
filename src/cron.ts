@@ -1,6 +1,6 @@
 // تتبّع الأنظمة عبر Cron — §7
 // يفحص المصادر الرسمية بحثًا عن تعديلات/أنظمة جديدة ويضع علامة «يحتاج مراجعة».
-import { callClaude, webSearchTool, OFFICIAL_DOMAINS } from './lib/claude';
+import { callClaude, webSearchTool, TRACKING_DOMAINS } from './lib/claude';
 import type { Env } from './types';
 
 export interface ScanResult {
@@ -52,32 +52,70 @@ export async function runTrackingScan(env: Env): Promise<ScanResult> {
 const UQN_RSS_URL = 'https://www.uqn.gov.sa/rssFeed/21';
 
 export async function runNewsDigest(env: Env): Promise<{ found: number }> {
+  let found = 0;
+  // (1) جريدة أم القرى — عبر خلاصة RSS الرسمية (لا تحتاج مفتاح Claude)
   try {
     const res = await fetch(UQN_RSS_URL, {
       headers: { 'user-agent': 'Mozilla/5.0 (compatible; NafAdvisorBot/1.0)', accept: 'application/rss+xml, application/xml, text/xml' },
     });
-    if (!res.ok) {
+    if (res.ok) {
+      const items = parseRss(await res.text());
+      for (const it of items.slice(0, 25)) {
+        if (it.title && (await addNewsItem(env, it.title, it.summary ?? null, it.url ?? null, it.published ?? null))) found++;
+      }
+    } else {
       console.error('فشل جلب خلاصة أم القرى:', res.status);
-      return { found: 0 };
     }
-    const xml = await res.text();
-    const items = parseRss(xml);
-    let found = 0;
-    for (const it of items.slice(0, 25)) {
-      if (!it.title) continue;
-      const exists = await env.DB.prepare('SELECT id FROM news_digest WHERE title = ?').bind(it.title).first();
-      if (exists) continue;
-      await env.DB.prepare(
-        'INSERT INTO news_digest (id, title, summary, url, published, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      )
-        .bind(crypto.randomUUID(), it.title, it.summary ?? null, it.url ?? null, it.published ?? null, classifyKind(it.title + ' ' + (it.summary ?? '')), Date.now())
-        .run();
-      found++;
-    }
-    return { found };
   } catch (e) {
-    console.error('فشل خلاصة الأخبار:', e);
-    return { found: 0 };
+    console.error('فشل خلاصة أم القرى:', e);
+  }
+
+  // (2) هيئة الخبراء بمجلس الوزراء + المركز الوطني للوثائق — عبر بحث Claude المقيّد
+  if (env.ANTHROPIC_API_KEY) {
+    found += await scanOfficialNewRegulations(env);
+  }
+
+  return { found };
+}
+
+// يُدرج عنصر خلاصة إن لم يكن مكرَّرًا؛ يعيد true عند الإضافة
+async function addNewsItem(env: Env, title: string, summary: string | null, url: string | null, published: string | null): Promise<boolean> {
+  const exists = await env.DB.prepare('SELECT id FROM news_digest WHERE title = ?').bind(title).first();
+  if (exists) return false;
+  await env.DB.prepare(
+    'INSERT INTO news_digest (id, title, summary, url, published, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  )
+    .bind(crypto.randomUUID(), title, summary, url, published, classifyKind(title + ' ' + (summary ?? '')), Date.now())
+    .run();
+  return true;
+}
+
+// يسأل Claude عن أحدث الأنظمة/اللوائح من هيئة الخبراء والمركز الوطني (بحث مقيّد بنطاقاتهما)
+async function scanOfficialNewRegulations(env: Env): Promise<number> {
+  const system = `أنت راصد تشريعي. ابحث في المصدرين الرسميين حصريًا:
+هيئة الخبراء بمجلس الوزراء (boe.gov.sa) والمركز الوطني للوثائق والمحفوظات (ncar.gov.sa)،
+عن أحدث ما صدر من أنظمة أو لوائح **جديدة أو محدَّثة** خلال الفترة الأخيرة.
+أعِد JSON فقط: {"items":[{"title":"...","summary":"رقم المرسوم/القرار وتاريخه","url":"...","published":"..."}]} بحدّ أقصى 10 عناصر.`;
+  try {
+    const { text } = await callClaude(env, {
+      model: env.PLANNER_MODEL,
+      system,
+      messages: [{ role: 'user', content: 'ما أحدث الأنظمة واللوائح الجديدة أو المحدَّثة من هيئة الخبراء والمركز الوطني للوثائق؟' }],
+      tools: [webSearchTool(['boe.gov.sa', 'laws.boe.gov.sa', 'ncar.gov.sa'])],
+      max_tokens: 2000,
+      temperature: 0,
+    });
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return 0;
+    const items: any[] = JSON.parse(m[0]).items ?? [];
+    let n = 0;
+    for (const it of items.slice(0, 10)) {
+      if (it.title && (await addNewsItem(env, it.title, it.summary ?? null, it.url ?? null, it.published ?? null))) n++;
+    }
+    return n;
+  } catch (e) {
+    console.error('فشل رصد هيئة الخبراء/المركز الوطني:', e);
+    return 0;
   }
 }
 
@@ -130,14 +168,16 @@ function classifyKind(text: string): string {
 
 // يسأل Claude مع بحث مقيّد بالمصادر الرسمية
 async function checkRegulation(env: Env, title: string): Promise<{ changed: boolean; summary: string }> {
-  const system = `أنت مراقب تشريعات سعودي. باستخدام البحث في المصادر الرسمية فقط، تحقّق مما إذا صدر تعديل حديث على النظام المذكور خلال الفترة الأخيرة.
-أعِد JSON فقط: {"changed": true|false, "summary": "ملخّص موجز للتغيير المكتشَف أو 'لا تغييرات مرصودة'"}`;
+  const system = `أنت مراقب تشريعات سعودي. باستخدام البحث في المصادر الرسمية الثلاثة حصريًا:
+جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa)،
+تحقّق مما إذا صدر تعديل أو تحديث حديث على النظام/اللائحة المذكورة.
+أعِد JSON فقط: {"changed": true|false, "summary": "ملخّص التغيير مع رقم المرسوم/القرار وتاريخه ورابط المصدر إن وُجد، أو 'لا تغييرات مرصودة'"}`;
 
   const { text } = await callClaude(env, {
     model: env.PLANNER_MODEL,
     system,
     messages: [{ role: 'user', content: `النظام: ${title}\nهل صدر تعديل أو تحديث رسمي حديث عليه؟` }],
-    tools: [webSearchTool(OFFICIAL_DOMAINS)],
+    tools: [webSearchTool(TRACKING_DOMAINS)],
     max_tokens: 1024,
     temperature: 0,
   });

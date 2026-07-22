@@ -14,7 +14,7 @@ app.use('*', requireAuth, requireAdmin);
 app.get('/documents', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT id, title, source_authority, decree_number, issue_date, status, category,
-            version, last_verified, needs_update, chunk_count, ingest_status, created_at
+            version, last_verified, needs_update, chunk_count, ingest_status, r2_key, created_at
      FROM kb_documents ORDER BY created_at DESC LIMIT 200`
   ).all();
   return c.json({ documents: rows.results });
