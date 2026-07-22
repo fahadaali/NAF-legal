@@ -484,6 +484,42 @@ a { color: var(--accent); }
 .review-actions { display: flex; gap: 10px; margin-top: 16px; }
 .review-actions .btn-primary { width: auto; padding: 11px 22px; }
 
+/* ملاحظة المصادر الرسمية */
+.source-note {
+  font-size: 12.5px; color: var(--muted); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 13px; margin: 0 0 14px; line-height: 1.7;
+}
+
+/* عارض قاعدة المعرفة المنبثق */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 100; background: rgba(15, 20, 30, 0.6);
+  backdrop-filter: blur(3px); display: grid; place-items: center; padding: 24px; animation: fadeIn 0.15s var(--ease);
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.modal-card {
+  width: min(920px, 96vw); height: min(86vh, 900px); display: flex; flex-direction: column;
+  background: var(--surface-solid); border: 1px solid var(--border-strong); border-radius: 16px;
+  box-shadow: 0 24px 70px -20px rgba(0,0,0,0.6); overflow: hidden;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.modal-title { font-weight: 700; font-size: 15px; color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-close {
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text); font-size: 18px; line-height: 1; display: grid; place-items: center;
+}
+.modal-close:hover { border-color: var(--danger); color: var(--danger); }
+.modal-body { flex: 1; overflow: auto; background: var(--bg); }
+.modal-frame { width: 100%; height: 100%; border: none; background: #fff; }
+.modal-imgwrap { display: grid; place-items: center; padding: 16px; }
+.modal-imgwrap img { max-width: 100%; height: auto; border-radius: 8px; }
+.kb-text-view {
+  margin: 0; padding: 20px 22px; white-space: pre-wrap; word-break: break-word; user-select: text;
+  font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14.5px; line-height: 1.9; color: var(--text);
+}
+
 .spinner {
   width: 18px; height: 18px; border: 2px solid var(--border-strong); border-top-color: var(--primary);
   border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle;

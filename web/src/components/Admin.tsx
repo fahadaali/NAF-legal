@@ -1,5 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
+import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
+
+const TRACKING_SOURCES_NOTE =
+  'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
 
 type Tab = 'kb' | 'tracking' | 'news' | 'analytics' | 'users' | 'settings' | 'audit';
 
@@ -56,7 +60,13 @@ function KbTab() {
   const [docs, setDocs] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
   const [versionsFor, setVersionsFor] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<ViewerTarget | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const viewDoc = (d: any) => {
+    const kind = fileKind(d.r2_key);
+    setViewer({ title: d.title, kind, fileUrl: api.kbFileUrl(d.id), textUrl: api.kbTextUrl(d.id) });
+  };
 
   const load = () => api.kbDocuments().then((r) => setDocs(r.documents)).catch(() => {});
   useEffect(() => {
@@ -141,8 +151,7 @@ function KbTab() {
                   <td>{statusPill(d.ingest_status)}</td>
                   <td>{d.chunk_count ?? 0}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <a href={api.kbTextUrl(d.id)} target="_blank" rel="noopener"><button className="btn-sm">📄 النص</button></a>{' '}
-                    <a href={api.kbFileUrl(d.id)} target="_blank" rel="noopener"><button className="btn-sm">📎 الملف</button></a>{' '}
+                    <button className="btn-sm primary" onClick={() => viewDoc(d)}>👁 عرض</button>{' '}
                     <VersionUpload docId={d.id} version={d.version} onDone={load} />{' '}
                     <button className="btn-sm" onClick={() => setVersionsFor(versionsFor === d.id ? null : d.id)}>
                       السجل{d.version > 1 ? ` (${d.version})` : ''}
@@ -158,7 +167,7 @@ function KbTab() {
                 {versionsFor === d.id && (
                   <tr>
                     <td colSpan={7} style={{ background: 'var(--surface-2)' }}>
-                      <VersionsList docId={d.id} />
+                      <VersionsList docId={d.id} onView={setViewer} />
                     </td>
                   </tr>
                 )}
@@ -167,6 +176,7 @@ function KbTab() {
           </tbody>
         </table>
       )}
+      {viewer && <KbViewer target={viewer} onClose={() => setViewer(null)} />}
     </div>
   );
 }
@@ -195,6 +205,7 @@ function TrackingTab() {
 
   return (
     <div>
+      <p className="source-note">🔒 {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
           {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : '🔄 تشغيل فحص التتبّع الآن'}
@@ -384,13 +395,20 @@ function VersionUpload({ docId, version, onDone }: { docId: string; version: num
 }
 
 // عرض سجل إصدارات نظام — §5
-function VersionsList({ docId }: { docId: string }) {
+function VersionsList({ docId, onView }: { docId: string; onView: (t: ViewerTarget) => void }) {
   const [versions, setVersions] = useState<any[] | null>(null);
   useEffect(() => {
     api.kbVersions(docId).then((r) => setVersions(r.versions)).catch(() => setVersions([]));
   }, [docId]);
   if (versions === null) return <span className="spinner" />;
   if (!versions.length) return <span style={{ color: 'var(--muted)', fontSize: 13 }}>لا إصدارات سابقة — هذه النسخة الأولى.</span>;
+  const view = (v: any) =>
+    onView({
+      title: `إصدار ${v.version}`,
+      kind: fileKind(v.file_r2_key),
+      fileUrl: api.kbVersionFileUrl(docId, v.id),
+      textUrl: api.kbVersionTextUrl(docId, v.id),
+    });
   return (
     <div style={{ fontSize: 13 }}>
       <strong style={{ fontSize: 13.5 }}>سجل الإصدارات:</strong>
@@ -402,10 +420,7 @@ function VersionsList({ docId }: { docId: string }) {
             {v.effective_to ? ` · حتى ${v.effective_to}` : ' · (سارية)'}
             {v.note ? ` — ${v.note}` : ''}
             {'  '}
-            <a href={api.kbVersionTextUrl(docId, v.id)} target="_blank" rel="noopener" style={{ marginInlineStart: 6 }}>📄 النص</a>
-            {v.file_r2_key && (
-              <a href={api.kbVersionFileUrl(docId, v.id)} target="_blank" rel="noopener" style={{ marginInlineStart: 8 }}>📎 الملف</a>
-            )}
+            <button className="btn-sm" style={{ padding: '3px 10px' }} onClick={() => view(v)}>👁 عرض</button>
           </li>
         ))}
       </ul>
@@ -425,9 +440,10 @@ function NewsTab() {
   };
   return (
     <div>
+      <p className="source-note">🔒 يُرصد الجديد والمحدَّث من: جريدة أم القرى (خلاصة RSS رسمية) · هيئة الخبراء بمجلس الوزراء · المركز الوطني للوثائق والمحفوظات.</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '🔄 رصد أخبار جريدة أم القرى'}
+          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '🔄 رصد الأنظمة الجديدة والمحدَّثة'}
         </button>
       </div>
       {news.length === 0 ? (
