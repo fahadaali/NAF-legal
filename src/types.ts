@@ -3,8 +3,10 @@
 export interface Env {
   DB: D1Database;
   R2: R2Bucket;
-  VECTORIZE: VectorizeIndex;
-  CONV_VECTORIZE: VectorizeIndex;
+  // اختياريان: يعملان عند توفّر Vectorize (يتطلّب صلاحية الرمز). بدونهما
+  // يتعطّل الاسترجاع الدلالي (RAG) بسلاسة ويُستخدم البحث النصّي كبديل.
+  VECTORIZE?: VectorizeIndex;
+  CONV_VECTORIZE?: VectorizeIndex;
   AI: Ai;
   KV: KVNamespace;
   ASSETS: Fetcher;
