@@ -69,11 +69,19 @@ function letterheadPara(): string {
 </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
 }
 
+// الترقيم القانوني العربي للعناوين من المستوى الثاني: أولًا، ثانيًا…
+const ORDINALS = [
+  'أولًا', 'ثانيًا', 'ثالثًا', 'رابعًا', 'خامسًا', 'سادسًا', 'سابعًا', 'ثامنًا',
+  'تاسعًا', 'عاشرًا', 'حادي عشر', 'ثاني عشر', 'ثالث عشر', 'رابع عشر', 'خامس عشر',
+];
+
 // ── تحويل Markdown مبسّط إلى فقرات WordML ──
 function markdownToDocXml(md: string): string {
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
-  for (let raw of lines) {
+  let sectionIndex = 0; // لترقيم عناوين المستوى الثاني قانونيًا
+
+  for (const raw of lines) {
     const line = raw.trimEnd();
     if (!line.trim()) {
       out.push(para('', {}));
@@ -83,7 +91,16 @@ function markdownToDocXml(md: string): string {
     if (h) {
       const level = h[1].length;
       const sizes = [30, 26, 24, 22];
-      out.push(headingPara(inlineText(h[2]), sizes[level - 1], true));
+      let text = inlineText(h[2]);
+      // نُرقّم عناوين المستوى الثاني إن لم تكن مرقّمة أصلًا
+      if (level === 2) {
+        // نتقدّم في العدّاد مع كل عنوان من المستوى الثاني حتى لا يتكرّر ترتيب مع العناوين المرقّمة مسبقًا
+        const already = /^(أولًا|ثانيًا|ثالثًا|رابعًا|خامسًا|سادسًا|سابعًا|ثامنًا|تاسعًا|عاشرًا|\d+[.)])/.test(text);
+        const ord = ORDINALS[sectionIndex] ?? `${sectionIndex + 1}`;
+        if (!already) text = `${ord}: ${text}`;
+        sectionIndex++;
+      }
+      out.push(headingPara(text, sizes[level - 1], true));
       continue;
     }
     const li = line.match(/^\s*[-*•]\s+(.*)$/);
@@ -99,6 +116,15 @@ function markdownToDocXml(md: string): string {
     out.push(para(inlineText(line), {}));
   }
   return out.join('\n');
+}
+
+// يُلحق المكافئ الهجري بالتواريخ الميلادية الظاهرة في النص (YYYY-MM-DD)
+export function annotateDates(text: string, toHijriFn: (d: string) => string): string {
+  // نتجاهل التاريخ المتبوع بقوس يحوي مكافئًا هجريًا (منعًا للتكرار) دون تجاهل أي قوس آخر
+  return text.replace(/\b(\d{4}-\d{2}-\d{2})\b(?!\s*\([^)]*هـ)/g, (m, d) => {
+    const h = toHijriFn(d);
+    return h ? `${d} (${h})` : m;
+  });
 }
 
 function inlineText(s: string): string {

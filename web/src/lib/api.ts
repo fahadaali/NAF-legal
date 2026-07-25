@@ -186,6 +186,9 @@ export const api = {
     req<{ current: string; versions: any[]; approval: any | null }>(`/drafts/${messageId}/versions`),
   saveDraft: (messageId: string, content: string, note?: string) =>
     req<{ version: number }>(`/drafts/${messageId}`, { method: 'POST', body: JSON.stringify({ content, note }) }),
+  draftAlternative: (messageId: string, instruction?: string) =>
+    req<{ content: string }>(`/drafts/${messageId}/alternative`, { method: 'POST', body: JSON.stringify({ instruction }) }),
+  proofread: (text: string) => req<{ result: string }>('/tools/proofread', { method: 'POST', body: JSON.stringify({ text }) }),
   restoreDraft: (messageId: string, versionId: string) =>
     req<{ content: string }>(`/drafts/${messageId}/restore/${versionId}`, { method: 'POST' }),
   approveDraft: (messageId: string, note?: string) =>

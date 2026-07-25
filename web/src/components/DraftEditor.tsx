@@ -91,6 +91,35 @@ export default function DraftEditor({
     }
   };
 
+  const proofread = async () => {
+    if (!confirm('تدقيق لغوي للنص الحالي؟ ستُستبدل النسخة في المحرّر (احفظها بعدها).')) return;
+    setBusy(true);
+    try {
+      const r = await api.proofread(content);
+      setContent(r.result);
+      setTab('edit');
+    } catch (e: any) {
+      alert(e.message ?? 'فشل التدقيق');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const alternative = async () => {
+    const instruction = prompt('توجيه إضافي للصياغة البديلة (اختياري):') ?? undefined;
+    setBusy(true);
+    try {
+      await api.draftAlternative(messageId, instruction);
+      await load();
+      setTab('versions');
+      alert('أُنشئت صياغة بديلة — قارنها في تبويب النُسخ واسترجعها إن أعجبتك.');
+    } catch (e: any) {
+      alert(e.message ?? 'فشل التوليد البديل');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const restore = async (v: Version) => {
     if (!confirm(`استرجاع النسخة ${v.version}؟ ستُحفظ كنسخة أحدث.`)) return;
     setBusy(true);
@@ -167,6 +196,8 @@ export default function DraftEditor({
         </div>
 
         <div className="modal-foot">
+          <button className="btn-sm" onClick={proofread} disabled={busy}>✍ تدقيق لغوي</button>
+          <button className="btn-sm" onClick={alternative} disabled={busy}>🔀 صياغة بديلة</button>
           {approval ? (
             <button className="btn-sm" onClick={unapprove} disabled={busy}>إلغاء الاعتماد</button>
           ) : (

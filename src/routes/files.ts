@@ -3,7 +3,8 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { extractText } from '../lib/extract';
-import { buildDocx } from '../lib/docx';
+import { buildDocx, annotateDates } from '../lib/docx';
+import { toHijri } from '../lib/hijri';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -116,7 +117,8 @@ app.get('/export/:messageId', async (c) => {
     }
   } catch {}
 
-  const docx = buildDocx(title, msg.content, letterhead);
+  // يُلحق المكافئ الهجري بالتواريخ الميلادية في المخرَج النهائي
+  const docx = buildDocx(title, annotateDates(msg.content, toHijri), letterhead);
   const r2Key = `exports/${user.id}/${messageId}.docx`;
   await c.env.R2.put(r2Key, docx, {
     httpMetadata: { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },

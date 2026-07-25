@@ -2,6 +2,9 @@
 import { Hono, type Context } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
+import { callClaude } from '../lib/claude';
+import { getEffectiveConfig } from '../lib/consultationConfig';
+import { logUsage, usageFromRaw } from '../lib/usage';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -84,6 +87,53 @@ app.post('/:messageId/restore/:versionId', async (c) => {
   await c.env.DB.prepare('UPDATE messages SET content = ? WHERE id = ?').bind(v.content, msg.id).run();
   await c.env.DB.prepare('DELETE FROM message_approvals WHERE message_id = ?').bind(msg.id).run();
   return c.json({ ok: true, content: v.content });
+});
+
+// صياغة بديلة للمسودّة (تُحفَظ كنسخة جديدة للمقارنة والاختيار)
+app.post('/:messageId/alternative', async (c) => {
+  const user = c.get('user');
+  const msg = await ownedMessage(c, c.req.param('messageId'));
+  if (!msg) return c.json({ error: 'الرسالة غير موجودة' }, 404);
+  const { instruction } = await c.req.json().catch(() => ({}));
+
+  const cfg = await getEffectiveConfig(c.env, msg.consultation_type ?? 'consultation');
+  const system = `${cfg.system_prompt}
+
+مهمّتك الآن: إعادة صياغة المسودّة التالية بأسلوب بديل مع الحفاظ على المضمون القانوني والأسانيد والطلبات.
+غيّر الترتيب والصياغة والتركيز بما يقدّم بديلًا حقيقيًا للمقارنة، ولا تُسقِط أي معلومة جوهرية.
+أعِد المسودّة البديلة كاملة فقط.`;
+
+  const { text, raw } = await callClaude(c.env, {
+    model: c.env.GENERATION_MODEL,
+    system,
+    messages: [
+      {
+        role: 'user',
+        content: `${instruction ? `توجيه إضافي: ${instruction}\n\n` : ''}المسودّة الحالية:\n\n${msg.content.slice(0, 40000)}`,
+      },
+    ],
+    max_tokens: 8192,
+    temperature: 0.7,
+  });
+  await logUsage(c.env, {
+    userId: user.id,
+    kind: 'generation',
+    model: c.env.GENERATION_MODEL,
+    ...usageFromRaw(raw),
+    consultationType: msg.consultation_type ?? undefined,
+  });
+
+  const last = await c.env.DB.prepare('SELECT MAX(version) AS v FROM draft_versions WHERE message_id = ?')
+    .bind(msg.id)
+    .first<{ v: number | null }>();
+  const versionId = uuid();
+  await c.env.DB.prepare(
+    'INSERT INTO draft_versions (id, message_id, version, content, note, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  )
+    .bind(versionId, msg.id, (last?.v ?? 0) + 1, text, 'صياغة بديلة', Date.now())
+    .run();
+
+  return c.json({ ok: true, version_id: versionId, content: text });
 });
 
 // اعتماد المسودّة (بوّابة ما قبل التصدير)

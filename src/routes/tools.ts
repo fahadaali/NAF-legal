@@ -71,6 +71,30 @@ app.post('/deadlines', async (c) => {
   return c.json({ result: text });
 });
 
+// تدقيق لغوي عربي للمخرَج مع الحفاظ على المعنى القانوني
+app.post('/proofread', async (c) => {
+  const user = c.get('user');
+  const { text } = await c.req.json().catch(() => ({}));
+  if (!text?.trim()) return c.json({ error: 'النص فارغ' }, 400);
+
+  const system = `أنت مدقّق لغوي عربي متخصّص في النصوص القانونية السعودية.
+دقّق النص المُرسَل: الإملاء · النحو · علامات الترقيم · اتساق المصطلح القانوني · سلامة الصياغة.
+قيود صارمة:
+- لا تُغيّر المعنى القانوني ولا أرقام المواد أو التواريخ أو أسماء الأطراف.
+- حافظ على بنية العناوين والترقيم كما هي.
+أعِد النص المُصحَّح كاملًا فقط، دون تعليق أو شرح.`;
+
+  const { text: out, raw } = await callClaude(c.env, {
+    model: c.env.GENERATION_MODEL,
+    system,
+    messages: [{ role: 'user', content: text.slice(0, 40000) }],
+    max_tokens: 8192,
+    temperature: 0,
+  });
+  await logUsage(c.env, { userId: user.id, kind: 'generation', model: c.env.GENERATION_MODEL, ...usageFromRaw(raw), consultationType: 'proofread' });
+  return c.json({ result: out });
+});
+
 // التفريغ الصوتي العربي (إدخال الوقائع صوتيًا) — §3
 app.post('/transcribe', async (c) => {
   const user = c.get('user');
