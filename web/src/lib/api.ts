@@ -160,6 +160,16 @@ export const api = {
   // البحث الدلالي
   search: (q: string) => req<{ results: any[]; mode: string }>(`/search?q=${encodeURIComponent(q)}`),
 
+  // بنك البنود
+  clauses: (q?: string) => req<{ clauses: any[] }>(`/clauses${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  createClause: (payload: any) => req<any>('/clauses', { method: 'POST', body: JSON.stringify(payload) }),
+  updateClause: (id: string, payload: any) => req(`/clauses/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteClause: (id: string) => req(`/clauses/${id}`, { method: 'DELETE' }),
+
+  // ملف القضية
+  caseFile: (folderId: string) => req<any>(`/cases/${folderId}`),
+  caseExportUrl: (folderId: string) => `/api/cases/${folderId}/export`,
+
   // المواعيد النظامية
   deadlinesList: (status = 'open') => req<{ deadlines: any[] }>(`/deadlines?status=${status}`),
   createDeadline: (payload: any) => req<any>('/deadlines', { method: 'POST', body: JSON.stringify(payload) }),

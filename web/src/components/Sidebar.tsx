@@ -7,13 +7,14 @@ interface Props {
   user: User;
   open: boolean;
   activeConv: string | null;
-  view: 'chat' | 'admin' | 'tools' | 'deadlines';
+  view: 'chat' | 'admin' | 'tools' | 'deadlines' | 'case';
   refreshKey: number;
   onSelectConv: (id: string) => void;
   onNewChat: () => void;
   onOpenAdmin: () => void;
   onOpenTools: () => void;
   onOpenDeadlines: () => void;
+  onOpenCase: () => void;
   onLogout: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
@@ -112,6 +113,7 @@ export default function Sidebar(props: Props) {
 
       <button className="tools-link" onClick={props.onOpenTools}>🧰 الأدوات القانونية</button>
       <button className="tools-link" onClick={props.onOpenDeadlines}>📅 المواعيد النظامية</button>
+      <button className="tools-link" onClick={props.onOpenCase}>🗂 ملف القضية</button>
 
       <div className="folder-bar">
         <button className={`folder-chip ${!activeFolder ? 'active' : ''}`} onClick={() => setActiveFolder(null)}>

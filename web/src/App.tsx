@@ -8,6 +8,7 @@ import Tools from './components/Tools';
 import ReviewPage from './components/ReviewPage';
 import ChangePassword from './components/ChangePassword';
 import Deadlines from './components/Deadlines';
+import CaseFile from './components/CaseFile';
 import { useTheme } from './lib/theme';
 
 export function Aurora() {
@@ -26,7 +27,7 @@ export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines'>('chat');
+  const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines' | 'case'>('chat');
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [pendingInitial, setPendingInitial] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -95,6 +96,9 @@ export default function App() {
         {view === 'admin' && <Admin />}
         {view === 'tools' && <Tools />}
         {view === 'deadlines' && <Deadlines />}
+        {view === 'case' && (
+          <CaseFile onOpenConversation={(id) => { setActiveConv(id); setView('chat'); }} />
+        )}
         <div className="disclaimer-bar">
           كل مخرجات المنصّة مسوّدات مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.
         </div>
@@ -119,6 +123,7 @@ export default function App() {
         onOpenAdmin={() => setView('admin')}
         onOpenTools={() => setView('tools')}
         onOpenDeadlines={() => setView('deadlines')}
+        onOpenCase={() => setView('case')}
         onLogout={handleLogout}
         theme={theme}
         onToggleTheme={toggleTheme}

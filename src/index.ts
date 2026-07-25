@@ -17,6 +17,8 @@ import consultationRoutes from './routes/consultations';
 import draftRoutes from './routes/drafts';
 import deadlineRoutes from './routes/deadlines';
 import notificationRoutes from './routes/notifications';
+import clauseRoutes from './routes/clauses';
+import caseRoutes from './routes/cases';
 import { runTrackingScan, runNewsDigest, runDeadlineReminders } from './cron';
 import { verifyJwt } from './lib/crypto';
 import { SESSION_COOKIE } from './lib/auth';
@@ -78,6 +80,8 @@ app.route('/api/consultations', consultationRoutes);
 app.route('/api/drafts', draftRoutes);
 app.route('/api/deadlines', deadlineRoutes);
 app.route('/api/notifications', notificationRoutes);
+app.route('/api/clauses', clauseRoutes);
+app.route('/api/cases', caseRoutes);
 
 // أي مسار /api غير معروف
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));

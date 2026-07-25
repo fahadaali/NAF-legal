@@ -1,17 +1,19 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ConsultConfig, FieldDef, FieldType } from '../lib/api';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
+import ClauseLibrary from './ClauseLibrary';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
 
-type Tab = 'kb' | 'tracking' | 'news' | 'forms' | 'analytics' | 'users' | 'settings' | 'audit';
+type Tab = 'kb' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
 
 const TABS: [Tab, string][] = [
   ['kb', 'قاعدة المعرفة'],
   ['tracking', 'تتبّع الأنظمة'],
   ['news', 'خلاصة الأخبار'],
   ['forms', 'نماذج الاستشارات'],
+  ['clauses', 'بنك البنود'],
   ['analytics', 'التحليلات'],
   ['users', 'المستخدمون'],
   ['settings', 'الإعدادات'],
@@ -35,6 +37,7 @@ export default function Admin() {
         {tab === 'tracking' && <TrackingTab />}
         {tab === 'news' && <NewsTab />}
         {tab === 'forms' && <FormsTab />}
+        {tab === 'clauses' && <ClauseLibrary mode="admin" />}
         {tab === 'analytics' && <AnalyticsTab />}
         {tab === 'users' && <UsersTab />}
         {tab === 'settings' && <SettingsTab />}

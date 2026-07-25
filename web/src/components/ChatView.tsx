@@ -4,6 +4,7 @@ import { CONSULTATIONS, labelFor } from '../lib/consultations';
 import { renderMarkdown } from '../lib/markdown';
 import IntakeModal from './IntakeModal';
 import DraftEditor from './DraftEditor';
+import ClauseLibrary from './ClauseLibrary';
 
 interface Props {
   conversationId: string | null;
@@ -26,6 +27,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   const [configs, setConfigs] = useState<ConsultConfig[]>([]);
   const [intake, setIntake] = useState<ConsultConfig | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
+  const [clausePicker, setClausePicker] = useState(false);
   const autoSent = useRef(false);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -443,6 +445,9 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             >
               {recording ? '⏹' : '🎙'}
             </button>
+            <button className="icon-btn" title="بنك البنود" onClick={() => setClausePicker(true)}>
+              📚
+            </button>
             <button
               className={`icon-btn ${bilingual ? 'on' : ''}`}
               title="مخرَج ثنائي اللغة (عربي/إنجليزي)"
@@ -475,6 +480,17 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           </div>
         </div>
       </div>
+
+      {clausePicker && (
+        <ClauseLibrary
+          mode="pick"
+          onClose={() => setClausePicker(false)}
+          onPick={(cl) => {
+            setInput((v) => `${v}${v ? '\n\n' : ''}أدرِج البند التالي بنصّه:\n\n${cl.body}`);
+            setClausePicker(false);
+          }}
+        />
+      )}
 
       {editing && (
         <DraftEditor
