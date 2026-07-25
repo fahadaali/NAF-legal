@@ -6,7 +6,6 @@ import type { Env } from './types';
 export interface ScanResult {
   checked: number;
   flagged: number;
-  new_suggested: number;
 }
 
 export async function runTrackingScan(env: Env): Promise<ScanResult> {
@@ -45,7 +44,7 @@ export async function runTrackingScan(env: Env): Promise<ScanResult> {
     }
   }
 
-  return { checked: docs.results?.length ?? 0, flagged, new_suggested: 0 };
+  return { checked: docs.results?.length ?? 0, flagged };
 }
 
 // ── خلاصة أخبار جريدة أم القرى عبر خلاصة RSS الرسمية (§5) ──

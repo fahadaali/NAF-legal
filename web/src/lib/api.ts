@@ -12,7 +12,6 @@ export interface Conversation {
   title: string;
   consultation_type: string | null;
   folder_id?: string | null;
-  tags_json?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -120,7 +119,7 @@ export const api = {
   kbFileUrl: (id: string) => `/api/kb/documents/${id}/file`,
   kbVersionTextUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/text`,
   kbVersionFileUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/file`,
-  tracking: () => req<{ needs_update: any[]; new_suggested: any[] }>('/admin/tracking'),
+  tracking: () => req<{ needs_update: any[] }>('/admin/tracking'),
   resolveTracking: (id: string) => req(`/admin/tracking/${id}/resolve`, { method: 'POST' }),
   scanTracking: () => req<{ checked: number; flagged: number }>('/admin/tracking/scan', { method: 'POST' }),
   users: () => req<{ users: User[] }>('/admin/users'),

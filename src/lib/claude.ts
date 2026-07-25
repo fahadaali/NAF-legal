@@ -146,9 +146,3 @@ export const OFFICIAL_DOMAINS = [
 // مصادر تتبّع الأنظمة الرسمية المعتمدة حصريًا (§7):
 // جريدة أم القرى · المركز الوطني للوثائق والمحفوظات · هيئة الخبراء بمجلس الوزراء
 export const TRACKING_DOMAINS = ['uqn.gov.sa', 'ncar.gov.sa', 'boe.gov.sa', 'laws.boe.gov.sa'];
-
-export const TRACKING_SOURCES = [
-  { name: 'جريدة أم القرى', domain: 'uqn.gov.sa' },
-  { name: 'المركز الوطني للوثائق والمحفوظات', domain: 'ncar.gov.sa' },
-  { name: 'هيئة الخبراء بمجلس الوزراء', domain: 'boe.gov.sa' },
-];

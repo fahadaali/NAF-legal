@@ -84,18 +84,15 @@ app.get('/audit', async (c) => {
   return c.json({ entries: rows.results });
 });
 
-// لوحة تتبّع الأنظمة: القائمتان (تحتاج تحديثًا / جديدة مقترحة) — §7
+// لوحة تتبّع الأنظمة: الأنظمة التي رُصد لها تعديل يحتاج مراجعة — §7
+// (الأنظمة الجديدة تُرصد في «خلاصة الأخبار» من المصادر الرسمية)
 app.get('/tracking', async (c) => {
   const needsUpdate = await c.env.DB.prepare(
     `SELECT t.id, t.change_summary, t.last_checked, t.status, d.id AS doc_id, d.title, d.category
      FROM regulation_tracking t JOIN kb_documents d ON d.id = t.kb_document_id
      WHERE t.status = 'needs_review' ORDER BY t.last_checked DESC`
   ).all();
-  const newSuggested = await c.env.DB.prepare(
-    `SELECT id, change_summary, last_checked, status FROM regulation_tracking
-     WHERE status = 'new_suggested' ORDER BY last_checked DESC`
-  ).all();
-  return c.json({ needs_update: needsUpdate.results, new_suggested: newSuggested.results });
+  return c.json({ needs_update: needsUpdate.results });
 });
 
 // اعتماد مراجعة: مسح العلامة وتحديث تاريخ التحقّق

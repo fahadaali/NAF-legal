@@ -56,16 +56,4 @@ app.post('/assign', async (c) => {
   return c.json({ ok: true });
 });
 
-// تحديث وسوم محادثة
-app.post('/tags', async (c) => {
-  const user = c.get('user');
-  const { conversation_id, tags } = await c.req.json().catch(() => ({}));
-  const tagsJson = Array.isArray(tags) ? JSON.stringify(tags.slice(0, 10)) : null;
-  const res = await c.env.DB.prepare('UPDATE conversations SET tags_json = ? WHERE id = ? AND user_id = ?')
-    .bind(tagsJson, conversation_id, user.id)
-    .run();
-  if (!res.meta.changes) return c.json({ error: 'المحادثة غير موجودة' }, 404);
-  return c.json({ ok: true });
-});
-
 export default app;

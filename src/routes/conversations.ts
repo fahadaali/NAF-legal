@@ -12,7 +12,7 @@ app.get('/', async (c) => {
   const user = c.get('user');
   const q = c.req.query('q');
   const folder = c.req.query('folder'); // تصفية حسب مجلّد القضية
-  const cols = 'id, title, consultation_type, folder_id, tags_json, created_at, updated_at';
+  const cols = 'id, title, consultation_type, folder_id, created_at, updated_at';
   let rows;
   if (q) {
     rows = await c.env.DB.prepare(

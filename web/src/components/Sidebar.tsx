@@ -77,6 +77,14 @@ export default function Sidebar(props: Props) {
     if (props.activeConv === id) props.onNewChat();
   };
 
+  const rename = async (e: React.MouseEvent, c: Conversation) => {
+    e.stopPropagation();
+    const title = prompt('اسم المحادثة:', c.title || '');
+    if (title == null || title.trim() === '' || title === c.title) return;
+    await api.renameConversation(c.id, title.trim()).catch(() => {});
+    load();
+  };
+
   const initials = (props.user.name ?? props.user.email).slice(0, 1).toUpperCase();
 
   return (
@@ -131,6 +139,9 @@ export default function Sidebar(props: Props) {
           >
             <span className="conv-icon">{iconFor(c.consultation_type)}</span>
             <span className="conv-title">{c.title || 'محادثة'}</span>
+            <button className="conv-del" onClick={(e) => rename(e, c)} title="إعادة تسمية">
+              ✎
+            </button>
             <button className="conv-del" onClick={(e) => del(e, c.id)} title="حذف">
               🗑
             </button>

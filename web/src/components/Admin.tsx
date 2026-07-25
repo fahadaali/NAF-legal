@@ -233,7 +233,7 @@ function KbTab() {
 }
 
 function TrackingTab() {
-  const [data, setData] = useState<{ needs_update: any[]; new_suggested: any[] }>({ needs_update: [], new_suggested: [] });
+  const [data, setData] = useState<{ needs_update: any[] }>({ needs_update: [] });
   const [scanning, setScanning] = useState(false);
 
   const load = () => api.tracking().then(setData).catch(() => {});
@@ -292,26 +292,9 @@ function TrackingTab() {
           </tbody>
         </table>
       )}
-
-      <div className="section-title">أنظمة جديدة مقترَح إضافتها</div>
-      {data.new_suggested.length === 0 ? (
-        <div className="empty-state">لا توجد اقتراحات حاليًا.</div>
-      ) : (
-        <table className="data-table">
-          <tbody>
-            {data.new_suggested.map((t) => (
-              <tr key={t.id}>
-                <td>{t.change_summary}</td>
-                <td>
-                  <button className="btn-sm" onClick={() => api.resolveTracking(t.id).then(load)}>
-                    تجاهل
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 14 }}>
+        الأنظمة واللوائح الجديدة تُرصد في تبويب «خلاصة الأخبار» من المصادر الرسمية.
+      </p>
     </div>
   );
 }
