@@ -160,6 +160,17 @@ export const api = {
   // البحث الدلالي
   search: (q: string) => req<{ results: any[]; mode: string }>(`/search?q=${encodeURIComponent(q)}`),
 
+  // المواعيد النظامية
+  deadlinesList: (status = 'open') => req<{ deadlines: any[] }>(`/deadlines?status=${status}`),
+  createDeadline: (payload: any) => req<any>('/deadlines', { method: 'POST', body: JSON.stringify(payload) }),
+  setDeadlineStatus: (id: string, status: string) =>
+    req(`/deadlines/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  deleteDeadline: (id: string) => req(`/deadlines/${id}`, { method: 'DELETE' }),
+
+  // الإشعارات
+  notifications: () => req<{ notifications: any[]; unread: number }>('/notifications'),
+  markNotificationsRead: (id?: string) => req('/notifications/read', { method: 'POST', body: JSON.stringify({ id }) }),
+
   // المسوّدات: النُسخ والتحرير والاعتماد
   draftVersions: (messageId: string) =>
     req<{ current: string; versions: any[]; approval: any | null }>(`/drafts/${messageId}/versions`),

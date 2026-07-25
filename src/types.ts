@@ -19,6 +19,9 @@ export interface Env {
   // secrets
   ANTHROPIC_API_KEY: string;
   JWT_SECRET: string;
+  // اختيارية: لتفعيل إشعارات البريد
+  RESEND_API_KEY?: string;
+  NOTIFY_FROM?: string;
 }
 
 export interface AuthUser {

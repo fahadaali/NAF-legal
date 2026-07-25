@@ -15,7 +15,9 @@ import sharesRoutes from './routes/shares';
 import searchRoutes from './routes/search';
 import consultationRoutes from './routes/consultations';
 import draftRoutes from './routes/drafts';
-import { runTrackingScan, runNewsDigest } from './cron';
+import deadlineRoutes from './routes/deadlines';
+import notificationRoutes from './routes/notifications';
+import { runTrackingScan, runNewsDigest, runDeadlineReminders } from './cron';
 import { verifyJwt } from './lib/crypto';
 import { SESSION_COOKIE } from './lib/auth';
 import type { Env, Variables } from './types';
@@ -74,6 +76,8 @@ app.route('/api/shares', sharesRoutes);
 app.route('/api/search', searchRoutes);
 app.route('/api/consultations', consultationRoutes);
 app.route('/api/drafts', draftRoutes);
+app.route('/api/deadlines', deadlineRoutes);
+app.route('/api/notifications', notificationRoutes);
 
 // أي مسار /api غير معروف
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));
@@ -86,6 +90,6 @@ export default {
 
   // Cron لتتبّع الأنظمة — §7
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(Promise.all([runTrackingScan(env), runNewsDigest(env)]).then(() => {}));
+    ctx.waitUntil(Promise.all([runTrackingScan(env), runNewsDigest(env), runDeadlineReminders(env)]).then(() => {}));
   },
 };

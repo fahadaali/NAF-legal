@@ -1,7 +1,47 @@
 // تتبّع الأنظمة عبر Cron — §7
 // يفحص المصادر الرسمية بحثًا عن تعديلات/أنظمة جديدة ويضع علامة «يحتاج مراجعة».
 import { callClaude, webSearchTool, TRACKING_DOMAINS } from './lib/claude';
+import { notify } from './lib/notify';
+import { dualDate } from './lib/hijri';
 import type { Env } from './types';
+
+// ── تنبيهات المواعيد النظامية: تُذكِّر قبل 7 و3 و1 يوم ومتأخّرة ──
+export async function runDeadlineReminders(env: Env): Promise<{ notified: number }> {
+  const today = new Date().toISOString().slice(0, 10);
+  const in7 = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+
+  const rows = await env.DB.prepare(
+    `SELECT d.id, d.user_id, d.title, d.due_date, d.due_hijri, d.notified_at, u.email
+     FROM deadlines d LEFT JOIN users u ON u.id = d.user_id
+     WHERE d.status = 'open' AND d.due_date <= ?`
+  )
+    .bind(in7)
+    .all<{ id: string; user_id: string; title: string; due_date: string; due_hijri: string | null; notified_at: number | null; email: string | null }>();
+
+  let notified = 0;
+  for (const d of rows.results ?? []) {
+    // لا نُكرّر التنبيه أكثر من مرة يوميًا
+    if (d.notified_at && Date.now() - d.notified_at < 20 * 3600 * 1000) continue;
+    const daysLeft = Math.ceil((new Date(d.due_date + 'T00:00:00Z').getTime() - new Date(today + 'T00:00:00Z').getTime()) / 86_400_000);
+    const when = d.due_hijri ? `${d.due_date} (${d.due_hijri})` : dualDate(d.due_date);
+    const title =
+      daysLeft < 0
+        ? `⚠️ فات الميعاد: ${d.title}`
+        : daysLeft === 0
+          ? `⏰ ينتهي اليوم: ${d.title}`
+          : `⏳ متبقٍّ ${daysLeft} يوم: ${d.title}`;
+    await notify(env, {
+      userId: d.user_id,
+      kind: 'deadline',
+      title,
+      body: `تاريخ الاستحقاق: ${when}`,
+      email: d.email ?? undefined,
+    });
+    await env.DB.prepare('UPDATE deadlines SET notified_at = ? WHERE id = ?').bind(Date.now(), d.id).run();
+    notified++;
+  }
+  return { notified };
+}
 
 export interface ScanResult {
   checked: number;

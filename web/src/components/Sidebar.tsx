@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import { api, Conversation, Folder, User } from '../lib/api';
 import { iconFor } from '../lib/consultations';
+import NotificationBell from './NotificationBell';
 
 interface Props {
   user: User;
   open: boolean;
   activeConv: string | null;
-  view: 'chat' | 'admin' | 'tools';
+  view: 'chat' | 'admin' | 'tools' | 'deadlines';
   refreshKey: number;
   onSelectConv: (id: string) => void;
   onNewChat: () => void;
   onOpenAdmin: () => void;
   onOpenTools: () => void;
+  onOpenDeadlines: () => void;
   onLogout: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
@@ -109,6 +111,7 @@ export default function Sidebar(props: Props) {
       </div>
 
       <button className="tools-link" onClick={props.onOpenTools}>🧰 الأدوات القانونية</button>
+      <button className="tools-link" onClick={props.onOpenDeadlines}>📅 المواعيد النظامية</button>
 
       <div className="folder-bar">
         <button className={`folder-chip ${!activeFolder ? 'active' : ''}`} onClick={() => setActiveFolder(null)}>
@@ -170,6 +173,7 @@ export default function Sidebar(props: Props) {
               خروج
             </button>
           </div>
+          <NotificationBell />
           <button className="theme-toggle" onClick={props.onToggleTheme} title="تبديل السمة">
             {props.theme === 'dark' ? '☀️' : '🌙'}
           </button>
