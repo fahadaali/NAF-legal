@@ -82,7 +82,9 @@ function normalize(
   hasAttachments: boolean,
   forceInternet: boolean
 ): PlannerOutput {
-  const type = (p.consultation_type ?? selectedType ?? 'consultation') as ConsultationType;
+  // اختيار المستخدم الصريح للنوع يسبق تخمين المُخطِّط، فلا يُبدَّل توجيه النظام
+  // على مستشارٍ اختار «لائحة اعتراضية» مثلًا لأنه رفع صك حكم.
+  const type = (selectedType ?? p.consultation_type ?? 'consultation') as ConsultationType;
   return {
     consultation_type: type,
     needs_knowledge_base: p.needs_knowledge_base ?? true,

@@ -88,11 +88,9 @@ app.post('/:conversationId', async (c) => {
   const effectiveConfig = await getEffectiveConfig(c.env, plan.consultation_type);
   let system = effectiveConfig.system_prompt;
   if (bilingual) system += BILINGUAL_INSTRUCTION;
-  const attachmentsBlock = hasAttachments
-    ? '\n\n<الملفات_المرفوعة>\n' +
-      atts.results!.map((a) => `— ${a.filename}:\n${(a.parsed_text ?? '').slice(0, 12000)}`).join('\n\n') +
-      '\n</الملفات_المرفوعة>'
-    : '';
+  // نصوص المرفقات تُدرَج في كل دور (لأنها غير محفوظة داخل سجل الرسائل)، لذا
+  // نضبط سقفًا للحجم الكلّي حتى لا يتضخّم البرومبت مع تعدّد الملفات.
+  const attachmentsBlock = hasAttachments ? buildAttachmentsBlock(atts.results!) : '';
 
   const userContent = `${ragContext}${attachmentsBlock}\n\n${message}`.trim();
 
@@ -198,6 +196,14 @@ app.post('/:conversationId', async (c) => {
         // فهرسة دلالية للرسالتين (§3) — best-effort
         await indexConversationMessage(env, { messageId: userMsgId, conversationId, userId, role: 'user', content: message, title: conv.title });
         await indexConversationMessage(env, { messageId: asstId, conversationId, userId, role: 'assistant', content: fullText, title: conv.title });
+      } else {
+        // لم يُنتِج التوليد نصًّا (انقطاع أو خطأ بعد بدء البثّ): أبلِغ الواجهة
+        // بدل ترك فقاعة فارغة، ولا نخزّن ردًّا فارغًا.
+        controller.enqueue(
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({ error: 'تعذّر إكمال التوليد. تحقّق من إعداد مفتاح Claude ثم أعد المحاولة.' })}\n\n`
+          )
+        );
       }
       await logUsage(env, {
         userId,
@@ -219,6 +225,27 @@ app.post('/:conversationId', async (c) => {
     },
   });
 });
+
+// يبني كتلة الملفات المرفوعة بسقف كلّي للحجم (يوزَّع على الملفات)
+const ATTACH_TOTAL_BUDGET = 60_000; // حروف
+const ATTACH_PER_FILE_MAX = 20_000;
+
+function buildAttachmentsBlock(atts: { filename: string; parsed_text: string }[]): string {
+  const perFile = Math.max(2_000, Math.min(ATTACH_PER_FILE_MAX, Math.floor(ATTACH_TOTAL_BUDGET / atts.length)));
+  let used = 0;
+  const parts: string[] = [];
+  for (const a of atts) {
+    if (used >= ATTACH_TOTAL_BUDGET) {
+      parts.push(`— ${a.filename}: (لم يُدرَج لتجاوز حد الحجم؛ اطلب من المستخدم تحديد المقطع المطلوب)`);
+      continue;
+    }
+    const text = (a.parsed_text ?? '').slice(0, perFile);
+    used += text.length;
+    const truncated = (a.parsed_text ?? '').length > text.length ? '\n…(مقتطع)' : '';
+    parts.push(`— ${a.filename}:\n${text}${truncated}`);
+  }
+  return `\n\n<الملفات_المرفوعة>\n${parts.join('\n\n')}\n</الملفات_المرفوعة>`;
+}
 
 // يحدّث وقت المحادثة، ويولّد عنوانًا من أول رسالة إن كان افتراضيًا
 async function touchConversation(env: Env, id: string, firstMessage: string, currentTitle: string) {

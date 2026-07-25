@@ -152,6 +152,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     let acc = '';
     let meta: any = {};
     let verification: any = null;
+    let failed = false; // حتى لا يمحو حدث done رسالة الخطأ
     await streamChat(conversationId, text, internet, bilingual, {
       onMeta: (m) => {
         meta = m;
@@ -171,6 +172,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         });
       },
       onDone: () => {
+        if (failed) return; // أُبلِغ الخطأ سابقًا
         setMessages((msgs) => {
           const copy = [...msgs];
           copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: false, citations: meta.citations, clarifying: meta.clarifying, verification };
@@ -181,6 +183,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         onConversationChange(conversationId);
       },
       onError: (err) => {
+        failed = true;
         setMessages((msgs) => {
           const copy = [...msgs];
           copy[copy.length - 1] = { ...asstMsg, content: `⚠️ ${err}`, streaming: false };

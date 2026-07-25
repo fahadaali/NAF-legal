@@ -247,6 +247,7 @@ export async function streamChat(
         else if (event === 'delta') handlers.onDelta?.(data.text ?? '');
         else if (event === 'search') handlers.onSearch?.();
         else if (event === 'verify') handlers.onVerify?.(data);
+        else if (event === 'error') handlers.onError?.(data.error ?? 'تعذّر التوليد');
         else if (event === 'done') handlers.onDone?.();
       } catch {}
     }

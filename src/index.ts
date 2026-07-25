@@ -27,12 +27,31 @@ app.use('*', secureHeaders());
 app.use('/api/*', async (c, next) => {
   const token = getCookie(c, SESSION_COOKIE);
   const key = token ? `rl:${(await verifyJwt(token, c.env.JWT_SECRET))?.sub ?? 'anon'}` : `rl:ip:${c.req.header('cf-connecting-ip') ?? 'x'}`;
-  const WINDOW = 60;
+  const WINDOW = 60; // ثانية
   const LIMIT = 60; // 60 طلب/دقيقة
   try {
-    const current = parseInt((await c.env.KV.get(key)) ?? '0', 10);
-    if (current >= LIMIT) return c.json({ error: 'تجاوزت حد الطلبات، حاول بعد قليل' }, 429);
-    await c.env.KV.put(key, String(current + 1), { expirationTtl: WINDOW });
+    // نافذة ثابتة بوقت انتهاء مخزَّن داخل القيمة: تجديد TTL على كل طلب كان
+    // يمنع العدّاد من الصفر فيُحجب المستخدم النشِط بلا مبرّر.
+    const now = Date.now();
+    const raw = await c.env.KV.get(key);
+    let count = 0;
+    let resetAt = now + WINDOW * 1000;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as { c: number; r: number };
+        if (parsed.r > now) {
+          count = parsed.c;
+          resetAt = parsed.r;
+        }
+      } catch {
+        // قيمة قديمة بصيغة رقم — تُعامَل كنافذة جديدة
+      }
+    }
+    if (count >= LIMIT) {
+      return c.json({ error: 'تجاوزت حد الطلبات، حاول بعد قليل' }, 429);
+    }
+    const ttl = Math.max(60, Math.ceil((resetAt - now) / 1000));
+    await c.env.KV.put(key, JSON.stringify({ c: count + 1, r: resetAt }), { expirationTtl: ttl });
   } catch {
     // في التطوير قد لا يتوفر KV — نتجاوز بصمت
   }
