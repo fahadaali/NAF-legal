@@ -3,6 +3,7 @@ import { api, Message, Attachment, Folder, ConsultConfig, streamChat } from '../
 import { CONSULTATIONS, labelFor } from '../lib/consultations';
 import { renderMarkdown } from '../lib/markdown';
 import IntakeModal from './IntakeModal';
+import DraftEditor from './DraftEditor';
 
 interface Props {
   conversationId: string | null;
@@ -24,6 +25,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   const [convType, setConvType] = useState<string | null>(null);
   const [configs, setConfigs] = useState<ConsultConfig[]>([]);
   const [intake, setIntake] = useState<ConsultConfig | null>(null);
+  const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const autoSent = useRef(false);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -383,6 +385,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                       <button>⬇ نص</button>
                     </a>
                     <button onClick={() => navigator.clipboard.writeText(m.content)}>نسخ</button>
+                    <button onClick={() => setEditing({ id: m.id, title: labelFor(convType) })}>✎ تحرير واعتماد</button>
                     <button onClick={() => shareDraft(m)}>🔗 مشاركة للمراجعة</button>
                     <button className={feedback[m.id] === 1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, 1)} title="مفيد">👍</button>
                     <button className={feedback[m.id] === -1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, -1)} title="يحتاج تحسين">👎</button>
@@ -472,6 +475,17 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           </div>
         </div>
       </div>
+
+      {editing && (
+        <DraftEditor
+          messageId={editing.id}
+          title={editing.title}
+          onClose={() => setEditing(null)}
+          onSaved={(content) =>
+            setMessages((msgs) => msgs.map((m) => (m.id === editing.id ? { ...m, content } : m)))
+          }
+        />
+      )}
     </>
   );
 }

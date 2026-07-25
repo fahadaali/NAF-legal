@@ -79,6 +79,18 @@ app.get('/export/:messageId', async (c) => {
     .first<{ content: string; title: string; consultation_type: string | null }>();
   if (!msg) return c.json({ error: 'الرسالة غير موجودة' }, 404);
 
+  // بوّابة الاعتماد: إن فُعِّلت في الإعدادات، يُمنع التصدير قبل اعتماد محامٍ
+  const gate = await c.env.DB.prepare("SELECT value FROM app_settings WHERE key = 'require_approval_before_export'")
+    .first<{ value: string }>();
+  if (gate?.value === 'true') {
+    const approved = await c.env.DB.prepare('SELECT message_id FROM message_approvals WHERE message_id = ?')
+      .bind(messageId)
+      .first();
+    if (!approved) {
+      return c.json({ error: 'التصدير موقوف: يلزم اعتماد المسودّة من محامٍ قبل التصدير.' }, 403);
+    }
+  }
+
   const title = msg.title || 'مسودّة مستشار ناف';
 
   if (format === 'txt') {

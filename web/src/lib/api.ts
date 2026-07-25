@@ -160,6 +160,17 @@ export const api = {
   // البحث الدلالي
   search: (q: string) => req<{ results: any[]; mode: string }>(`/search?q=${encodeURIComponent(q)}`),
 
+  // المسوّدات: النُسخ والتحرير والاعتماد
+  draftVersions: (messageId: string) =>
+    req<{ current: string; versions: any[]; approval: any | null }>(`/drafts/${messageId}/versions`),
+  saveDraft: (messageId: string, content: string, note?: string) =>
+    req<{ version: number }>(`/drafts/${messageId}`, { method: 'POST', body: JSON.stringify({ content, note }) }),
+  restoreDraft: (messageId: string, versionId: string) =>
+    req<{ content: string }>(`/drafts/${messageId}/restore/${versionId}`, { method: 'POST' }),
+  approveDraft: (messageId: string, note?: string) =>
+    req(`/drafts/${messageId}/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
+  unapproveDraft: (messageId: string) => req(`/drafts/${messageId}/approve`, { method: 'DELETE' }),
+
   // إعداد نماذج الاستشارات
   consultationConfigs: () => req<{ configs: ConsultConfig[] }>('/consultations/configs'),
   adminConsultationConfigs: () => req<{ configs: ConsultConfig[] }>('/admin/consultation-configs'),

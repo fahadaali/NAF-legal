@@ -703,6 +703,23 @@ function SettingsTab() {
         {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : '📤 رفع صورة الرأسية'}
       </button>
 
+      <div className="section-title">بوّابة الاعتماد قبل التصدير</div>
+      <p style={{ color: 'var(--muted)', fontSize: 13 }}>
+        عند التفعيل، لا يمكن تصدير أي مسودّة (Word/PDF/نص) قبل اعتمادها من محامٍ عبر «تحرير واعتماد».
+      </p>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, marginBottom: 10 }}>
+        <input
+          type="checkbox"
+          checked={settings.require_approval_before_export === 'true'}
+          onChange={async (e) => {
+            const val = e.target.checked ? 'true' : 'false';
+            await api.saveSettings({ require_approval_before_export: val });
+            setSettings((s) => ({ ...s, require_approval_before_export: val }));
+          }}
+        />
+        إلزام اعتماد محامٍ قبل التصدير
+      </label>
+
       <div className="section-title">فحص Workers AI (التضمين)</div>
       <p style={{ color: 'var(--muted)', fontSize: 13 }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
       <AiCheck />
