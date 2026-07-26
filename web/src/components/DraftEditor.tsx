@@ -178,7 +178,7 @@ export default function DraftEditor({
                 <div key={v.id} className="version-row">
                   <div>
                     <strong>النسخة {v.version}</strong>
-                    <span style={{ color: 'var(--muted)', fontSize: 12.5, marginInlineStart: 8 }}>
+                    <span style={{ color: 'var(--muted)', fontSize: '0.875rem', marginInlineStart: 8 }}>
                       {new Date(v.created_at).toLocaleString('ar-SA')} {v.note ? `— ${v.note}` : ''}
                     </span>
                   </div>
@@ -232,7 +232,7 @@ function DiffView({ oldText, newText }: { oldText: string; newText: string }) {
             {r.kind === 'removed' ? '−' : '+'} {r.text}
           </div>
         ))}
-      {rows.every((r) => r.kind === 'same') && <div style={{ color: 'var(--muted)', fontSize: 13 }}>لا فروق.</div>}
+      {rows.every((r) => r.kind === 'same') && <div style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>لا فروق.</div>}
     </div>
   );
 }

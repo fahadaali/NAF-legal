@@ -135,7 +135,7 @@ export default function Sidebar(props: Props) {
       </div>
 
       <div className="conv-list">
-        {convs.length === 0 && <div className="empty-state" style={{ fontSize: 13 }}>لا توجد محادثات بعد</div>}
+        {convs.length === 0 && <div className="empty-state" style={{ fontSize: '0.875rem' }}>لا توجد محادثات بعد</div>}
         {convs.map((c) => (
           <div
             key={c.id}
@@ -158,8 +158,8 @@ export default function Sidebar(props: Props) {
         <div className="user-chip">
           <div className="user-avatar">{initials}</div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{props.user.name ?? 'مستخدم'}</div>
-            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{props.user.name ?? 'مستخدم'}</div>
+            <div style={{ fontSize: '0.875rem', color: 'var(--muted)' }}>
               {props.user.role === 'admin' ? 'مسؤول' : 'مستخدم'}
             </div>
           </div>

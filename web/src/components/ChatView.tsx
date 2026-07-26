@@ -349,7 +349,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                 <div className="msg-content">
                   {m.streaming && !m.content ? (
                     <div className="typing-dots">
-                      {searching && <span style={{ fontSize: 13, marginInlineEnd: 8 }}>🔎 يبحث في المصادر…</span>}
+                      {searching && <span style={{ fontSize: '0.875rem', marginInlineEnd: 8 }}>🔎 يبحث في المصادر…</span>}
                       <span></span>
                       <span></span>
                       <span></span>

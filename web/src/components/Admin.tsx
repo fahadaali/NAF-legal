@@ -25,7 +25,7 @@ export default function Admin() {
   return (
     <div className="admin-wrap">
       <div className="admin-inner">
-        <h1 style={{ fontSize: 24, marginTop: 0 }}>لوحة الإدارة</h1>
+        <h1 style={{ fontSize: '1.5rem', marginTop: 0 }}>لوحة الإدارة</h1>
         <div className="admin-tabs">
           {TABS.map(([t, label]) => (
             <button key={t} className={`admin-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
@@ -161,7 +161,7 @@ function KbTab() {
             placeholder="عنوان الوثيقة (مثال: نظام العمل)"
             value={pasteTitle}
             onChange={(e) => setPasteTitle(e.target.value)}
-            style={{ width: '100%', padding: 11, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--text)', fontFamily: 'inherit', fontSize: 14 }}
+            style={{ width: '100%', padding: 11, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.875rem' }}
           />
           <textarea
             className="cfg-prompt"
@@ -295,7 +295,7 @@ function TrackingTab() {
           </tbody>
         </table>
       )}
-      <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 14 }}>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginTop: 14 }}>
         الأنظمة واللوائح الجديدة تُرصد في تبويب «خلاصة الأخبار» من المصادر الرسمية.
       </p>
     </div>
@@ -343,7 +343,7 @@ function UsersTab() {
   return (
     <div>
       <div className="section-title">إضافة مستخدم</div>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0 }}>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginTop: 0 }}>
         يُنشأ الحساب بكلمة المرور الافتراضية <strong>1234</strong>، ويُطلب من المستخدم تغييرها عند أول دخول.
       </p>
       <div className="user-add-row">
@@ -438,7 +438,7 @@ function VersionsList({ docId, onView }: { docId: string; onView: (t: ViewerTarg
     api.kbVersions(docId).then((r) => setVersions(r.versions)).catch(() => setVersions([]));
   }, [docId]);
   if (versions === null) return <span className="spinner" />;
-  if (!versions.length) return <span style={{ color: 'var(--muted)', fontSize: 13 }}>لا إصدارات سابقة — هذه النسخة الأولى.</span>;
+  if (!versions.length) return <span style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>لا إصدارات سابقة — هذه النسخة الأولى.</span>;
   const view = (v: any) =>
     onView({
       title: `إصدار ${v.version}`,
@@ -447,8 +447,8 @@ function VersionsList({ docId, onView }: { docId: string; onView: (t: ViewerTarg
       textUrl: api.kbVersionTextUrl(docId, v.id),
     });
   return (
-    <div style={{ fontSize: 13 }}>
-      <strong style={{ fontSize: 13.5 }}>سجل الإصدارات:</strong>
+    <div style={{ fontSize: '0.875rem' }}>
+      <strong style={{ fontSize: '0.875rem' }}>سجل الإصدارات:</strong>
       <ul style={{ margin: '6px 0', paddingInlineStart: 18 }}>
         {versions.map((v) => (
           <li key={v.id} style={{ margin: '5px 0' }}>
@@ -492,7 +492,7 @@ function NewsTab() {
             {news.map((n) => (
               <tr key={n.id}>
                 <td style={{ fontWeight: 600 }}>{n.url ? <a href={n.url} target="_blank" rel="noopener">{n.title}</a> : n.title}</td>
-                <td style={{ fontSize: 12.5, color: 'var(--muted)' }}>{n.summary}</td>
+                <td style={{ fontSize: '0.875rem', color: 'var(--muted)' }}>{n.summary}</td>
                 <td>{n.kind === 'new_regulation' ? 'نظام جديد' : n.kind === 'amendment' ? 'تعديل' : 'أخرى'}</td>
                 <td><button className="btn-sm" onClick={() => api.ingestNews(n.id).then(() => alert('أُضيف لقاعدة المعرفة كمقترَح.'))}>استيعاب</button></td>
               </tr>
@@ -629,7 +629,7 @@ function AnalyticsTab() {
   const cost = (Number(t.cost) || 0).toFixed(2);
   return (
     <div>
-      <p style={{ color: 'var(--muted)', fontSize: 13 }}>آخر 30 يومًا</p>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>آخر 30 يومًا</p>
       <div className="stat-row">
         <div className="stat-card"><div className="stat-val">{t.events ?? 0}</div><div className="stat-lbl">عملية</div></div>
         <div className="stat-card"><div className="stat-val">{((Number(t.in_tok) + Number(t.out_tok)) / 1000).toFixed(1)}k</div><div className="stat-lbl">إجمالي الرموز</div></div>
@@ -697,7 +697,7 @@ function SettingsTab() {
       <button className="btn-sm primary" onClick={saveFirm}>حفظ</button>
 
       <div className="section-title">رأسية الشركة لقوالب Word (صورة A4)</div>
-      <p style={{ color: 'var(--muted)', fontSize: 13 }}>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>
         ارفع صورة رأسية (PNG/JPEG) لتظهر أعلى كل مستند Word مُصدَّر.
         {settings.letterhead_mime ? ' ✅ رأسية مرفوعة حاليًا.' : ' لا توجد رأسية بعد.'}
       </p>
@@ -707,10 +707,10 @@ function SettingsTab() {
       </button>
 
       <div className="section-title">بوّابة الاعتماد قبل التصدير</div>
-      <p style={{ color: 'var(--muted)', fontSize: 13 }}>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>
         عند التفعيل، لا يمكن تصدير أي مسودّة (Word/PDF/نص) قبل اعتمادها من محامٍ عبر «تحرير واعتماد».
       </p>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, marginBottom: 10 }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', marginBottom: 10 }}>
         <input
           type="checkbox"
           checked={settings.require_approval_before_export === 'true'}
@@ -724,7 +724,7 @@ function SettingsTab() {
       </label>
 
       <div className="section-title">فحص Workers AI (التضمين)</div>
-      <p style={{ color: 'var(--muted)', fontSize: 13 }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
       <AiCheck />
     </div>
   );
@@ -750,7 +750,7 @@ function AiCheck() {
       <button className="btn-sm primary" onClick={run} disabled={busy}>
         {busy ? <><span className="spinner" /> جارٍ الفحص…</> : '🔬 فحص Workers AI'}
       </button>
-      {result && <p style={{ marginTop: 10, fontSize: 13.5 }}>{result}</p>}
+      {result && <p style={{ marginTop: 10, fontSize: '0.875rem' }}>{result}</p>}
     </div>
   );
 }
@@ -776,7 +776,7 @@ function AuditTab() {
           <tr key={e.id}>
             <td dir="ltr" style={{ textAlign: 'right' }}>{e.actor_email ?? e.actor_id ?? '—'}</td>
             <td><code>{e.action}</code></td>
-            <td style={{ fontSize: 12, color: 'var(--muted)' }}>{e.target}</td>
+            <td style={{ fontSize: '0.875rem', color: 'var(--muted)' }}>{e.target}</td>
             <td>{new Date(e.created_at).toLocaleString('ar-SA')}</td>
           </tr>
         ))}

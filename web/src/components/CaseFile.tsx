@@ -26,7 +26,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
   return (
     <div className="admin-wrap">
       <div className="admin-inner">
-        <h1 style={{ fontSize: 24, marginTop: 0 }}>ملف القضية</h1>
+        <h1 style={{ fontSize: '1.5rem', marginTop: 0 }}>ملف القضية</h1>
 
         {folders.length === 0 ? (
           <div className="empty-state">لا قضايا بعد. أنشئ قضية من الشريط الجانبي (＋) واربط بها محادثاتك.</div>
@@ -100,7 +100,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
                       {data.drafts.map((d: any) => (
                         <tr key={d.id}>
                           <td>{labelFor(d.consultation_type)}</td>
-                          <td style={{ fontSize: 12.5, color: 'var(--muted)' }}>{d.excerpt}…</td>
+                          <td style={{ fontSize: '0.875rem', color: 'var(--muted)' }}>{d.excerpt}…</td>
                           <td>{d.approved_at ? <span className="pill ready">معتمَدة</span> : <span className="pill pending">مسودّة</span>}</td>
                           <td><a href={api.exportUrl(d.id, 'docx')} download><button className="btn-sm">Word</button></a></td>
                         </tr>

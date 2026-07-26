@@ -8,7 +8,7 @@ export default function Tools() {
   return (
     <div className="admin-wrap">
       <div className="admin-inner">
-        <h1 style={{ fontSize: 24, marginTop: 0 }}>أدوات قانونية</h1>
+        <h1 style={{ fontSize: '1.5rem', marginTop: 0 }}>أدوات قانونية</h1>
         <div className="admin-tabs">
           <button className={`admin-tab ${tab === 'compare' ? 'active' : ''}`} onClick={() => setTab('compare')}>
             مقارنة نسختين
@@ -107,7 +107,7 @@ function Compare() {
 
   return (
     <div>
-      <p style={{ color: 'var(--muted)', fontSize: 14 }}>الصق نصّ النسختين (أو ارفع ملفات نصّية) لإبراز الفروق وأثرها القانوني.</p>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>الصق نصّ النسختين (أو ارفع ملفات نصّية) لإبراز الفروق وأثرها القانوني.</p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
         <div>
           <div className="field"><label>النسخة (أ)</label>
@@ -153,7 +153,7 @@ function Deadlines() {
 
   return (
     <div style={{ maxWidth: 620 }}>
-      <p style={{ color: 'var(--muted)', fontSize: 14 }}>احسب مواعيد الاعتراض/الاستئناف النظامية بناءً على تاريخ التبليغ.</p>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>احسب مواعيد الاعتراض/الاستئناف النظامية بناءً على تاريخ التبليغ.</p>
       <div className="field"><label>نوع الحكم/القرار</label>
         <input value={form.judgment_type} onChange={(e) => setForm({ ...form, judgment_type: e.target.value })} placeholder="مثال: حكم ابتدائي في دعوى عمّالية" />
       </div>

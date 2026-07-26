@@ -81,7 +81,7 @@ export default function ReviewPage({ token }: { token: string }) {
               onChange={(e) => setBody(e.target.value)}
               placeholder="اكتب ملاحظتك على المسودّة…"
               rows={2}
-              style={{ flex: 1, border: 'none', background: 'none', resize: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 14, outline: 'none' }}
+              style={{ flex: 1, border: 'none', background: 'none', resize: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.875rem', outline: 'none' }}
             />
             <button className="send-btn" onClick={addComment} disabled={busy || !body.trim()}>➤</button>
           </div>
