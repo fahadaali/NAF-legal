@@ -3,7 +3,9 @@ export interface ConsultationOption {
   type: string;
   label: string;
   description: string;
-  icon: string;
+  /** مفتاح من Icon في lib/icons — المعنى مسجَّل في naf-icons.md. */
+  iconKey?: 'memo' | 'pleading' | 'consultation' | 'contract'
+    | 'statementOfClaim' | 'judgmentAnalysis' | 'internalPolicy' | 'documentReview';
   group?: string;
 }
 
@@ -12,59 +14,59 @@ export const CONSULTATIONS: ConsultationOption[] = [
     type: 'litigation.statement_of_claim',
     label: 'صحيفة دعوى',
     description: 'تحرير صحيفة دعوى نظامية مكتملة الأركان الشكلية والموضوعية.',
-    icon: '⚖️',
+    iconKey: 'statementOfClaim',
     group: 'التقاضي',
   },
   {
     type: 'litigation.reply_memo',
     label: 'مذكرة رد',
     description: 'تفنيد ادّعاءات الخصم دفعًا شكليًا وموضوعيًا.',
-    icon: '📝',
+    iconKey: 'memo',
     group: 'التقاضي',
   },
   {
     type: 'litigation.objection',
     label: 'لائحة اعتراضية',
     description: 'بناء أسباب اعتراض مسبَّبة مع ضبط المواعيد النظامية.',
-    icon: '📋',
+    iconKey: 'pleading',
     group: 'التقاضي',
   },
   {
     type: 'litigation.judgment_analysis',
     label: 'تحليل حكم قضائي',
     description: 'استخراج الوقائع والأسباب وتقييم التسبيب وفرص الاعتراض.',
-    icon: '🔍',
+    iconKey: 'judgmentAnalysis',
     group: 'التقاضي',
   },
   {
     type: 'contract',
     label: 'صياغة عقد',
     description: 'صياغة عقد متوازن مكتمل البنود وفق نظام المعاملات المدنية.',
-    icon: '🤝',
+    iconKey: 'contract',
   },
   {
     type: 'policy',
     label: 'كتابة لوائح وسياسات',
     description: 'إنتاج لائحة/سياسة منظَّمة متوافقة مع المرجعية النظامية.',
-    icon: '📑',
+    iconKey: 'internalPolicy',
   },
   {
     type: 'consultation',
     label: 'استشارة قانونية',
     description: 'رأي قانوني مسبَّب مع الإسناد لمواد نظامية محدّدة.',
-    icon: '💬',
+    iconKey: 'consultation',
   },
   {
     type: 'document_review',
     label: 'مراجعة وتدقيق مستند',
     description: 'رفع عقد/مذكرة والحصول على تحليل مخاطر بندًا ببند مع مقترحات.',
-    icon: '🔎',
+    iconKey: 'documentReview',
   },
 ];
 
 export function labelFor(type: string | null | undefined): string {
   return CONSULTATIONS.find((c) => c.type === type)?.label ?? 'استشارة';
 }
-export function iconFor(type: string | null | undefined): string {
-  return CONSULTATIONS.find((c) => c.type === type)?.icon ?? '💬';
+export function optionFor(type: string | null | undefined): ConsultationOption | undefined {
+  return CONSULTATIONS.find((c) => c.type === type);
 }

@@ -2,6 +2,8 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ConsultConfig, FieldDef, FieldType } from '../lib/api';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import ClauseLibrary from './ClauseLibrary';
+import { formatDate, formatTime } from '../lib/format';
+import { Icon, ICON_SM } from '../lib/icons';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
@@ -25,7 +27,7 @@ export default function Admin() {
   return (
     <div className="admin-wrap">
       <div className="admin-inner">
-        <h1 style={{ fontSize: 24, marginTop: 0 }}>لوحة الإدارة</h1>
+        <h1 style={{ fontSize: '1.5rem', marginTop: 0 }}>لوحة الإدارة</h1>
         <div className="admin-tabs">
           {TABS.map(([t, label]) => (
             <button key={t} className={`admin-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
@@ -140,9 +142,9 @@ function KbTab() {
           e.target.value = '';
         }}
       />
-      <div className="intake-toggle" style={{ marginBottom: 10 }}>
+      <div className="intake-toggle" style={{ marginBottom: 8 }}>
         <button className={`seg ${mode === 'file' ? 'on' : ''}`} onClick={() => setMode('file')}>رفع ملف</button>
-        <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق نص</button>
+        <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق النص</button>
       </div>
 
       {mode === 'file' ? (
@@ -152,16 +154,16 @@ function KbTab() {
               <span className="spinner" /> جارٍ الرفع والتصنيف…
             </>
           ) : (
-            <>📤 ارفع وثيقة نظام/لائحة (PDF · DOCX · صورة · نص) — سيُستخرج محتواها ويُصنَّف ويُضمَّن تلقائيًا</>
+            <><Icon.upload size={ICON_SM} aria-hidden /> ارفع وثيقة نظام/لائحة (PDF · DOCX · صورة · نص) — سيُستخرج محتواها ويُصنَّف ويُضمَّن تلقائيًا</>
           )}
         </div>
       ) : (
-        <div style={{ marginBottom: 18 }}>
+        <div style={{ marginBottom: 16 }}>
           <input
             placeholder="عنوان الوثيقة (مثال: نظام العمل)"
             value={pasteTitle}
             onChange={(e) => setPasteTitle(e.target.value)}
-            style={{ width: '100%', padding: 11, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--text)', fontFamily: 'inherit', fontSize: 14 }}
+            style={{ width: '100%', padding: 12, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--foreground)', fontFamily: 'inherit', fontSize: '0.875rem' }}
           />
           <textarea
             className="cfg-prompt"
@@ -177,7 +179,7 @@ function KbTab() {
       )}
 
       {docs.length === 0 ? (
-        <div className="empty-state">لا توجد وثائق في قاعدة المعرفة بعد</div>
+        <div className="empty-state">لم تُرفع أي وثيقة بعد. ابدأ برفع أول وثيقة.</div>
       ) : (
         <table className="data-table">
           <thead>
@@ -197,7 +199,7 @@ function KbTab() {
                 <tr>
                   <td style={{ fontWeight: 600 }}>
                     {d.title}
-                    {d.needs_update ? <span className="pill warn" style={{ marginInlineStart: 6 }}>يحتاج مراجعة</span> : null}
+                    {d.needs_update ? <span className="pill warn" style={{ marginInlineStart: 8 }}>يحتاج مراجعة</span> : null}
                   </td>
                   <td>{d.category ?? '—'}</td>
                   <td>{d.source_authority ?? '—'}</td>
@@ -259,16 +261,16 @@ function TrackingTab() {
 
   return (
     <div>
-      <p className="source-note">🔒 {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
+      <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : '🔄 تشغيل فحص التتبّع الآن'}
+          {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> تشغيل فحص التتبّع الآن'}
         </button>
       </div>
 
       <div className="section-title">أنظمة تحتاج تحديثًا</div>
       {data.needs_update.length === 0 ? (
-        <div className="empty-state">لا توجد تنبيهات — كل الأنظمة محدَّثة.</div>
+        <div className="empty-state">لا تنبيهات جديدة. كل الأنظمة محدَّثة.</div>
       ) : (
         <table className="data-table">
           <thead>
@@ -284,7 +286,7 @@ function TrackingTab() {
               <tr key={t.id}>
                 <td style={{ fontWeight: 600 }}>{t.title}</td>
                 <td>{t.change_summary}</td>
-                <td>{t.last_checked ? new Date(t.last_checked).toLocaleDateString('ar-SA') : '—'}</td>
+                <td>{t.last_checked ? <bdi>{formatDate(t.last_checked)}</bdi> : '—'}</td>
                 <td>
                   <button className="btn-sm" onClick={() => api.resolveTracking(t.id).then(load)}>
                     اعتمدت المراجعة
@@ -295,7 +297,7 @@ function TrackingTab() {
           </tbody>
         </table>
       )}
-      <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 14 }}>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginTop: 16 }}>
         الأنظمة واللوائح الجديدة تُرصد في تبويب «خلاصة الأخبار» من المصادر الرسمية.
       </p>
     </div>
@@ -343,11 +345,11 @@ function UsersTab() {
   return (
     <div>
       <div className="section-title">إضافة مستخدم</div>
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 0 }}>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginTop: 0 }}>
         يُنشأ الحساب بكلمة المرور الافتراضية <strong>1234</strong>، ويُطلب من المستخدم تغييرها عند أول دخول.
       </p>
       <div className="user-add-row">
-        <input placeholder="البريد الإلكتروني" value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" style={{ textAlign: 'right' }} />
+        <input placeholder="البريد الإلكتروني" value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" style={{ textAlign: 'end' }} />
         <input placeholder="الاسم (اختياري)" value={name} onChange={(e) => setName(e.target.value)} />
         <select value={role} onChange={(e) => setRole(e.target.value)}>
           <option value="user">مستخدم</option>
@@ -374,7 +376,7 @@ function UsersTab() {
           {users.map((u) => (
             <tr key={u.id}>
               <td>{u.name ?? '—'}</td>
-              <td dir="ltr" style={{ textAlign: 'right' }}>{u.email}</td>
+              <td dir="ltr" style={{ textAlign: 'end' }}>{u.email}</td>
               <td>
                 <span className={`pill ${u.role === 'admin' ? 'active' : 'pending'}`}>
                   {u.role === 'admin' ? 'مسؤول' : 'مستخدم'}
@@ -385,7 +387,7 @@ function UsersTab() {
                   ? <span className="pill warn">بانتظار تغيير كلمة المرور</span>
                   : <span className="pill ready">نشط</span>}
               </td>
-              <td>{new Date(u.created_at).toLocaleDateString('ar-SA')}</td>
+              <td><bdi>{formatDate(u.created_at)}</bdi></td>
               <td style={{ whiteSpace: 'nowrap' }}>
                 <button className="btn-sm" onClick={() => api.setRole(u.id, u.role === 'admin' ? 'user' : 'admin').then(load)}>
                   {u.role === 'admin' ? 'إلغاء المسؤولية' : 'ترقية لمسؤول'}
@@ -425,7 +427,7 @@ function VersionUpload({ docId, version, onDone }: { docId: string; version: num
     <>
       <input ref={ref} type="file" hidden accept=".pdf,.docx,.txt,.md" onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm" onClick={() => ref.current?.click()} disabled={busy} title="رفع نسخة أحدث وأرشفة الحالية">
-        {busy ? '…' : '⬆ نسخة جديدة'}
+        {busy ? '…' : '<Icon.upload size={ICON_SM} aria-hidden /> نسخة جديدة'}
       </button>
     </>
   );
@@ -438,7 +440,7 @@ function VersionsList({ docId, onView }: { docId: string; onView: (t: ViewerTarg
     api.kbVersions(docId).then((r) => setVersions(r.versions)).catch(() => setVersions([]));
   }, [docId]);
   if (versions === null) return <span className="spinner" />;
-  if (!versions.length) return <span style={{ color: 'var(--muted)', fontSize: 13 }}>لا إصدارات سابقة — هذه النسخة الأولى.</span>;
+  if (!versions.length) return <span style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>لا إصدارات سابقة — هذه النسخة الأولى.</span>;
   const view = (v: any) =>
     onView({
       title: `إصدار ${v.version}`,
@@ -447,9 +449,9 @@ function VersionsList({ docId, onView }: { docId: string; onView: (t: ViewerTarg
       textUrl: api.kbVersionTextUrl(docId, v.id),
     });
   return (
-    <div style={{ fontSize: 13 }}>
-      <strong style={{ fontSize: 13.5 }}>سجل الإصدارات:</strong>
-      <ul style={{ margin: '6px 0', paddingInlineStart: 18 }}>
+    <div style={{ fontSize: '0.875rem' }}>
+      <strong style={{ fontSize: '0.875rem' }}>سجل الإصدارات:</strong>
+      <ul style={{ margin: '6px 0', paddingInlineStart: 16 }}>
         {versions.map((v) => (
           <li key={v.id} style={{ margin: '5px 0' }}>
             الإصدار {v.version}
@@ -477,14 +479,14 @@ function NewsTab() {
   };
   return (
     <div>
-      <p className="source-note">🔒 يُرصد الجديد والمحدَّث من: جريدة أم القرى (خلاصة RSS رسمية) · هيئة الخبراء بمجلس الوزراء · المركز الوطني للوثائق والمحفوظات.</p>
+      <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> يُرصد الجديد والمحدَّث من: جريدة أم القرى (خلاصة RSS رسمية) · هيئة الخبراء بمجلس الوزراء · المركز الوطني للوثائق والمحفوظات.</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '🔄 رصد الأنظمة الجديدة والمحدَّثة'}
+          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> رصد الأنظمة الجديدة والمحدَّثة'}
         </button>
       </div>
       {news.length === 0 ? (
-        <div className="empty-state">لا توجد عناصر خلاصة بعد. شغّل الرصد لجلب أحدث الأنظمة والتعديلات.</div>
+        <div className="empty-state">لا عناصر خلاصة بعد. شغّل الرصد لجلب أحدث الأنظمة والتعديلات.</div>
       ) : (
         <table className="data-table">
           <thead><tr><th>العنوان</th><th>الملخّص</th><th>النوع</th><th></th></tr></thead>
@@ -492,9 +494,9 @@ function NewsTab() {
             {news.map((n) => (
               <tr key={n.id}>
                 <td style={{ fontWeight: 600 }}>{n.url ? <a href={n.url} target="_blank" rel="noopener">{n.title}</a> : n.title}</td>
-                <td style={{ fontSize: 12.5, color: 'var(--muted)' }}>{n.summary}</td>
+                <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{n.summary}</td>
                 <td>{n.kind === 'new_regulation' ? 'نظام جديد' : n.kind === 'amendment' ? 'تعديل' : 'أخرى'}</td>
-                <td><button className="btn-sm" onClick={() => api.ingestNews(n.id).then(() => alert('أُضيف لقاعدة المعرفة كمقترَح.'))}>استيعاب</button></td>
+                <td><button className="btn-sm" onClick={() => api.ingestNews(n.id).then(() => alert('تمت الإضافة إلى قاعدة المعرفة كمقترَح.'))}>استيعاب</button></td>
               </tr>
             ))}
           </tbody>
@@ -533,7 +535,7 @@ function FormsTab() {
     try {
       const r = await api.saveConsultationConfig(draft.key, draft);
       setConfigs((cs) => cs.map((c) => (c.key === draft.key ? r.config : c)));
-      alert('حُفظ الإعداد.');
+      alert('تم حفظ الإعداد.');
     } catch (e: any) {
       alert(e.message ?? 'فشل الحفظ');
     } finally {
@@ -576,7 +578,7 @@ function FormsTab() {
     <div>
       <div className="field" style={{ maxWidth: 360 }}>
         <label>نوع الاستشارة</label>
-        <select value={key} onChange={(e) => select(e.target.value)} style={{ width: '100%', padding: 10, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}>
+        <select value={key} onChange={(e) => select(e.target.value)} style={{ width: '100%', padding: 8, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--foreground)' }}>
           {configs.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
       </div>
@@ -606,14 +608,14 @@ function FormsTab() {
             <option value="textarea">فقرة طويلة (تتمدّد)</option>
           </select>
           <label><input type="checkbox" checked={!!f.required} onChange={(e) => setField(i, { required: e.target.checked })} /> إلزامي</label>
-          <button className="btn-sm" onClick={() => move(i, -1)} title="أعلى">▲</button>
-          <button className="btn-sm" onClick={() => move(i, 1)} title="أسفل">▼</button>
+          <button className="btn-sm" onClick={() => move(i, -1)} title="أعلى"><Icon.moveUp size={ICON_SM} aria-hidden /></button>
+          <button className="btn-sm" onClick={() => move(i, 1)} title="أسفل"><Icon.moveDown size={ICON_SM} aria-hidden /></button>
           <button className="btn-sm" onClick={() => removeField(i)}>حذف</button>
         </div>
       ))}
       <button className="btn-sm" onClick={addField}>＋ إضافة حقل</button>
 
-      <div className="admin-actions" style={{ marginTop: 22 }}>
+      <div className="admin-actions" style={{ marginTop: 24 }}>
         <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
         <button className="btn-sm" onClick={reset}>إعادة للافتراضي</button>
       </div>
@@ -629,10 +631,10 @@ function AnalyticsTab() {
   const cost = (Number(t.cost) || 0).toFixed(2);
   return (
     <div>
-      <p style={{ color: 'var(--muted)', fontSize: 13 }}>آخر 30 يومًا</p>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>آخر 30 يومًا</p>
       <div className="stat-row">
         <div className="stat-card"><div className="stat-val">{t.events ?? 0}</div><div className="stat-lbl">عملية</div></div>
-        <div className="stat-card"><div className="stat-val">{((Number(t.in_tok) + Number(t.out_tok)) / 1000).toFixed(1)}k</div><div className="stat-lbl">إجمالي الرموز</div></div>
+        <div className="stat-card"><div className="stat-val"><bdi>{((Number(t.in_tok) + Number(t.out_tok)) / 1000).toFixed(1)}k</bdi></div><div className="stat-lbl">إجمالي الرموز</div></div>
         <div className="stat-card"><div className="stat-val">${cost}</div><div className="stat-lbl">التكلفة التقديرية</div></div>
       </div>
 
@@ -640,7 +642,7 @@ function AnalyticsTab() {
       <table className="data-table">
         <thead><tr><th>العملية</th><th>العدد</th><th>التكلفة</th></tr></thead>
         <tbody>{(data.by_kind ?? []).map((k: any) => (
-          <tr key={k.kind}><td>{k.kind}</td><td>{k.n}</td><td>${(Number(k.cost) || 0).toFixed(3)}</td></tr>
+          <tr key={k.kind}><td>{k.kind}</td><td><bdi>{k.n}</bdi></td><td><bdi>${(Number(k.cost) || 0).toFixed(3)}</bdi></td></tr>
         ))}</tbody>
       </table>
 
@@ -648,7 +650,7 @@ function AnalyticsTab() {
       <table className="data-table">
         <thead><tr><th>النوع</th><th>العدد</th></tr></thead>
         <tbody>{(data.by_type ?? []).map((k: any) => (
-          <tr key={k.consultation_type}><td>{k.consultation_type}</td><td>{k.n}</td></tr>
+          <tr key={k.consultation_type}><td>{k.consultation_type}</td><td><bdi>{k.n}</bdi></td></tr>
         ))}</tbody>
       </table>
 
@@ -656,7 +658,7 @@ function AnalyticsTab() {
       <table className="data-table">
         <thead><tr><th>المستخدم</th><th>العمليات</th><th>التكلفة</th></tr></thead>
         <tbody>{(data.by_user ?? []).map((u: any, i: number) => (
-          <tr key={i}><td dir="ltr" style={{ textAlign: 'right' }}>{u.email ?? '—'}</td><td>{u.n}</td><td>${(Number(u.cost) || 0).toFixed(3)}</td></tr>
+          <tr key={i}><td dir="ltr" style={{ textAlign: 'end' }}>{u.email ?? '—'}</td><td><bdi>{u.n}</bdi></td><td><bdi>${(Number(u.cost) || 0).toFixed(3)}</bdi></td></tr>
         ))}</tbody>
       </table>
     </div>
@@ -673,7 +675,7 @@ function SettingsTab() {
     api.settings().then((r) => { setSettings(r.settings); setFirmName(r.settings.firm_name ?? ''); }).catch(() => {});
   }, []);
 
-  const saveFirm = async () => { await api.saveSettings({ firm_name: firmName }); alert('حُفظ.'); };
+  const saveFirm = async () => { await api.saveSettings({ firm_name: firmName }); alert('تم الحفظ.'); };
 
   const uploadLetterhead = async (f: File | undefined) => {
     if (!f) return;
@@ -683,7 +685,7 @@ function SettingsTab() {
       fd.append('file', f);
       const res = await fetch('/api/admin/letterhead', { method: 'POST', body: fd, credentials: 'same-origin' });
       if (!res.ok) throw new Error((await res.json()).error);
-      alert('رُفعت رأسية الشركة. ستظهر في مخرجات Word.');
+      alert('تم رفع رأسية الشركة. ستظهر في مخرجات Word.');
       api.settings().then((r) => setSettings(r.settings));
     } catch (e: any) { alert(e.message ?? 'فشل الرفع'); } finally { setUploading(false); }
   };
@@ -697,20 +699,20 @@ function SettingsTab() {
       <button className="btn-sm primary" onClick={saveFirm}>حفظ</button>
 
       <div className="section-title">رأسية الشركة لقوالب Word (صورة A4)</div>
-      <p style={{ color: 'var(--muted)', fontSize: 13 }}>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
         ارفع صورة رأسية (PNG/JPEG) لتظهر أعلى كل مستند Word مُصدَّر.
-        {settings.letterhead_mime ? ' ✅ رأسية مرفوعة حاليًا.' : ' لا توجد رأسية بعد.'}
+        {settings.letterhead_mime ? ' رأسية مرفوعة حاليًا.' : ' لا توجد رأسية بعد.'}
       </p>
       <input ref={lhInput} type="file" hidden accept="image/png,image/jpeg" onChange={(e) => { uploadLetterhead(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm primary" onClick={() => lhInput.current?.click()} disabled={uploading}>
-        {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : '📤 رفع صورة الرأسية'}
+        {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : '<Icon.upload size={ICON_SM} aria-hidden /> رفع صورة الرأسية'}
       </button>
 
       <div className="section-title">بوّابة الاعتماد قبل التصدير</div>
-      <p style={{ color: 'var(--muted)', fontSize: 13 }}>
-        عند التفعيل، لا يمكن تصدير أي مسودّة (Word/PDF/نص) قبل اعتمادها من محامٍ عبر «تحرير واعتماد».
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
+        عند التفعيل، لا يمكن تصدير أي مسودّة (Word/PDF/نص) قبل اعتمادها من محامٍ عبر «تعديل واعتماد».
       </p>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, marginBottom: 10 }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', marginBottom: 8 }}>
         <input
           type="checkbox"
           checked={settings.require_approval_before_export === 'true'}
@@ -724,7 +726,7 @@ function SettingsTab() {
       </label>
 
       <div className="section-title">فحص Workers AI (التضمين)</div>
-      <p style={{ color: 'var(--muted)', fontSize: 13 }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
       <AiCheck />
     </div>
   );
@@ -738,9 +740,9 @@ function AiCheck() {
     setResult(null);
     try {
       const r = await api.aiCheck();
-      setResult(r.ok ? `✅ يعمل — النموذج ${r.model} · أبعاد المتجه ${r.dimensions} · ${r.ms}ms` : `❌ لا يعمل — ${r.error}`);
+      setResult(r.ok ? `مربوط — النموذج ${r.model} · أبعاد المتجه ${r.dimensions} · ${r.ms}ms` : `غير مربوط — ${r.error}`);
     } catch (e: any) {
-      setResult(`❌ فشل الفحص — ${e.message ?? ''}`);
+      setResult(`غير مربوط — ${e.message ?? ''}`);
     } finally {
       setBusy(false);
     }
@@ -748,9 +750,9 @@ function AiCheck() {
   return (
     <div>
       <button className="btn-sm primary" onClick={run} disabled={busy}>
-        {busy ? <><span className="spinner" /> جارٍ الفحص…</> : '🔬 فحص Workers AI'}
+        {busy ? <><span className="spinner" /> جارٍ الفحص…</> : 'فحص Workers AI'}
       </button>
-      {result && <p style={{ marginTop: 10, fontSize: 13.5 }}>{result}</p>}
+      {result && <p style={{ marginTop: 8, fontSize: '0.875rem' }}>{result}</p>}
     </div>
   );
 }
@@ -774,10 +776,10 @@ function AuditTab() {
       <tbody>
         {entries.map((e) => (
           <tr key={e.id}>
-            <td dir="ltr" style={{ textAlign: 'right' }}>{e.actor_email ?? e.actor_id ?? '—'}</td>
+            <td dir="ltr" style={{ textAlign: 'end' }}>{e.actor_email ?? e.actor_id ?? '—'}</td>
             <td><code>{e.action}</code></td>
-            <td style={{ fontSize: 12, color: 'var(--muted)' }}>{e.target}</td>
-            <td>{new Date(e.created_at).toLocaleString('ar-SA')}</td>
+            <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{e.target}</td>
+            <td><bdi>{formatDate(e.created_at)} {formatTime(e.created_at)}</bdi></td>
           </tr>
         ))}
       </tbody>

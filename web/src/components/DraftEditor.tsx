@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
+import { formatDate, formatTime } from '../lib/format';
+import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
 
 interface Version {
   id: string;
@@ -60,7 +62,7 @@ export default function DraftEditor({
       setOriginal(content);
       onSaved(content);
       await load();
-      alert('حُفظت نسخة جديدة من المسودّة.');
+      alert('تم حفظ نسخة جديدة من المسودّة.');
     } catch (e: any) {
       alert(e.message ?? 'فشل الحفظ');
     } finally {
@@ -69,7 +71,7 @@ export default function DraftEditor({
   };
 
   const approve = async () => {
-    if (dirty) return alert('احفظ التعديلات أولًا قبل الاعتماد.');
+    if (dirty) return alert('تحتاج حفظ التعديلات قبل الاعتماد.');
     setBusy(true);
     try {
       await api.approveDraft(messageId);
@@ -112,7 +114,7 @@ export default function DraftEditor({
       await api.draftAlternative(messageId, instruction);
       await load();
       setTab('versions');
-      alert('أُنشئت صياغة بديلة — قارنها في تبويب النُسخ واسترجعها إن أعجبتك.');
+      alert('تم إنشاء صياغة بديلة — قارنها في تبويب النُسخ واستعدها إن أعجبتك.');
     } catch (e: any) {
       alert(e.message ?? 'فشل التوليد البديل');
     } finally {
@@ -121,7 +123,7 @@ export default function DraftEditor({
   };
 
   const restore = async (v: Version) => {
-    if (!confirm(`استرجاع النسخة ${v.version}؟ ستُحفظ كنسخة أحدث.`)) return;
+    if (!confirm(`استعادة النسخة ${v.version}؟ ستُحفظ كنسخة أحدث.`)) return;
     setBusy(true);
     try {
       const r = await api.restoreDraft(messageId, v.id);
@@ -139,22 +141,22 @@ export default function DraftEditor({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">✎ {title}</span>
+          <span className="modal-title"><Icon.edit size={ICON_SM} aria-hidden /> {title}</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {approval ? (
-              <span className="pill ready" title={`اعتمدها ${approval.approver ?? ''}`}>معتمَدة ✅</span>
+              <span className="pill ready" title={`اعتمدها ${approval.approver ?? ''}`}><Icon.approved size={ICON_SM} aria-hidden /> معتمد</span>
             ) : (
               <span className="pill pending">غير معتمَدة</span>
             )}
-            <button className="modal-close" onClick={onClose} title="إغلاق">×</button>
+            <button className="modal-close" onClick={onClose} title="إغلاق"><Icon.close size={ICON_MD} aria-hidden /></button>
           </div>
         </div>
 
         <div className="admin-tabs" style={{ margin: '0 16px' }}>
-          <button className={`admin-tab ${tab === 'edit' ? 'active' : ''}`} onClick={() => setTab('edit')}>تحرير</button>
+          <button className={`admin-tab ${tab === 'edit' ? 'active' : ''}`} onClick={() => setTab('edit')}>تعديل</button>
           <button className={`admin-tab ${tab === 'preview' ? 'active' : ''}`} onClick={() => setTab('preview')}>معاينة</button>
           <button className={`admin-tab ${tab === 'versions' ? 'active' : ''}`} onClick={() => setTab('versions')}>
-            النُسخ ({versions.length})
+            النُسخ (<bdi>{versions.length}</bdi>)
           </button>
         </div>
 
@@ -173,20 +175,20 @@ export default function DraftEditor({
             <div className="msg-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
           ) : (
             <div>
-              {versions.length === 0 && <div className="empty-state">لا نُسخ محفوظة.</div>}
+              {versions.length === 0 && <div className="empty-state">لا نُسخ محفوظة بعد. تُحفظ النسخة تلقائياً عند كل تعديل.</div>}
               {versions.map((v) => (
                 <div key={v.id} className="version-row">
                   <div>
                     <strong>النسخة {v.version}</strong>
-                    <span style={{ color: 'var(--muted)', fontSize: 12.5, marginInlineStart: 8 }}>
-                      {new Date(v.created_at).toLocaleString('ar-SA')} {v.note ? `— ${v.note}` : ''}
+                    <span style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginInlineStart: 8 }}>
+                      <bdi>{formatDate(v.created_at)} {formatTime(v.created_at)}</bdi> {v.note ? `— ${v.note}` : ''}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
                     <button className="btn-sm" onClick={() => setCompareWith(compareWith?.id === v.id ? null : v)}>
                       {compareWith?.id === v.id ? 'إخفاء المقارنة' : 'مقارنة بالحالية'}
                     </button>
-                    <button className="btn-sm" onClick={() => restore(v)}>استرجاع</button>
+                    <button className="btn-sm" onClick={() => restore(v)}>استعادة</button>
                   </div>
                   {compareWith?.id === v.id && <DiffView oldText={v.content} newText={content} />}
                 </div>
@@ -196,12 +198,12 @@ export default function DraftEditor({
         </div>
 
         <div className="modal-foot">
-          <button className="btn-sm" onClick={proofread} disabled={busy}>✍ تدقيق لغوي</button>
-          <button className="btn-sm" onClick={alternative} disabled={busy}>🔀 صياغة بديلة</button>
+          <button className="btn-sm" onClick={proofread} disabled={busy}><Icon.proofread size={ICON_SM} aria-hidden /> تدقيق لغوي</button>
+          <button className="btn-sm" onClick={alternative} disabled={busy}><Icon.rewrite size={ICON_SM} aria-hidden /> صياغة بديلة</button>
           {approval ? (
             <button className="btn-sm" onClick={unapprove} disabled={busy}>إلغاء الاعتماد</button>
           ) : (
-            <button className="btn-sm" onClick={approve} disabled={busy}>✅ اعتماد المسودّة</button>
+            <button className="btn-sm" onClick={approve} disabled={busy}><Icon.approved size={ICON_SM} aria-hidden /> اعتماد المسودّة</button>
           )}
           <button className="btn-sm" onClick={onClose}>إغلاق</button>
           <button className="btn-primary" style={{ width: 'auto', padding: '11px 24px' }} onClick={save} disabled={busy || !dirty}>
@@ -232,7 +234,7 @@ function DiffView({ oldText, newText }: { oldText: string; newText: string }) {
             {r.kind === 'removed' ? '−' : '+'} {r.text}
           </div>
         ))}
-      {rows.every((r) => r.kind === 'same') && <div style={{ color: 'var(--muted)', fontSize: 13 }}>لا فروق.</div>}
+      {rows.every((r) => r.kind === 'same') && <div style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>لا فروق.</div>}
     </div>
   );
 }

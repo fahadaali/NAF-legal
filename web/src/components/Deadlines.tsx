@@ -25,7 +25,7 @@ export default function Deadlines() {
       setForm({ title: '', kind: 'اعتراض', base_date: '', days: '', due_date: '', notes: '' });
       load();
     } catch (e: any) {
-      alert(e.message ?? 'فشل الحفظ');
+      alert(e.message ?? 'تعذّر الحفظ. أعد المحاولة بعد قليل.');
     } finally {
       setBusy(false);
     }
@@ -37,7 +37,7 @@ export default function Deadlines() {
   return (
     <div className="admin-wrap">
       <div className="admin-inner">
-        <h1 style={{ fontSize: 24, marginTop: 0 }}>المواعيد النظامية</h1>
+        <h1 style={{ fontSize: '1.5rem', marginTop: 0 }}>المواعيد النظامية</h1>
         <p className="source-note">
           تُحفظ المواعيد بالتقويمين الميلادي والهجري (أم القرى)، ويُنبّهك النظام تلقائيًا قبل ٧ و٣ ويوم واحد من الاستحقاق، وعند فوات الميعاد.
         </p>
@@ -50,19 +50,19 @@ export default function Deadlines() {
           </select>
           <input placeholder="تاريخ التبليغ (هجري/ميلادي)" value={form.base_date} onChange={(e) => setForm({ ...form, base_date: e.target.value })} />
           <input placeholder="عدد الأيام" value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} style={{ minWidth: 110 }} />
-          <span style={{ color: 'var(--muted)', fontSize: 13 }}>أو</span>
+          <span style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>أو</span>
           <input placeholder="تاريخ الاستحقاق مباشرة" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
           <button className="btn-sm primary" onClick={add} disabled={busy}>{busy ? '…' : '＋ إضافة'}</button>
         </div>
 
-        <div className="admin-tabs" style={{ marginTop: 18 }}>
+        <div className="admin-tabs" style={{ marginTop: 16 }}>
           {[['open', 'المفتوحة'], ['done', 'المنجزة'], ['all', 'الكل']].map(([v, l]) => (
             <button key={v} className={`admin-tab ${status === v ? 'active' : ''}`} onClick={() => setStatus(v)}>{l}</button>
           ))}
         </div>
 
         {items.length === 0 ? (
-          <div className="empty-state">لا مواعيد.</div>
+          <div className="empty-state">لم تُضِف أي موعد بعد. ابدأ بإضافة أول موعد.</div>
         ) : (
           <table className="data-table">
             <thead>

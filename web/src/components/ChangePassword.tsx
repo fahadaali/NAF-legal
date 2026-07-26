@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
-import { Aurora } from '../App';
+import NafMark from './NafMark';
+import { Icon, ICON_MD } from '../lib/icons';
 
 // شاشة تعيين كلمة مرور جديدة عند أول دخول (كلمة المرور الافتراضية 1234)
 export default function ChangePassword({
@@ -35,13 +36,14 @@ export default function ChangePassword({
 
   return (
     <div className="auth-wrap">
-      <Aurora />
       <button className="theme-toggle floating" onClick={onToggleTheme} title="تبديل السمة">
-        {theme === 'dark' ? '☀️' : '🌙'}
+        {theme === 'dark'
+          ? <Icon.light size={ICON_MD} aria-hidden />
+          : <Icon.dark size={ICON_MD} aria-hidden />}
       </button>
       <div className="auth-card">
         <div className="auth-brand">
-          <img className="brand-logo-img" src="/logo.jpeg" alt="ناف" />
+          <NafMark />
           <h1>تعيين كلمة مرور جديدة</h1>
           <p>لأول دخول، يرجى اختيار كلمة مرور جديدة تحلّ محل الافتراضية.</p>
         </div>

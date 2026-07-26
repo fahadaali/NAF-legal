@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { Icon, ICON_MD } from '../lib/icons';
 
 interface Clause {
   id: string;
@@ -73,9 +74,9 @@ export default function ClauseLibrary({
         </>
       )}
 
-      <div className="section-title">البنود ({items.length})</div>
+      <div className="section-title">البنود (<bdi>{items.length}</bdi>)</div>
       {items.length === 0 ? (
-        <div className="empty-state">لا بنود بعد.</div>
+        <div className="empty-state">لم تُضِف أي بند بعد. ابدأ بإضافة أول بند.</div>
       ) : (
         items.map((cl) => (
           <div key={cl.id} className="version-row">
@@ -83,8 +84,8 @@ export default function ClauseLibrary({
               <strong>{cl.title}</strong>
               {cl.category && <span className="pill pending" style={{ marginInlineStart: 8 }}>{cl.category}</span>}
             </div>
-            <div style={{ fontSize: 13, color: 'var(--muted)', whiteSpace: 'pre-wrap' }}>{cl.body.slice(0, 260)}{cl.body.length > 260 ? '…' : ''}</div>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)', whiteSpace: 'pre-wrap' }}>{cl.body.slice(0, 260)}{cl.body.length > 260 ? '…' : ''}</div>
+            <div style={{ display: 'flex', gap: 8 }}>
               {mode === 'pick' ? (
                 <button className="btn-sm primary" onClick={() => onPick?.(cl)}>إدراج في الصياغة</button>
               ) : (
@@ -106,10 +107,10 @@ export default function ClauseLibrary({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">📚 بنك البنود</span>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <span className="modal-title"><Icon.clauseBank size={ICON_MD} aria-hidden /> بنك البنود</span>
+          <button className="modal-close" onClick={onClose}><Icon.close size={ICON_MD} aria-hidden /></button>
         </div>
-        <div className="modal-body" style={{ padding: 18 }}>{body}</div>
+        <div className="modal-body" style={{ padding: 16 }}>{body}</div>
       </div>
     </div>
   );

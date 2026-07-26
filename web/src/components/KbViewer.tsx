@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ICON_MD, ICON_SM, Icon } from '../lib/icons';
 
 export type ViewKind = 'pdf' | 'image' | 'text';
 
@@ -29,7 +30,7 @@ export default function KbViewer({ target, onClose }: { target: ViewerTarget; on
     fetch(target.textUrl, { credentials: 'same-origin' })
       .then((r) => (r.ok ? r.text() : Promise.reject()))
       .then((t) => setText(t))
-      .catch(() => setText('تعذّر تحميل النص.'))
+      .catch(() => setText('تعذّر تحميل النص. أعد المحاولة بعد قليل.'))
       .finally(() => setLoading(false));
   }, [target.textUrl, target.kind]);
 
@@ -52,17 +53,17 @@ export default function KbViewer({ target, onClose }: { target: ViewerTarget; on
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="modal-title">
-            {target.kind === 'pdf' ? '📕 ' : target.kind === 'image' ? '🖼 ' : '📄 '}
+            {target.kind === 'pdf' ? 'PDF ' : target.kind === 'image' ? <Icon.fileImage size={ICON_SM} aria-hidden /> : <Icon.fileText size={ICON_SM} aria-hidden />}{' '}
             {target.title}
           </span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {target.kind === 'text' && (
-              <button className="btn-sm" onClick={copyAll}>{copied ? '✓ نُسخ' : 'نسخ الكل'}</button>
+              <button className="btn-sm" onClick={copyAll}>{copied ? 'تم النسخ' : 'نسخ الكل'}</button>
             )}
             <a href={target.kind === 'text' ? target.textUrl : target.fileUrl} target="_blank" rel="noopener">
               <button className="btn-sm">فتح في تبويب</button>
             </a>
-            <button className="modal-close" onClick={onClose} title="إغلاق">×</button>
+            <button className="modal-close" onClick={onClose} title="إغلاق"><Icon.close size={ICON_MD} aria-hidden /></button>
           </div>
         </div>
 

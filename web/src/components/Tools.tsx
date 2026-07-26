@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
+import { formatDate } from '../lib/format';
+import { Icon, ICON_SM } from '../lib/icons';
 
 // أدوات قانونية مستقلّة: مقارنة نسختين + حاسبة المواعيد
 export default function Tools() {
@@ -8,7 +10,7 @@ export default function Tools() {
   return (
     <div className="admin-wrap">
       <div className="admin-inner">
-        <h1 style={{ fontSize: 24, marginTop: 0 }}>أدوات قانونية</h1>
+        <h1 style={{ fontSize: '1.5rem', marginTop: 0 }}>أدوات قانونية</h1>
         <div className="admin-tabs">
           <button className={`admin-tab ${tab === 'compare' ? 'active' : ''}`} onClick={() => setTab('compare')}>
             مقارنة نسختين
@@ -35,13 +37,13 @@ function Shares() {
 
   const statusLabel: Record<string, string> = {
     pending: 'بانتظار المراجعة',
-    approved: 'مُعتمَد ✅',
-    changes_requested: 'مطلوب تعديلات ✏️',
+    approved: 'معتمد',
+    changes_requested: 'مطلوب تعديلات',
   };
 
   const copyLink = (token: string) => {
     navigator.clipboard.writeText(`${location.origin}/review/${token}`).catch(() => {});
-    alert('نُسخ رابط المراجعة');
+    alert('تم نسخ رابط المراجعة');
   };
   const del = async (id: string) => {
     if (!confirm('حذف رابط المشاركة؟')) return;
@@ -49,7 +51,7 @@ function Shares() {
     load();
   };
 
-  if (shares.length === 0) return <div className="empty-state">لم تُنشئ روابط مراجعة بعد. استخدم «🔗 مشاركة للمراجعة» أسفل أي مسودّة.</div>;
+  if (shares.length === 0) return <div className="empty-state">لم تُنشئ روابط مراجعة بعد. استخدم «<Icon.share size={ICON_SM} aria-hidden /> مشاركة للمراجعة» أسفل أي مسودّة.</div>;
   return (
     <table className="data-table">
       <thead>
@@ -66,7 +68,7 @@ function Shares() {
               </span>
             </td>
             <td>{s.comment_count}</td>
-            <td>{new Date(s.updated_at).toLocaleDateString('ar-SA')}</td>
+            <td><bdi>{formatDate(s.updated_at)}</bdi></td>
             <td style={{ whiteSpace: 'nowrap' }}>
               <button className="btn-sm" onClick={() => copyLink(s.token)}>نسخ الرابط</button>{' '}
               <button className="btn-sm" onClick={() => del(s.id)}>حذف</button>
@@ -107,27 +109,27 @@ function Compare() {
 
   return (
     <div>
-      <p style={{ color: 'var(--muted)', fontSize: 14 }}>الصق نصّ النسختين (أو ارفع ملفات نصّية) لإبراز الفروق وأثرها القانوني.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>الصق نصّ النسختين (أو ارفع ملفات نصّية) لإبراز الفروق وأثرها القانوني.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div>
           <div className="field"><label>النسخة (أ)</label>
             <textarea className="tool-textarea" value={ta} onChange={(e) => setTa(e.target.value)} placeholder="النسخة الأولى…" />
           </div>
           <input ref={fa} type="file" hidden accept=".txt,.md" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setTa)} />
-          <button className="btn-sm" onClick={() => fa.current?.click()}>📎 رفع ملف نصّي</button>
+          <button className="btn-sm" onClick={() => fa.current?.click()}><Icon.upload size={ICON_SM} aria-hidden /> رفع ملف نصّي</button>
         </div>
         <div>
           <div className="field"><label>النسخة (ب)</label>
             <textarea className="tool-textarea" value={tb} onChange={(e) => setTb(e.target.value)} placeholder="النسخة الثانية…" />
           </div>
           <input ref={fb} type="file" hidden accept=".txt,.md" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setTb)} />
-          <button className="btn-sm" onClick={() => fb.current?.click()}>📎 رفع ملف نصّي</button>
+          <button className="btn-sm" onClick={() => fb.current?.click()}><Icon.upload size={ICON_SM} aria-hidden /> رفع ملف نصّي</button>
         </div>
       </div>
-      <button className="btn-primary" style={{ marginTop: 14, width: 'auto', padding: '10px 24px' }} onClick={run} disabled={busy}>
+      <button className="btn-primary" style={{ marginTop: 16, width: 'auto', padding: '10px 24px' }} onClick={run} disabled={busy}>
         {busy ? 'جارٍ المقارنة…' : 'قارن النسختين'}
       </button>
-      {result && <div className="msg-content" style={{ marginTop: 18 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
+      {result && <div className="msg-content" style={{ marginTop: 16 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
     </div>
   );
 }
@@ -153,7 +155,7 @@ function Deadlines() {
 
   return (
     <div style={{ maxWidth: 620 }}>
-      <p style={{ color: 'var(--muted)', fontSize: 14 }}>احسب مواعيد الاعتراض/الاستئناف النظامية بناءً على تاريخ التبليغ.</p>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>احسب مواعيد الاعتراض/الاستئناف النظامية بناءً على تاريخ التبليغ.</p>
       <div className="field"><label>نوع الحكم/القرار</label>
         <input value={form.judgment_type} onChange={(e) => setForm({ ...form, judgment_type: e.target.value })} placeholder="مثال: حكم ابتدائي في دعوى عمّالية" />
       </div>
@@ -169,7 +171,7 @@ function Deadlines() {
       <button className="btn-primary" style={{ width: 'auto', padding: '10px 24px' }} onClick={run} disabled={busy}>
         {busy ? 'جارٍ الحساب…' : 'احسب المواعيد'}
       </button>
-      {result && <div className="msg-content" style={{ marginTop: 18 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
+      {result && <div className="msg-content" style={{ marginTop: 16 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
     </div>
   );
 }

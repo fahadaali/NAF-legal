@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, User } from '../lib/api';
-import { Aurora } from '../App';
+import NafMark from './NafMark';
+import { Icon, ICON_MD } from '../lib/icons';
 
 export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: User) => void; theme: 'light' | 'dark'; onToggleTheme: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -26,13 +27,14 @@ export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: Use
 
   return (
     <div className="auth-wrap">
-      <Aurora />
       <button className="theme-toggle floating" onClick={onToggleTheme} title="تبديل السمة">
-        {theme === 'dark' ? '☀️' : '🌙'}
+        {theme === 'dark'
+          ? <Icon.light size={ICON_MD} aria-hidden />
+          : <Icon.dark size={ICON_MD} aria-hidden />}
       </button>
       <div className="auth-card">
         <div className="auth-brand">
-          <img className="brand-logo-img" src="/logo.jpeg" alt="ناف" />
+          <NafMark />
           <h1>مستشار ناف</h1>
           <p>منصة الاستشارات القانونية الذكية</p>
         </div>
@@ -55,7 +57,7 @@ export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: Use
               placeholder="name@example.com"
               required
               dir="ltr"
-              style={{ textAlign: 'right' }}
+              style={{ textAlign: 'end' }}
             />
           </div>
           <div className="field">

@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { publicApi } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { labelFor } from '../lib/consultations';
-import { Aurora } from '../App';
+import { formatDate, formatTime } from '../lib/format';
+import { ICON_MD, ICON_SM, Icon } from '../lib/icons';
+import NafMark from './NafMark';
 
 // صفحة المراجعة العامة (بلا حساب) — يفتحها المحامي عبر رابط الرمز
 export default function ReviewPage({ token }: { token: string }) {
@@ -45,16 +47,15 @@ export default function ReviewPage({ token }: { token: string }) {
 
   const statusLabel: Record<string, string> = {
     pending: 'بانتظار المراجعة',
-    approved: 'مُعتمَد ✅',
-    changes_requested: 'مطلوب تعديلات ✏️',
+    approved: 'معتمد',
+    changes_requested: 'مطلوب تعديلات',
   };
 
   return (
     <div className="review-wrap">
-      <Aurora />
       <div className="review-card">
         <div className="review-header">
-          <div className="brand"><img className="brand-logo-img" src="/logo.jpeg" alt="ناف" /><div>
+          <div className="brand"><NafMark /><div>
             <div className="brand-name">مراجعة مسودّة — مستشار ناف</div>
             <div className="brand-sub">{data.title} · {labelFor(data.consultation_type)}</div>
           </div></div>
@@ -66,34 +67,34 @@ export default function ReviewPage({ token }: { token: string }) {
         <div className="msg-content review-doc" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
 
         <div className="review-section">
-          <h3>التعليقات ({comments.length})</h3>
+          <h3>التعليقات (<bdi>{comments.length}</bdi>)</h3>
           {comments.map((c, i) => (
             <div key={i} className="review-comment">
-              <div className="rc-head"><strong>{c.author}</strong> · {new Date(c.created_at).toLocaleString('ar-SA')}</div>
+              <div className="rc-head"><strong>{c.author}</strong> · <bdi>{formatDate(c.created_at)} {formatTime(c.created_at)}</bdi></div>
               <div>{c.body}</div>
             </div>
           ))}
 
-          <div className="field" style={{ marginTop: 14 }}>
+          <div className="field" style={{ marginTop: 16 }}>
             <input placeholder="اسمك (اختياري)" value={author} onChange={(e) => setAuthor(e.target.value)} />
           </div>
-          <div className="composer-box" style={{ background: 'var(--surface)' }}>
+          <div className="composer-box" style={{ background: 'var(--card)' }}>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="اكتب ملاحظتك على المسودّة…"
               rows={2}
-              style={{ flex: 1, border: 'none', background: 'none', resize: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 14, outline: 'none' }}
+              style={{ flex: 1, border: 'none', background: 'none', resize: 'none', color: 'var(--foreground)', fontFamily: 'inherit', fontSize: '0.875rem', outline: 'none' }}
             />
-            <button className="send-btn" onClick={addComment} disabled={busy || !body.trim()}>➤</button>
+            <button className="send-btn" onClick={addComment} disabled={busy || !body.trim()}><Icon.send size={ICON_MD} aria-hidden /></button>
           </div>
 
           <div className="review-actions">
-            <button className="btn-primary" style={{ background: 'var(--success)' }} onClick={() => decide('approved')} disabled={busy}>
-              ✅ اعتماد المسودّة
+            <button className="btn-primary" style={{ background: 'var(--success)', color: 'var(--success-foreground)' }} onClick={() => decide('approved')} disabled={busy}>
+              <Icon.approved size={ICON_MD} aria-hidden /> اعتماد المسودّة
             </button>
             <button className="btn-sm" onClick={() => decide('changes_requested')} disabled={busy}>
-              ✏️ طلب تعديلات
+              <Icon.changesRequested size={ICON_SM} aria-hidden /> طلب تعديلات
             </button>
           </div>
         </div>
