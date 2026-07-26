@@ -37,8 +37,8 @@ function Shares() {
 
   const statusLabel: Record<string, string> = {
     pending: 'بانتظار المراجعة',
-    approved: 'مُعتمَد ✅',
-    changes_requested: 'مطلوب تعديلات ✏️',
+    approved: 'معتمد',
+    changes_requested: 'مطلوب تعديلات',
   };
 
   const copyLink = (token: string) => {
