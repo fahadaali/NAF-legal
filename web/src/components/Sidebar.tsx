@@ -136,7 +136,7 @@ export default function Sidebar(props: Props) {
       </div>
 
       <div className="conv-list">
-        {convs.length === 0 && <div className="empty-state" style={{ fontSize: '0.875rem' }}>لا توجد محادثات بعد</div>}
+        {convs.length === 0 && <div className="empty-state" style={{ fontSize: '0.875rem' }}>لم تبدأ أي محادثة بعد. ابدأ بأول استشارة.</div>}
         {convs.map((c) => (
           <div
             key={c.id}

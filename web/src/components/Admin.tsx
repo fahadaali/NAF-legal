@@ -144,7 +144,7 @@ function KbTab() {
       />
       <div className="intake-toggle" style={{ marginBottom: 8 }}>
         <button className={`seg ${mode === 'file' ? 'on' : ''}`} onClick={() => setMode('file')}>رفع ملف</button>
-        <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق نص</button>
+        <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق النص</button>
       </div>
 
       {mode === 'file' ? (
@@ -179,7 +179,7 @@ function KbTab() {
       )}
 
       {docs.length === 0 ? (
-        <div className="empty-state">لا توجد وثائق في قاعدة المعرفة بعد</div>
+        <div className="empty-state">لم تُرفع أي وثيقة بعد. ابدأ برفع أول وثيقة.</div>
       ) : (
         <table className="data-table">
           <thead>
@@ -270,7 +270,7 @@ function TrackingTab() {
 
       <div className="section-title">أنظمة تحتاج تحديثًا</div>
       {data.needs_update.length === 0 ? (
-        <div className="empty-state">لا توجد تنبيهات — كل الأنظمة محدَّثة.</div>
+        <div className="empty-state">لا تنبيهات جديدة. كل الأنظمة محدَّثة.</div>
       ) : (
         <table className="data-table">
           <thead>
@@ -486,7 +486,7 @@ function NewsTab() {
         </button>
       </div>
       {news.length === 0 ? (
-        <div className="empty-state">لا توجد عناصر خلاصة بعد. شغّل الرصد لجلب أحدث الأنظمة والتعديلات.</div>
+        <div className="empty-state">لا عناصر خلاصة بعد. شغّل الرصد لجلب أحدث الأنظمة والتعديلات.</div>
       ) : (
         <table className="data-table">
           <thead><tr><th>العنوان</th><th>الملخّص</th><th>النوع</th><th></th></tr></thead>
@@ -496,7 +496,7 @@ function NewsTab() {
                 <td style={{ fontWeight: 600 }}>{n.url ? <a href={n.url} target="_blank" rel="noopener">{n.title}</a> : n.title}</td>
                 <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{n.summary}</td>
                 <td>{n.kind === 'new_regulation' ? 'نظام جديد' : n.kind === 'amendment' ? 'تعديل' : 'أخرى'}</td>
-                <td><button className="btn-sm" onClick={() => api.ingestNews(n.id).then(() => alert('أُضيف لقاعدة المعرفة كمقترَح.'))}>استيعاب</button></td>
+                <td><button className="btn-sm" onClick={() => api.ingestNews(n.id).then(() => alert('تمت الإضافة إلى قاعدة المعرفة كمقترَح.'))}>استيعاب</button></td>
               </tr>
             ))}
           </tbody>
@@ -535,7 +535,7 @@ function FormsTab() {
     try {
       const r = await api.saveConsultationConfig(draft.key, draft);
       setConfigs((cs) => cs.map((c) => (c.key === draft.key ? r.config : c)));
-      alert('حُفظ الإعداد.');
+      alert('تم حفظ الإعداد.');
     } catch (e: any) {
       alert(e.message ?? 'فشل الحفظ');
     } finally {
@@ -675,7 +675,7 @@ function SettingsTab() {
     api.settings().then((r) => { setSettings(r.settings); setFirmName(r.settings.firm_name ?? ''); }).catch(() => {});
   }, []);
 
-  const saveFirm = async () => { await api.saveSettings({ firm_name: firmName }); alert('حُفظ.'); };
+  const saveFirm = async () => { await api.saveSettings({ firm_name: firmName }); alert('تم الحفظ.'); };
 
   const uploadLetterhead = async (f: File | undefined) => {
     if (!f) return;
@@ -685,7 +685,7 @@ function SettingsTab() {
       fd.append('file', f);
       const res = await fetch('/api/admin/letterhead', { method: 'POST', body: fd, credentials: 'same-origin' });
       if (!res.ok) throw new Error((await res.json()).error);
-      alert('رُفعت رأسية الشركة. ستظهر في مخرجات Word.');
+      alert('تم رفع رأسية الشركة. ستظهر في مخرجات Word.');
       api.settings().then((r) => setSettings(r.settings));
     } catch (e: any) { alert(e.message ?? 'فشل الرفع'); } finally { setUploading(false); }
   };
@@ -710,7 +710,7 @@ function SettingsTab() {
 
       <div className="section-title">بوّابة الاعتماد قبل التصدير</div>
       <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
-        عند التفعيل، لا يمكن تصدير أي مسودّة (Word/PDF/نص) قبل اعتمادها من محامٍ عبر «تحرير واعتماد».
+        عند التفعيل، لا يمكن تصدير أي مسودّة (Word/PDF/نص) قبل اعتمادها من محامٍ عبر «تعديل واعتماد».
       </p>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', marginBottom: 8 }}>
         <input

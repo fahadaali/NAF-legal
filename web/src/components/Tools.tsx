@@ -43,7 +43,7 @@ function Shares() {
 
   const copyLink = (token: string) => {
     navigator.clipboard.writeText(`${location.origin}/review/${token}`).catch(() => {});
-    alert('نُسخ رابط المراجعة');
+    alert('تم نسخ رابط المراجعة');
   };
   const del = async (id: string) => {
     if (!confirm('حذف رابط المشاركة؟')) return;

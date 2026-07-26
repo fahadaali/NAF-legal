@@ -62,7 +62,7 @@ export default function DraftEditor({
       setOriginal(content);
       onSaved(content);
       await load();
-      alert('حُفظت نسخة جديدة من المسودّة.');
+      alert('تم حفظ نسخة جديدة من المسودّة.');
     } catch (e: any) {
       alert(e.message ?? 'فشل الحفظ');
     } finally {
@@ -71,7 +71,7 @@ export default function DraftEditor({
   };
 
   const approve = async () => {
-    if (dirty) return alert('احفظ التعديلات أولًا قبل الاعتماد.');
+    if (dirty) return alert('تحتاج حفظ التعديلات قبل الاعتماد.');
     setBusy(true);
     try {
       await api.approveDraft(messageId);
@@ -114,7 +114,7 @@ export default function DraftEditor({
       await api.draftAlternative(messageId, instruction);
       await load();
       setTab('versions');
-      alert('أُنشئت صياغة بديلة — قارنها في تبويب النُسخ واسترجعها إن أعجبتك.');
+      alert('تم إنشاء صياغة بديلة — قارنها في تبويب النُسخ واستعدها إن أعجبتك.');
     } catch (e: any) {
       alert(e.message ?? 'فشل التوليد البديل');
     } finally {
@@ -123,7 +123,7 @@ export default function DraftEditor({
   };
 
   const restore = async (v: Version) => {
-    if (!confirm(`استرجاع النسخة ${v.version}؟ ستُحفظ كنسخة أحدث.`)) return;
+    if (!confirm(`استعادة النسخة ${v.version}؟ ستُحفظ كنسخة أحدث.`)) return;
     setBusy(true);
     try {
       const r = await api.restoreDraft(messageId, v.id);
@@ -144,7 +144,7 @@ export default function DraftEditor({
           <span className="modal-title"><Icon.edit size={ICON_SM} aria-hidden /> {title}</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {approval ? (
-              <span className="pill ready" title={`اعتمدها ${approval.approver ?? ''}`}><Icon.approved size={ICON_SM} aria-hidden /> معتمَدة</span>
+              <span className="pill ready" title={`اعتمدها ${approval.approver ?? ''}`}><Icon.approved size={ICON_SM} aria-hidden /> معتمد</span>
             ) : (
               <span className="pill pending">غير معتمَدة</span>
             )}
@@ -153,7 +153,7 @@ export default function DraftEditor({
         </div>
 
         <div className="admin-tabs" style={{ margin: '0 16px' }}>
-          <button className={`admin-tab ${tab === 'edit' ? 'active' : ''}`} onClick={() => setTab('edit')}>تحرير</button>
+          <button className={`admin-tab ${tab === 'edit' ? 'active' : ''}`} onClick={() => setTab('edit')}>تعديل</button>
           <button className={`admin-tab ${tab === 'preview' ? 'active' : ''}`} onClick={() => setTab('preview')}>معاينة</button>
           <button className={`admin-tab ${tab === 'versions' ? 'active' : ''}`} onClick={() => setTab('versions')}>
             النُسخ (<bdi>{versions.length}</bdi>)
@@ -175,7 +175,7 @@ export default function DraftEditor({
             <div className="msg-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
           ) : (
             <div>
-              {versions.length === 0 && <div className="empty-state">لا نُسخ محفوظة.</div>}
+              {versions.length === 0 && <div className="empty-state">لا نُسخ محفوظة بعد. تُحفظ النسخة تلقائياً عند كل تعديل.</div>}
               {versions.map((v) => (
                 <div key={v.id} className="version-row">
                   <div>
@@ -188,7 +188,7 @@ export default function DraftEditor({
                     <button className="btn-sm" onClick={() => setCompareWith(compareWith?.id === v.id ? null : v)}>
                       {compareWith?.id === v.id ? 'إخفاء المقارنة' : 'مقارنة بالحالية'}
                     </button>
-                    <button className="btn-sm" onClick={() => restore(v)}>استرجاع</button>
+                    <button className="btn-sm" onClick={() => restore(v)}>استعادة</button>
                   </div>
                   {compareWith?.id === v.id && <DiffView oldText={v.content} newText={content} />}
                 </div>

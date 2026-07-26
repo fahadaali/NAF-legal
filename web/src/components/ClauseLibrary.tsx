@@ -76,7 +76,7 @@ export default function ClauseLibrary({
 
       <div className="section-title">البنود (<bdi>{items.length}</bdi>)</div>
       {items.length === 0 ? (
-        <div className="empty-state">لا بنود بعد.</div>
+        <div className="empty-state">لم تُضِف أي بند بعد. ابدأ بإضافة أول بند.</div>
       ) : (
         items.map((cl) => (
           <div key={cl.id} className="version-row">

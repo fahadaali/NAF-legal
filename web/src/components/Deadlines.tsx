@@ -25,7 +25,7 @@ export default function Deadlines() {
       setForm({ title: '', kind: 'اعتراض', base_date: '', days: '', due_date: '', notes: '' });
       load();
     } catch (e: any) {
-      alert(e.message ?? 'فشل الحفظ');
+      alert(e.message ?? 'تعذّر الحفظ. أعد المحاولة بعد قليل.');
     } finally {
       setBusy(false);
     }
@@ -62,7 +62,7 @@ export default function Deadlines() {
         </div>
 
         {items.length === 0 ? (
-          <div className="empty-state">لا مواعيد.</div>
+          <div className="empty-state">لم تُضِف أي موعد بعد. ابدأ بإضافة أول موعد.</div>
         ) : (
           <table className="data-table">
             <thead>

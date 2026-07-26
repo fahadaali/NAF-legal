@@ -226,7 +226,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       recorder.current = mr;
       setRecording(true);
     } catch {
-      alert('تعذّر الوصول للميكروفون');
+      alert('تعذّر الوصول للميكروفون. تحقّق من إذن المتصفّح وأعد المحاولة.');
     }
   };
 
@@ -388,7 +388,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                       <button><Icon.download size={ICON_SM} aria-hidden /> نص</button>
                     </a>
                     <button onClick={() => navigator.clipboard.writeText(m.content)}>نسخ</button>
-                    <button onClick={() => setEditing({ id: m.id, title: labelFor(convType) })}><Icon.edit size={ICON_SM} aria-hidden /> تحرير واعتماد</button>
+                    <button onClick={() => setEditing({ id: m.id, title: labelFor(convType) })}><Icon.edit size={ICON_SM} aria-hidden /> تعديل واعتماد</button>
                     <button onClick={() => shareDraft(m)}><Icon.share size={ICON_SM} aria-hidden /> مشاركة للمراجعة</button>
                     <button className={feedback[m.id] === 1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, 1)} title="مفيد">👍</button>
                     <button className={feedback[m.id] === -1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, -1)} title="يحتاج تحسين">👎</button>

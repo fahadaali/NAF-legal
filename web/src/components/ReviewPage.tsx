@@ -46,8 +46,8 @@ export default function ReviewPage({ token }: { token: string }) {
 
   const statusLabel: Record<string, string> = {
     pending: 'بانتظار المراجعة',
-    approved: 'مُعتمَد ✅',
-    changes_requested: 'مطلوب تعديلات ✏️',
+    approved: 'معتمد',
+    changes_requested: 'مطلوب تعديلات',
   };
 
   return (

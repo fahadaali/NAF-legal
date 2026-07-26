@@ -49,7 +49,7 @@ export default function NotificationBell() {
         <div className="notif-panel">
           <div className="notif-head">الإشعارات</div>
           {items.length === 0 ? (
-            <div className="empty-state" style={{ padding: 24, fontSize: '0.875rem' }}>لا إشعارات.</div>
+            <div className="empty-state" style={{ padding: 24, fontSize: '0.875rem' }}>لا إشعارات جديدة.</div>
           ) : (
             items.map((n) => (
               <div key={n.id} className={`notif-item ${n.read_at ? '' : 'unread'}`}>

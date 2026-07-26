@@ -30,7 +30,7 @@ export default function KbViewer({ target, onClose }: { target: ViewerTarget; on
     fetch(target.textUrl, { credentials: 'same-origin' })
       .then((r) => (r.ok ? r.text() : Promise.reject()))
       .then((t) => setText(t))
-      .catch(() => setText('تعذّر تحميل النص.'))
+      .catch(() => setText('تعذّر تحميل النص. أعد المحاولة بعد قليل.'))
       .finally(() => setLoading(false));
   }, [target.textUrl, target.kind]);
 
@@ -58,7 +58,7 @@ export default function KbViewer({ target, onClose }: { target: ViewerTarget; on
           </span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {target.kind === 'text' && (
-              <button className="btn-sm" onClick={copyAll}>{copied ? '✓ نُسخ' : 'نسخ الكل'}</button>
+              <button className="btn-sm" onClick={copyAll}>{copied ? 'تم النسخ' : 'نسخ الكل'}</button>
             )}
             <a href={target.kind === 'text' ? target.textUrl : target.fileUrl} target="_blank" rel="noopener">
               <button className="btn-sm">فتح في تبويب</button>

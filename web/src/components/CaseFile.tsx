@@ -48,7 +48,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
             {loading ? (
               <div className="empty-state"><span className="spinner" /></div>
             ) : !data ? (
-              <div className="empty-state">تعذّر تحميل القضية.</div>
+              <div className="empty-state">تعذّر تحميل القضية. أعد المحاولة بعد قليل.</div>
             ) : (
               <>
                 <div className="stat-row" style={{ marginTop: 16 }}>
@@ -59,7 +59,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
 
                 <div className="section-title">المواعيد النظامية</div>
                 {data.deadlines.length === 0 ? (
-                  <div className="empty-state" style={{ padding: 20 }}>لا مواعيد مرتبطة.</div>
+                  <div className="empty-state" style={{ padding: 20 }}>لا مواعيد مرتبطة بهذه القضية. أضف أول موعد.</div>
                 ) : (
                   <table className="data-table">
                     <tbody>
@@ -77,7 +77,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
 
                 <div className="section-title">المحادثات</div>
                 {data.conversations.length === 0 ? (
-                  <div className="empty-state" style={{ padding: 20 }}>لا محادثات مرتبطة بهذه القضية.</div>
+                  <div className="empty-state" style={{ padding: 20 }}>لا محادثات مرتبطة بهذه القضية. اربط أول محادثة من الشريط الجانبي.</div>
                 ) : (
                   <table className="data-table">
                     <tbody>
@@ -95,7 +95,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
 
                 <div className="section-title">المسوّدات</div>
                 {data.drafts.length === 0 ? (
-                  <div className="empty-state" style={{ padding: 20 }}>لا مسوّدات.</div>
+                  <div className="empty-state" style={{ padding: 20 }}>لا مسوّدات في هذه القضية بعد. ابدأ بإنشاء أول مسودّة.</div>
                 ) : (
                   <table className="data-table">
                     <tbody>
@@ -113,7 +113,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
 
                 <div className="section-title">المرفقات</div>
                 {data.attachments.length === 0 ? (
-                  <div className="empty-state" style={{ padding: 20 }}>لا مرفقات.</div>
+                  <div className="empty-state" style={{ padding: 20 }}>لا مرفقات في هذا الملف. أضف أول مرفق.</div>
                 ) : (
                   <table className="data-table">
                     <tbody>
