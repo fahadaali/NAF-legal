@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ConsultConfig, FieldDef, FieldType } from '../lib/api';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import ClauseLibrary from './ClauseLibrary';
+import { formatDate, formatTime } from '../lib/format';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
@@ -161,7 +162,7 @@ function KbTab() {
             placeholder="عنوان الوثيقة (مثال: نظام العمل)"
             value={pasteTitle}
             onChange={(e) => setPasteTitle(e.target.value)}
-            style={{ width: '100%', padding: 12, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.875rem' }}
+            style={{ width: '100%', padding: 12, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--foreground)', fontFamily: 'inherit', fontSize: '0.875rem' }}
           />
           <textarea
             className="cfg-prompt"
@@ -284,7 +285,7 @@ function TrackingTab() {
               <tr key={t.id}>
                 <td style={{ fontWeight: 600 }}>{t.title}</td>
                 <td>{t.change_summary}</td>
-                <td>{t.last_checked ? new Date(t.last_checked).toLocaleDateString('ar-SA') : '—'}</td>
+                <td>{t.last_checked ? <bdi>{formatDate(t.last_checked)}</bdi> : '—'}</td>
                 <td>
                   <button className="btn-sm" onClick={() => api.resolveTracking(t.id).then(load)}>
                     اعتمدت المراجعة
@@ -295,7 +296,7 @@ function TrackingTab() {
           </tbody>
         </table>
       )}
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginTop: 16 }}>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginTop: 16 }}>
         الأنظمة واللوائح الجديدة تُرصد في تبويب «خلاصة الأخبار» من المصادر الرسمية.
       </p>
     </div>
@@ -343,11 +344,11 @@ function UsersTab() {
   return (
     <div>
       <div className="section-title">إضافة مستخدم</div>
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginTop: 0 }}>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginTop: 0 }}>
         يُنشأ الحساب بكلمة المرور الافتراضية <strong>1234</strong>، ويُطلب من المستخدم تغييرها عند أول دخول.
       </p>
       <div className="user-add-row">
-        <input placeholder="البريد الإلكتروني" value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" style={{ textAlign: 'right' }} />
+        <input placeholder="البريد الإلكتروني" value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" style={{ textAlign: 'end' }} />
         <input placeholder="الاسم (اختياري)" value={name} onChange={(e) => setName(e.target.value)} />
         <select value={role} onChange={(e) => setRole(e.target.value)}>
           <option value="user">مستخدم</option>
@@ -374,7 +375,7 @@ function UsersTab() {
           {users.map((u) => (
             <tr key={u.id}>
               <td>{u.name ?? '—'}</td>
-              <td dir="ltr" style={{ textAlign: 'right' }}>{u.email}</td>
+              <td dir="ltr" style={{ textAlign: 'end' }}>{u.email}</td>
               <td>
                 <span className={`pill ${u.role === 'admin' ? 'active' : 'pending'}`}>
                   {u.role === 'admin' ? 'مسؤول' : 'مستخدم'}
@@ -385,7 +386,7 @@ function UsersTab() {
                   ? <span className="pill warn">بانتظار تغيير كلمة المرور</span>
                   : <span className="pill ready">نشط</span>}
               </td>
-              <td>{new Date(u.created_at).toLocaleDateString('ar-SA')}</td>
+              <td><bdi>{formatDate(u.created_at)}</bdi></td>
               <td style={{ whiteSpace: 'nowrap' }}>
                 <button className="btn-sm" onClick={() => api.setRole(u.id, u.role === 'admin' ? 'user' : 'admin').then(load)}>
                   {u.role === 'admin' ? 'إلغاء المسؤولية' : 'ترقية لمسؤول'}
@@ -438,7 +439,7 @@ function VersionsList({ docId, onView }: { docId: string; onView: (t: ViewerTarg
     api.kbVersions(docId).then((r) => setVersions(r.versions)).catch(() => setVersions([]));
   }, [docId]);
   if (versions === null) return <span className="spinner" />;
-  if (!versions.length) return <span style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>لا إصدارات سابقة — هذه النسخة الأولى.</span>;
+  if (!versions.length) return <span style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>لا إصدارات سابقة — هذه النسخة الأولى.</span>;
   const view = (v: any) =>
     onView({
       title: `إصدار ${v.version}`,
@@ -492,7 +493,7 @@ function NewsTab() {
             {news.map((n) => (
               <tr key={n.id}>
                 <td style={{ fontWeight: 600 }}>{n.url ? <a href={n.url} target="_blank" rel="noopener">{n.title}</a> : n.title}</td>
-                <td style={{ fontSize: '0.875rem', color: 'var(--muted)' }}>{n.summary}</td>
+                <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{n.summary}</td>
                 <td>{n.kind === 'new_regulation' ? 'نظام جديد' : n.kind === 'amendment' ? 'تعديل' : 'أخرى'}</td>
                 <td><button className="btn-sm" onClick={() => api.ingestNews(n.id).then(() => alert('أُضيف لقاعدة المعرفة كمقترَح.'))}>استيعاب</button></td>
               </tr>
@@ -576,7 +577,7 @@ function FormsTab() {
     <div>
       <div className="field" style={{ maxWidth: 360 }}>
         <label>نوع الاستشارة</label>
-        <select value={key} onChange={(e) => select(e.target.value)} style={{ width: '100%', padding: 8, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}>
+        <select value={key} onChange={(e) => select(e.target.value)} style={{ width: '100%', padding: 8, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--foreground)' }}>
           {configs.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
       </div>
@@ -629,10 +630,10 @@ function AnalyticsTab() {
   const cost = (Number(t.cost) || 0).toFixed(2);
   return (
     <div>
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>آخر 30 يومًا</p>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>آخر 30 يومًا</p>
       <div className="stat-row">
         <div className="stat-card"><div className="stat-val">{t.events ?? 0}</div><div className="stat-lbl">عملية</div></div>
-        <div className="stat-card"><div className="stat-val">{((Number(t.in_tok) + Number(t.out_tok)) / 1000).toFixed(1)}k</div><div className="stat-lbl">إجمالي الرموز</div></div>
+        <div className="stat-card"><div className="stat-val"><bdi>{((Number(t.in_tok) + Number(t.out_tok)) / 1000).toFixed(1)}k</bdi></div><div className="stat-lbl">إجمالي الرموز</div></div>
         <div className="stat-card"><div className="stat-val">${cost}</div><div className="stat-lbl">التكلفة التقديرية</div></div>
       </div>
 
@@ -640,7 +641,7 @@ function AnalyticsTab() {
       <table className="data-table">
         <thead><tr><th>العملية</th><th>العدد</th><th>التكلفة</th></tr></thead>
         <tbody>{(data.by_kind ?? []).map((k: any) => (
-          <tr key={k.kind}><td>{k.kind}</td><td>{k.n}</td><td>${(Number(k.cost) || 0).toFixed(3)}</td></tr>
+          <tr key={k.kind}><td>{k.kind}</td><td><bdi>{k.n}</bdi></td><td><bdi>${(Number(k.cost) || 0).toFixed(3)}</bdi></td></tr>
         ))}</tbody>
       </table>
 
@@ -648,7 +649,7 @@ function AnalyticsTab() {
       <table className="data-table">
         <thead><tr><th>النوع</th><th>العدد</th></tr></thead>
         <tbody>{(data.by_type ?? []).map((k: any) => (
-          <tr key={k.consultation_type}><td>{k.consultation_type}</td><td>{k.n}</td></tr>
+          <tr key={k.consultation_type}><td>{k.consultation_type}</td><td><bdi>{k.n}</bdi></td></tr>
         ))}</tbody>
       </table>
 
@@ -656,7 +657,7 @@ function AnalyticsTab() {
       <table className="data-table">
         <thead><tr><th>المستخدم</th><th>العمليات</th><th>التكلفة</th></tr></thead>
         <tbody>{(data.by_user ?? []).map((u: any, i: number) => (
-          <tr key={i}><td dir="ltr" style={{ textAlign: 'right' }}>{u.email ?? '—'}</td><td>{u.n}</td><td>${(Number(u.cost) || 0).toFixed(3)}</td></tr>
+          <tr key={i}><td dir="ltr" style={{ textAlign: 'end' }}>{u.email ?? '—'}</td><td><bdi>{u.n}</bdi></td><td><bdi>${(Number(u.cost) || 0).toFixed(3)}</bdi></td></tr>
         ))}</tbody>
       </table>
     </div>
@@ -697,7 +698,7 @@ function SettingsTab() {
       <button className="btn-sm primary" onClick={saveFirm}>حفظ</button>
 
       <div className="section-title">رأسية الشركة لقوالب Word (صورة A4)</div>
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
         ارفع صورة رأسية (PNG/JPEG) لتظهر أعلى كل مستند Word مُصدَّر.
         {settings.letterhead_mime ? ' ✅ رأسية مرفوعة حاليًا.' : ' لا توجد رأسية بعد.'}
       </p>
@@ -707,7 +708,7 @@ function SettingsTab() {
       </button>
 
       <div className="section-title">بوّابة الاعتماد قبل التصدير</div>
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
         عند التفعيل، لا يمكن تصدير أي مسودّة (Word/PDF/نص) قبل اعتمادها من محامٍ عبر «تحرير واعتماد».
       </p>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', marginBottom: 8 }}>
@@ -724,7 +725,7 @@ function SettingsTab() {
       </label>
 
       <div className="section-title">فحص Workers AI (التضمين)</div>
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
       <AiCheck />
     </div>
   );
@@ -774,10 +775,10 @@ function AuditTab() {
       <tbody>
         {entries.map((e) => (
           <tr key={e.id}>
-            <td dir="ltr" style={{ textAlign: 'right' }}>{e.actor_email ?? e.actor_id ?? '—'}</td>
+            <td dir="ltr" style={{ textAlign: 'end' }}>{e.actor_email ?? e.actor_id ?? '—'}</td>
             <td><code>{e.action}</code></td>
-            <td style={{ fontSize: '0.875rem', color: 'var(--muted)' }}>{e.target}</td>
-            <td>{new Date(e.created_at).toLocaleString('ar-SA')}</td>
+            <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{e.target}</td>
+            <td><bdi>{formatDate(e.created_at)} {formatTime(e.created_at)}</bdi></td>
           </tr>
         ))}
       </tbody>

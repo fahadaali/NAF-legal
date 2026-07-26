@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
+import { formatDate, formatTime } from '../lib/format';
 
 interface Version {
   id: string;
@@ -154,7 +155,7 @@ export default function DraftEditor({
           <button className={`admin-tab ${tab === 'edit' ? 'active' : ''}`} onClick={() => setTab('edit')}>تحرير</button>
           <button className={`admin-tab ${tab === 'preview' ? 'active' : ''}`} onClick={() => setTab('preview')}>معاينة</button>
           <button className={`admin-tab ${tab === 'versions' ? 'active' : ''}`} onClick={() => setTab('versions')}>
-            النُسخ ({versions.length})
+            النُسخ (<bdi>{versions.length}</bdi>)
           </button>
         </div>
 
@@ -178,8 +179,8 @@ export default function DraftEditor({
                 <div key={v.id} className="version-row">
                   <div>
                     <strong>النسخة {v.version}</strong>
-                    <span style={{ color: 'var(--muted)', fontSize: '0.875rem', marginInlineStart: 8 }}>
-                      {new Date(v.created_at).toLocaleString('ar-SA')} {v.note ? `— ${v.note}` : ''}
+                    <span style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginInlineStart: 8 }}>
+                      <bdi>{formatDate(v.created_at)} {formatTime(v.created_at)}</bdi> {v.note ? `— ${v.note}` : ''}
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -232,7 +233,7 @@ function DiffView({ oldText, newText }: { oldText: string; newText: string }) {
             {r.kind === 'removed' ? '−' : '+'} {r.text}
           </div>
         ))}
-      {rows.every((r) => r.kind === 'same') && <div style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>لا فروق.</div>}
+      {rows.every((r) => r.kind === 'same') && <div style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>لا فروق.</div>}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
+import { formatDate } from '../lib/format';
 
 // أدوات قانونية مستقلّة: مقارنة نسختين + حاسبة المواعيد
 export default function Tools() {
@@ -66,7 +67,7 @@ function Shares() {
               </span>
             </td>
             <td>{s.comment_count}</td>
-            <td>{new Date(s.updated_at).toLocaleDateString('ar-SA')}</td>
+            <td><bdi>{formatDate(s.updated_at)}</bdi></td>
             <td style={{ whiteSpace: 'nowrap' }}>
               <button className="btn-sm" onClick={() => copyLink(s.token)}>نسخ الرابط</button>{' '}
               <button className="btn-sm" onClick={() => del(s.id)}>حذف</button>
@@ -107,7 +108,7 @@ function Compare() {
 
   return (
     <div>
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>الصق نصّ النسختين (أو ارفع ملفات نصّية) لإبراز الفروق وأثرها القانوني.</p>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>الصق نصّ النسختين (أو ارفع ملفات نصّية) لإبراز الفروق وأثرها القانوني.</p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div>
           <div className="field"><label>النسخة (أ)</label>
@@ -153,7 +154,7 @@ function Deadlines() {
 
   return (
     <div style={{ maxWidth: 620 }}>
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>احسب مواعيد الاعتراض/الاستئناف النظامية بناءً على تاريخ التبليغ.</p>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>احسب مواعيد الاعتراض/الاستئناف النظامية بناءً على تاريخ التبليغ.</p>
       <div className="field"><label>نوع الحكم/القرار</label>
         <input value={form.judgment_type} onChange={(e) => setForm({ ...form, judgment_type: e.target.value })} placeholder="مثال: حكم ابتدائي في دعوى عمّالية" />
       </div>

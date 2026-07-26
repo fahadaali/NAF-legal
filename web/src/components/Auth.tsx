@@ -53,7 +53,7 @@ export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: Use
               placeholder="name@example.com"
               required
               dir="ltr"
-              style={{ textAlign: 'right' }}
+              style={{ textAlign: 'end' }}
             />
           </div>
           <div className="field">

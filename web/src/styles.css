@@ -96,7 +96,14 @@ a { color: var(--primary); }
 .conv-item:hover { background: var(--muted); }
 .conv-item.active {
   background: var(--muted);
-  border-color: var(--border); box-shadow: inset 3px 0 0 var(--primary);
+  border-color: var(--border);
+}
+/* مؤشّر العنصر النشط: كان ظلاً داخلياً `inset 3px 0 0` والظلال لا يقلبها
+   dir، فكان يقع على الحافة المنتهية. صار عنصراً وهمياً على الحافة
+   المبتدئة — الموضع العرفي للمؤشّر — ويقلبه الاتجاه تلقائياً. */
+.conv-item.active::before {
+  content: ''; position: absolute; inset-block: 0; inset-inline-start: 0;
+  width: 4px; border-radius: inherit; background: var(--primary);
 }
 .conv-item .conv-title { flex: 1; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv-item .conv-icon { font-size: 1rem; }
@@ -522,7 +529,10 @@ a { color: var(--primary); }
 
 /* ── استجابة الشاشات الصغيرة ── */
 @media (max-width: 760px) {
+  /* الإزاحة محور فيزيائي لا يقلبه dir — الجهة تُحسم صراحةً لكل اتجاه.
+     في RTL الشريط على اليمين فيختفي يميناً، وفي LTR على اليسار. */
   .sidebar { position: absolute; z-index: 20; height: 100%; transform: translateX(100%); transition: transform 0.25s ease-out; }
+  [dir='ltr'] .sidebar { transform: translateX(-100%); }
   .sidebar.open { transform: translateX(0); box-shadow: var(--shadow-xl); }
   .cards { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr; }

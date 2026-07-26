@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { publicApi } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { labelFor } from '../lib/consultations';
+import { formatDate, formatTime } from '../lib/format';
 
 // صفحة المراجعة العامة (بلا حساب) — يفتحها المحامي عبر رابط الرمز
 export default function ReviewPage({ token }: { token: string }) {
@@ -64,10 +65,10 @@ export default function ReviewPage({ token }: { token: string }) {
         <div className="msg-content review-doc" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
 
         <div className="review-section">
-          <h3>التعليقات ({comments.length})</h3>
+          <h3>التعليقات (<bdi>{comments.length}</bdi>)</h3>
           {comments.map((c, i) => (
             <div key={i} className="review-comment">
-              <div className="rc-head"><strong>{c.author}</strong> · {new Date(c.created_at).toLocaleString('ar-SA')}</div>
+              <div className="rc-head"><strong>{c.author}</strong> · <bdi>{formatDate(c.created_at)} {formatTime(c.created_at)}</bdi></div>
               <div>{c.body}</div>
             </div>
           ))}
@@ -75,19 +76,19 @@ export default function ReviewPage({ token }: { token: string }) {
           <div className="field" style={{ marginTop: 16 }}>
             <input placeholder="اسمك (اختياري)" value={author} onChange={(e) => setAuthor(e.target.value)} />
           </div>
-          <div className="composer-box" style={{ background: 'var(--surface)' }}>
+          <div className="composer-box" style={{ background: 'var(--card)' }}>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="اكتب ملاحظتك على المسودّة…"
               rows={2}
-              style={{ flex: 1, border: 'none', background: 'none', resize: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.875rem', outline: 'none' }}
+              style={{ flex: 1, border: 'none', background: 'none', resize: 'none', color: 'var(--foreground)', fontFamily: 'inherit', fontSize: '0.875rem', outline: 'none' }}
             />
             <button className="send-btn" onClick={addComment} disabled={busy || !body.trim()}>➤</button>
           </div>
 
           <div className="review-actions">
-            <button className="btn-primary" style={{ background: 'var(--success)' }} onClick={() => decide('approved')} disabled={busy}>
+            <button className="btn-primary" style={{ background: 'var(--success)', color: 'var(--success-foreground)' }} onClick={() => decide('approved')} disabled={busy}>
               ✅ اعتماد المسودّة
             </button>
             <button className="btn-sm" onClick={() => decide('changes_requested')} disabled={busy}>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
+import { formatDate, formatTime } from '../lib/format';
 
 // جرس الإشعارات داخل المنصّة
 export default function NotificationBell() {
@@ -53,7 +54,7 @@ export default function NotificationBell() {
               <div key={n.id} className={`notif-item ${n.read_at ? '' : 'unread'}`}>
                 <div className="notif-title">{n.title}</div>
                 {n.body && <div className="notif-body">{n.body}</div>}
-                <div className="notif-time">{new Date(n.created_at).toLocaleString('ar-SA')}</div>
+                <div className="notif-time"><bdi>{formatDate(n.created_at)} {formatTime(n.created_at)}</bdi></div>
               </div>
             ))
           )}

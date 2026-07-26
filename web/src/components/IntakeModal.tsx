@@ -72,7 +72,7 @@ export default function IntakeModal({
           {config.fields.map((f) => (
             <div className="field" key={f.key}>
               <label>
-                {f.label} {f.required && <span style={{ color: 'var(--danger)' }}>*</span>}
+                {f.label} {f.required && <span style={{ color: 'var(--destructive)' }}>*</span>}
               </label>
               {f.type === 'textarea' ? (
                 <textarea
@@ -98,7 +98,7 @@ export default function IntakeModal({
           {config.file.enabled && (
             <div className="field">
               <label>
-                {config.file.label} {config.file.required && <span style={{ color: 'var(--danger)' }}>*</span>}
+                {config.file.label} {config.file.required && <span style={{ color: 'var(--destructive)' }}>*</span>}
               </label>
 
               {config.file.allow_text && (

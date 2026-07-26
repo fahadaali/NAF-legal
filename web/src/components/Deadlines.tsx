@@ -50,7 +50,7 @@ export default function Deadlines() {
           </select>
           <input placeholder="تاريخ التبليغ (هجري/ميلادي)" value={form.base_date} onChange={(e) => setForm({ ...form, base_date: e.target.value })} />
           <input placeholder="عدد الأيام" value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} style={{ minWidth: 110 }} />
-          <span style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>أو</span>
+          <span style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>أو</span>
           <input placeholder="تاريخ الاستحقاق مباشرة" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
           <button className="btn-sm primary" onClick={add} disabled={busy}>{busy ? '…' : '＋ إضافة'}</button>
         </div>

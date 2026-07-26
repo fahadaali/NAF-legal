@@ -159,7 +159,7 @@ export default function Sidebar(props: Props) {
           <div className="user-avatar">{initials}</div>
           <div>
             <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{props.user.name ?? 'مستخدم'}</div>
-            <div style={{ fontSize: '0.875rem', color: 'var(--muted)' }}>
+            <div style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>
               {props.user.role === 'admin' ? 'مسؤول' : 'مستخدم'}
             </div>
           </div>
