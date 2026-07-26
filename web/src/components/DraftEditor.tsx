@@ -182,7 +182,7 @@ export default function DraftEditor({
                       {new Date(v.created_at).toLocaleString('ar-SA')} {v.note ? `— ${v.note}` : ''}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
                     <button className="btn-sm" onClick={() => setCompareWith(compareWith?.id === v.id ? null : v)}>
                       {compareWith?.id === v.id ? 'إخفاء المقارنة' : 'مقارنة بالحالية'}
                     </button>

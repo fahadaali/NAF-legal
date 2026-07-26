@@ -84,7 +84,7 @@ export default function ClauseLibrary({
               {cl.category && <span className="pill pending" style={{ marginInlineStart: 8 }}>{cl.category}</span>}
             </div>
             <div style={{ fontSize: '0.875rem', color: 'var(--muted)', whiteSpace: 'pre-wrap' }}>{cl.body.slice(0, 260)}{cl.body.length > 260 ? '…' : ''}</div>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
               {mode === 'pick' ? (
                 <button className="btn-sm primary" onClick={() => onPick?.(cl)}>إدراج في الصياغة</button>
               ) : (
@@ -109,7 +109,7 @@ export default function ClauseLibrary({
           <span className="modal-title">📚 بنك البنود</span>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
-        <div className="modal-body" style={{ padding: 18 }}>{body}</div>
+        <div className="modal-body" style={{ padding: 16 }}>{body}</div>
       </div>
     </div>
   );

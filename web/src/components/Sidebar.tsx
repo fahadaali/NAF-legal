@@ -165,7 +165,7 @@ export default function Sidebar(props: Props) {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
             {props.user.role === 'admin' && (
               <button className="link-btn" onClick={props.onOpenAdmin}>
                 لوحة الإدارة

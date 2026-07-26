@@ -72,7 +72,7 @@ export default function ReviewPage({ token }: { token: string }) {
             </div>
           ))}
 
-          <div className="field" style={{ marginTop: 14 }}>
+          <div className="field" style={{ marginTop: 16 }}>
             <input placeholder="اسمك (اختياري)" value={author} onChange={(e) => setAuthor(e.target.value)} />
           </div>
           <div className="composer-box" style={{ background: 'var(--surface)' }}>

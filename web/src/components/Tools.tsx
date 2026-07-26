@@ -108,7 +108,7 @@ function Compare() {
   return (
     <div>
       <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>الصق نصّ النسختين (أو ارفع ملفات نصّية) لإبراز الفروق وأثرها القانوني.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div>
           <div className="field"><label>النسخة (أ)</label>
             <textarea className="tool-textarea" value={ta} onChange={(e) => setTa(e.target.value)} placeholder="النسخة الأولى…" />
@@ -124,10 +124,10 @@ function Compare() {
           <button className="btn-sm" onClick={() => fb.current?.click()}>📎 رفع ملف نصّي</button>
         </div>
       </div>
-      <button className="btn-primary" style={{ marginTop: 14, width: 'auto', padding: '10px 24px' }} onClick={run} disabled={busy}>
+      <button className="btn-primary" style={{ marginTop: 16, width: 'auto', padding: '10px 24px' }} onClick={run} disabled={busy}>
         {busy ? 'جارٍ المقارنة…' : 'قارن النسختين'}
       </button>
-      {result && <div className="msg-content" style={{ marginTop: 18 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
+      {result && <div className="msg-content" style={{ marginTop: 16 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
     </div>
   );
 }
@@ -169,7 +169,7 @@ function Deadlines() {
       <button className="btn-primary" style={{ width: 'auto', padding: '10px 24px' }} onClick={run} disabled={busy}>
         {busy ? 'جارٍ الحساب…' : 'احسب المواعيد'}
       </button>
-      {result && <div className="msg-content" style={{ marginTop: 18 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
+      {result && <div className="msg-content" style={{ marginTop: 16 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
     </div>
   );
 }

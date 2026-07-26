@@ -140,7 +140,7 @@ function KbTab() {
           e.target.value = '';
         }}
       />
-      <div className="intake-toggle" style={{ marginBottom: 10 }}>
+      <div className="intake-toggle" style={{ marginBottom: 8 }}>
         <button className={`seg ${mode === 'file' ? 'on' : ''}`} onClick={() => setMode('file')}>رفع ملف</button>
         <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق نص</button>
       </div>
@@ -156,12 +156,12 @@ function KbTab() {
           )}
         </div>
       ) : (
-        <div style={{ marginBottom: 18 }}>
+        <div style={{ marginBottom: 16 }}>
           <input
             placeholder="عنوان الوثيقة (مثال: نظام العمل)"
             value={pasteTitle}
             onChange={(e) => setPasteTitle(e.target.value)}
-            style={{ width: '100%', padding: 11, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.875rem' }}
+            style={{ width: '100%', padding: 12, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.875rem' }}
           />
           <textarea
             className="cfg-prompt"
@@ -197,7 +197,7 @@ function KbTab() {
                 <tr>
                   <td style={{ fontWeight: 600 }}>
                     {d.title}
-                    {d.needs_update ? <span className="pill warn" style={{ marginInlineStart: 6 }}>يحتاج مراجعة</span> : null}
+                    {d.needs_update ? <span className="pill warn" style={{ marginInlineStart: 8 }}>يحتاج مراجعة</span> : null}
                   </td>
                   <td>{d.category ?? '—'}</td>
                   <td>{d.source_authority ?? '—'}</td>
@@ -295,7 +295,7 @@ function TrackingTab() {
           </tbody>
         </table>
       )}
-      <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginTop: 14 }}>
+      <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginTop: 16 }}>
         الأنظمة واللوائح الجديدة تُرصد في تبويب «خلاصة الأخبار» من المصادر الرسمية.
       </p>
     </div>
@@ -449,7 +449,7 @@ function VersionsList({ docId, onView }: { docId: string; onView: (t: ViewerTarg
   return (
     <div style={{ fontSize: '0.875rem' }}>
       <strong style={{ fontSize: '0.875rem' }}>سجل الإصدارات:</strong>
-      <ul style={{ margin: '6px 0', paddingInlineStart: 18 }}>
+      <ul style={{ margin: '6px 0', paddingInlineStart: 16 }}>
         {versions.map((v) => (
           <li key={v.id} style={{ margin: '5px 0' }}>
             الإصدار {v.version}
@@ -576,7 +576,7 @@ function FormsTab() {
     <div>
       <div className="field" style={{ maxWidth: 360 }}>
         <label>نوع الاستشارة</label>
-        <select value={key} onChange={(e) => select(e.target.value)} style={{ width: '100%', padding: 10, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}>
+        <select value={key} onChange={(e) => select(e.target.value)} style={{ width: '100%', padding: 8, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}>
           {configs.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
       </div>
@@ -613,7 +613,7 @@ function FormsTab() {
       ))}
       <button className="btn-sm" onClick={addField}>＋ إضافة حقل</button>
 
-      <div className="admin-actions" style={{ marginTop: 22 }}>
+      <div className="admin-actions" style={{ marginTop: 24 }}>
         <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
         <button className="btn-sm" onClick={reset}>إعادة للافتراضي</button>
       </div>
@@ -710,7 +710,7 @@ function SettingsTab() {
       <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>
         عند التفعيل، لا يمكن تصدير أي مسودّة (Word/PDF/نص) قبل اعتمادها من محامٍ عبر «تحرير واعتماد».
       </p>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', marginBottom: 10 }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', marginBottom: 8 }}>
         <input
           type="checkbox"
           checked={settings.require_approval_before_export === 'true'}
@@ -750,7 +750,7 @@ function AiCheck() {
       <button className="btn-sm primary" onClick={run} disabled={busy}>
         {busy ? <><span className="spinner" /> جارٍ الفحص…</> : '🔬 فحص Workers AI'}
       </button>
-      {result && <p style={{ marginTop: 10, fontSize: '0.875rem' }}>{result}</p>}
+      {result && <p style={{ marginTop: 8, fontSize: '0.875rem' }}>{result}</p>}
     </div>
   );
 }

@@ -55,7 +55,7 @@ export default function Deadlines() {
           <button className="btn-sm primary" onClick={add} disabled={busy}>{busy ? '…' : '＋ إضافة'}</button>
         </div>
 
-        <div className="admin-tabs" style={{ marginTop: 18 }}>
+        <div className="admin-tabs" style={{ marginTop: 16 }}>
           {[['open', 'المفتوحة'], ['done', 'المنجزة'], ['all', 'الكل']].map(([v, l]) => (
             <button key={v} className={`admin-tab ${status === v ? 'active' : ''}`} onClick={() => setStatus(v)}>{l}</button>
           ))}
