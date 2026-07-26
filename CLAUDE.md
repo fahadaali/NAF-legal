@@ -39,7 +39,7 @@ If a value you need does not exist in the token set, **stop and ask**. Adding a 
 
 **Four exceptions, and only these four.** Every one of them is a context that cannot read a CSS custom property. Nothing else qualifies — "it was simpler" is not a context.
 
-*Email templates.* Email clients do not support CSS custom properties. A template that renders inside an inbox carries literal values by necessity, and so does any in-app preview of it — a preview styled from the app theme shows the author something the subscriber will never receive. Keep those values in one template file, comment why, and mirror the same values in the preview. Everything else in the same repository still obeys the rule.
+*Email templates.* Email clients do not support CSS custom properties, and older desktop clients do not support logical direction properties either. A template that renders inside an inbox carries literal values and physical direction properties by necessity, and so does any in-app preview of it — a preview styled from the app theme shows the author something the subscriber will never receive. Keep those values in one template file, comment why, and mirror the same values in the preview. In an RTL template that means `border-right` where the app would use `border-inline-start`; write the RTL side directly and say so in a comment. Everything else in the same repository still obeys the rule.
 
 *External brand colours.* Platform marks — LinkedIn, X, Instagram, YouTube, Facebook, TikTok, Snapchat, Threads, Google — are identities owned by other parties. Recolouring them to fit our theme makes them unrecognisable, which defeats the icon. They are registered as `--brand-*` tokens in `naf-theme.css`; consume those. Never type the hex, and never use a `--brand-*` token for anything but that platform's own mark.
 
@@ -205,6 +205,8 @@ Merging into `main` runs the release workflow. It reads the commit subjects sinc
 Use `.gitmessage` as the template — `git config commit.template .gitmessage` once per clone. Types outside the table are correct and expected; they simply do not trigger a release.
 
 **The workflow refuses to publish a broken registry.** It runs `shadcn registry validate` and rebuilds `public/r` before anything else, and fails if the built output does not match `registry.json`. A release is never cut from a registry that does not validate.
+
+**The same workflow ships to the platforms.** They have no `registry.json`, so the two registry steps are skipped there and only version derivation and changelog generation run. A platform release is cut from commit subjects exactly as the registry's is.
 
 **Nothing is released when nothing warrants it.** A merge carrying only docs or refactors produces no tag and no release. That is the expected outcome, not a failure.
 

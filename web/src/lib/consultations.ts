@@ -4,9 +4,8 @@ export interface ConsultationOption {
   label: string;
   description: string;
   /** مفتاح من Icon في lib/icons — المعنى مسجَّل في naf-icons.md. */
-  iconKey?: 'memo' | 'pleading' | 'consultation' | 'contract';
-  /** إيموجي مؤقّتة لمفهوم لم يُسجَّل بعد في السجلّ. لا تُضِف جديداً. */
-  icon?: string;
+  iconKey?: 'memo' | 'pleading' | 'consultation' | 'contract'
+    | 'statementOfClaim' | 'judgmentAnalysis' | 'internalPolicy' | 'documentReview';
   group?: string;
 }
 
@@ -15,7 +14,7 @@ export const CONSULTATIONS: ConsultationOption[] = [
     type: 'litigation.statement_of_claim',
     label: 'صحيفة دعوى',
     description: 'تحرير صحيفة دعوى نظامية مكتملة الأركان الشكلية والموضوعية.',
-    icon: '⚖️',
+    iconKey: 'statementOfClaim',
     group: 'التقاضي',
   },
   {
@@ -36,7 +35,7 @@ export const CONSULTATIONS: ConsultationOption[] = [
     type: 'litigation.judgment_analysis',
     label: 'تحليل حكم قضائي',
     description: 'استخراج الوقائع والأسباب وتقييم التسبيب وفرص الاعتراض.',
-    icon: '🔍',
+    iconKey: 'judgmentAnalysis',
     group: 'التقاضي',
   },
   {
@@ -49,7 +48,7 @@ export const CONSULTATIONS: ConsultationOption[] = [
     type: 'policy',
     label: 'كتابة لوائح وسياسات',
     description: 'إنتاج لائحة/سياسة منظَّمة متوافقة مع المرجعية النظامية.',
-    icon: '📑',
+    iconKey: 'internalPolicy',
   },
   {
     type: 'consultation',
@@ -61,7 +60,7 @@ export const CONSULTATIONS: ConsultationOption[] = [
     type: 'document_review',
     label: 'مراجعة وتدقيق مستند',
     description: 'رفع عقد/مذكرة والحصول على تحليل مخاطر بندًا ببند مع مقترحات.',
-    icon: '🔎',
+    iconKey: 'documentReview',
   },
 ];
 

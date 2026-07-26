@@ -282,7 +282,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           <h1>كيف يمكن لمستشار ناف مساعدتك اليوم؟</h1>
           <p className="lead">اختر نوع الاستشارة لبدء محادثة جديدة. جميع المخرجات مسوّدات تخضع لمراجعة محامٍ.</p>
 
-          <div className="picker-group-title">⚖️ التقاضي</div>
+          <div className="picker-group-title"><Icon.litigation size={ICON_SM} aria-hidden /> التقاضي</div>
           <div className="cards">
             {grouped.map((c) => (
               <button key={c.type} className="card" onClick={() => openIntake(c.type)}>

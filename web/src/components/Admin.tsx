@@ -740,9 +740,9 @@ function AiCheck() {
     setResult(null);
     try {
       const r = await api.aiCheck();
-      setResult(r.ok ? `يعمل — النموذج ${r.model} · أبعاد المتجه ${r.dimensions} · ${r.ms}ms` : `لا يعمل — ${r.error}`);
+      setResult(r.ok ? `مربوط — النموذج ${r.model} · أبعاد المتجه ${r.dimensions} · ${r.ms}ms` : `غير مربوط — ${r.error}`);
     } catch (e: any) {
-      setResult(`فشل الفحص — ${e.message ?? ''}`);
+      setResult(`غير مربوط — ${e.message ?? ''}`);
     } finally {
       setBusy(false);
     }

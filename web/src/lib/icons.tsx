@@ -12,6 +12,7 @@ import {
   ArrowUp,
   BadgeCheck,
   BookCheck,
+  BookText,
   Bell,
   Briefcase,
   Calendar,
@@ -20,11 +21,15 @@ import {
   Download,
   FileImage,
   FileOutput,
+  FilePlus2,
+  FileSearch,
   FileText,
   FileType,
   Folder,
   Globe,
   Library,
+  Link2,
+  Link2Off,
   Menu,
   MessageSquare,
   MessageSquareWarning,
@@ -34,6 +39,7 @@ import {
   Pencil,
   RefreshCw,
   Replace,
+  ScanText,
   ScrollText,
   Search,
   Send,
@@ -42,6 +48,7 @@ import {
   Square,
   Stamp,
   Sun,
+  Swords,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -79,7 +86,12 @@ export const Icon = {
   consultation: MessageSquare, // استشارة
   contract: Stamp,         // عقد
   memo: FileText,          // مذكرة
-  pleading: ScrollText,    // لائحة
+  pleading: ScrollText,    // لائحة قضائية — اعتراضية واستئنافية
+  statementOfClaim: FilePlus2, // صحيفة دعوى — اللائحة الافتتاحية
+  internalPolicy: BookText,    // لائحة داخلية / سياسة — لا ScrollText
+  judgmentAnalysis: ScanText,  // تحليل حكم قضائي
+  documentReview: FileSearch,  // مراجعة وتدقيق مستند — الفعل لا الحالة
+  litigation: Swords,          // التقاضي — تصنيف لا كيان
   appointment: Calendar,   // موعد
   attachment: Paperclip,   // مرفق
   officialSource: BadgeCheck, // مصدر رسمي — وليست ShieldCheck (صلاحيات)
@@ -87,7 +99,9 @@ export const Icon = {
   clauseBank: Library,     // بنك البنود
   folder: Folder,          // مجلّد
   tools: Wrench,           // الأدوات
-  systemCheck: Activity,   // فحص النظام — نتيجته نصّ ولون لا أيقونة ثانية
+  systemCheck: Activity,   // فحص النظام — الفعل
+  connected: Link2,        // مربوط
+  disconnected: Link2Off,  // غير مربوط
   // الحالات
   approved: CircleCheck,   // معتمد
   warning: TriangleAlert,  // تحذير
@@ -117,19 +131,14 @@ export const Icon = {
    وهو مطبَّق في styles.css على `.send-btn svg`.
    الصياغة في السجلّ تحتمل قراءتين؛ السؤال مرفوع في audit/report.md. */
 
-/** أيقونة نوع الاستشارة: من السجلّ إن كان المعنى مسجَّلاً، وإلا إيموجي مؤقّتة. */
+/** أيقونة نوع الاستشارة. كل الأنواع مسجَّلة في naf-icons.md، فلا احتياطي. */
 export function ConsultationIcon({
   option,
   size = ICON_MD,
 }: {
-  option?: { iconKey?: keyof typeof Icon; icon?: string };
+  option?: { iconKey?: keyof typeof Icon };
   size?: number;
 }) {
-  const key = option?.iconKey;
-  if (key) {
-    const Glyph = Icon[key];
-    return <Glyph size={size} aria-hidden />;
-  }
-  if (option?.icon) return <span aria-hidden>{option.icon}</span>;
-  return <Icon.consultation size={size} aria-hidden />;
+  const Glyph = option?.iconKey ? Icon[option.iconKey] : Icon.consultation;
+  return <Glyph size={size} aria-hidden />;
 }
