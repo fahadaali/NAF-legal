@@ -3,6 +3,7 @@ import { api, Conversation, Folder, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
 import NotificationBell from './NotificationBell';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD } from '../lib/icons';
+import NafMark from './NafMark';
 
 interface Props {
   user: User;
@@ -95,7 +96,7 @@ export default function Sidebar(props: Props) {
     <aside className={`sidebar ${props.open ? 'open' : ''}`}>
       <div className="sidebar-header">
         <div className="brand">
-          <img className="brand-logo-img" src="/logo.jpeg" alt="ناف" />
+          <NafMark />
           <div>
             <div className="brand-name">مستشار ناف</div>
             <div className="brand-sub">الاستشارات القانونية الذكية</div>

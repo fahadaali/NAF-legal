@@ -554,3 +554,9 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
    في RTL اتجاه الإرسال يسار — فتُقلب صراحةً هنا.
    الأسهم والشيفرون لا تُقلب: أسماؤها في السجلّ مسجَّلة بمظهرها في RTL. */
 [dir='rtl'] .send-btn svg { transform: scaleX(-1); }
+
+/* علامة ناف: نسخة لكل وضع، والاختيار بصنف `dark` على الجذر. */
+.naf-mark { flex-shrink: 0; }
+.naf-mark-dark { display: none; }
+.dark .naf-mark-light { display: none; }
+.dark .naf-mark-dark { display: block; }

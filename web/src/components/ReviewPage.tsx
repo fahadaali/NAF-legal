@@ -4,6 +4,7 @@ import { renderMarkdown } from '../lib/markdown';
 import { labelFor } from '../lib/consultations';
 import { formatDate, formatTime } from '../lib/format';
 import { Icon, ICON_MD } from '../lib/icons';
+import NafMark from './NafMark';
 
 // صفحة المراجعة العامة (بلا حساب) — يفتحها المحامي عبر رابط الرمز
 export default function ReviewPage({ token }: { token: string }) {
@@ -54,7 +55,7 @@ export default function ReviewPage({ token }: { token: string }) {
     <div className="review-wrap">
       <div className="review-card">
         <div className="review-header">
-          <div className="brand"><img className="brand-logo-img" src="/logo.jpeg" alt="ناف" /><div>
+          <div className="brand"><NafMark /><div>
             <div className="brand-name">مراجعة مسودّة — مستشار ناف</div>
             <div className="brand-sub">{data.title} · {labelFor(data.consultation_type)}</div>
           </div></div>

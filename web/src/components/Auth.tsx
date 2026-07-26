@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, User } from '../lib/api';
+import NafMark from './NafMark';
 
 export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: User) => void; theme: 'light' | 'dark'; onToggleTheme: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -30,7 +31,7 @@ export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: Use
       </button>
       <div className="auth-card">
         <div className="auth-brand">
-          <img className="brand-logo-img" src="/logo.jpeg" alt="ناف" />
+          <NafMark />
           <h1>مستشار ناف</h1>
           <p>منصة الاستشارات القانونية الذكية</p>
         </div>
