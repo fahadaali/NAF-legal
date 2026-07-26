@@ -113,7 +113,7 @@ export default function Sidebar(props: Props) {
         {searchMode === 'semantic' && <div className="search-mode"><Icon.search size={ICON_SM} aria-hidden /> بحث دلالي</div>}
       </div>
 
-      <button className="tools-link" onClick={props.onOpenTools}>🧰 الأدوات القانونية</button>
+      <button className="tools-link" onClick={props.onOpenTools}><Icon.tools size={ICON_SM} aria-hidden /> الأدوات القانونية</button>
       <button className="tools-link" onClick={props.onOpenDeadlines}><Icon.appointment size={ICON_SM} aria-hidden /> المواعيد النظامية</button>
       <button className="tools-link" onClick={props.onOpenCase}><Icon.matter size={ICON_SM} aria-hidden /> ملف القضية</button>
 
@@ -179,7 +179,9 @@ export default function Sidebar(props: Props) {
           </div>
           <NotificationBell />
           <button className="theme-toggle" onClick={props.onToggleTheme} title="تبديل السمة">
-            {props.theme === 'dark' ? '☀️' : '🌙'}
+            {props.theme === 'dark'
+          ? <Icon.light size={ICON_MD} aria-hidden />
+          : <Icon.dark size={ICON_MD} aria-hidden />}
           </button>
         </div>
       </div>

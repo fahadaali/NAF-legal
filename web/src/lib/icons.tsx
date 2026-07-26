@@ -6,27 +6,48 @@
    ============================================================ */
 
 import {
+  Activity,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
+  BadgeCheck,
+  BookCheck,
   Bell,
   Briefcase,
   Calendar,
   CircleCheck,
+  CircleHelp,
   Download,
+  FileImage,
   FileOutput,
   FileText,
+  FileType,
+  Folder,
+  Globe,
+  Library,
   Menu,
   MessageSquare,
+  MessageSquareWarning,
+  Mic,
+  Moon,
   Paperclip,
   Pencil,
   RefreshCw,
+  Replace,
   ScrollText,
   Search,
   Send,
   Share2,
+  SpellCheck,
+  Square,
   Stamp,
+  Sun,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   TriangleAlert,
   Upload,
+  Wrench,
   X,
 } from 'lucide-react';
 
@@ -47,6 +68,11 @@ export const Icon = {
   share: Share2,           // مشاركة
   send: Send,              // إرسال — اتجاهية، انظر أدناه
   refresh: RefreshCw,      // تحديث
+  proofread: SpellCheck,   // تدقيق لغوي
+  rewrite: Replace,        // صياغة بديلة
+  webSearch: Globe,        // البحث في الإنترنت
+  moveUp: ArrowUp,         // نقل لأعلى
+  moveDown: ArrowDown,     // نقل لأسفل
   close: X,                // إغلاق — ولا تُستعمل للحذف أبداً
   // الكيانات
   matter: Briefcase,       // ملف / مسألة
@@ -56,13 +82,31 @@ export const Icon = {
   pleading: ScrollText,    // لائحة
   appointment: Calendar,   // موعد
   attachment: Paperclip,   // مرفق
+  officialSource: BadgeCheck, // مصدر رسمي — وليست ShieldCheck (صلاحيات)
+  citationChecked: BookCheck, // إسناد مُتحقَّق منه — وليست CircleCheck (اعتماد)
+  clauseBank: Library,     // بنك البنود
+  folder: Folder,          // مجلّد
+  tools: Wrench,           // الأدوات
+  systemCheck: Activity,   // فحص النظام — نتيجته نصّ ولون لا أيقونة ثانية
   // الحالات
   approved: CircleCheck,   // معتمد
   warning: TriangleAlert,  // تحذير
+  changesRequested: MessageSquareWarning, // مطلوب تعديلات — وليست CircleX (مرفوض)
+  awaitingClarification: CircleHelp,      // بانتظار توضيح — وليست Clock
   // التنقّل
   notifications: Bell,     // الإشعارات
   menu: Menu,              // القائمة
   next: ArrowLeft,         // التالي
+  light: Sun,              // الوضع الفاتح
+  dark: Moon,              // الوضع الداكن
+  // الوسائط وأنواع الملفات
+  fileImage: FileImage,    // ملف صورة
+  fileText: FileType,      // ملف نصّي — وليست FileText (مذكرة)
+  micStart: Mic,           // بدء الإملاء
+  micStop: Square,         // إيقاف التسجيل
+  // تقييم الإجابة — إبهام لا مقياس، فلا Star
+  helpful: ThumbsUp,
+  needsWork: ThumbsDown,
 } as const;
 
 /* الأيقونات الاتجاهية:

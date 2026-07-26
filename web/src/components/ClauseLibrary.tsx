@@ -107,7 +107,7 @@ export default function ClauseLibrary({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">📚 بنك البنود</span>
+          <span className="modal-title"><Icon.clauseBank size={ICON_MD} aria-hidden /> بنك البنود</span>
           <button className="modal-close" onClick={onClose}><Icon.close size={ICON_MD} aria-hidden /></button>
         </div>
         <div className="modal-body" style={{ padding: 16 }}>{body}</div>

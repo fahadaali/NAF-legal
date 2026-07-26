@@ -261,7 +261,7 @@ function TrackingTab() {
 
   return (
     <div>
-      <p className="source-note">🔒 {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
+      <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
           {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> تشغيل فحص التتبّع الآن'}
@@ -479,7 +479,7 @@ function NewsTab() {
   };
   return (
     <div>
-      <p className="source-note">🔒 يُرصد الجديد والمحدَّث من: جريدة أم القرى (خلاصة RSS رسمية) · هيئة الخبراء بمجلس الوزراء · المركز الوطني للوثائق والمحفوظات.</p>
+      <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> يُرصد الجديد والمحدَّث من: جريدة أم القرى (خلاصة RSS رسمية) · هيئة الخبراء بمجلس الوزراء · المركز الوطني للوثائق والمحفوظات.</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
           {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> رصد الأنظمة الجديدة والمحدَّثة'}
@@ -608,8 +608,8 @@ function FormsTab() {
             <option value="textarea">فقرة طويلة (تتمدّد)</option>
           </select>
           <label><input type="checkbox" checked={!!f.required} onChange={(e) => setField(i, { required: e.target.checked })} /> إلزامي</label>
-          <button className="btn-sm" onClick={() => move(i, -1)} title="أعلى">▲</button>
-          <button className="btn-sm" onClick={() => move(i, 1)} title="أسفل">▼</button>
+          <button className="btn-sm" onClick={() => move(i, -1)} title="أعلى"><Icon.moveUp size={ICON_SM} aria-hidden /></button>
+          <button className="btn-sm" onClick={() => move(i, 1)} title="أسفل"><Icon.moveDown size={ICON_SM} aria-hidden /></button>
           <button className="btn-sm" onClick={() => removeField(i)}>حذف</button>
         </div>
       ))}
@@ -701,7 +701,7 @@ function SettingsTab() {
       <div className="section-title">رأسية الشركة لقوالب Word (صورة A4)</div>
       <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
         ارفع صورة رأسية (PNG/JPEG) لتظهر أعلى كل مستند Word مُصدَّر.
-        {settings.letterhead_mime ? ' ✅ رأسية مرفوعة حاليًا.' : ' لا توجد رأسية بعد.'}
+        {settings.letterhead_mime ? ' رأسية مرفوعة حاليًا.' : ' لا توجد رأسية بعد.'}
       </p>
       <input ref={lhInput} type="file" hidden accept="image/png,image/jpeg" onChange={(e) => { uploadLetterhead(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm primary" onClick={() => lhInput.current?.click()} disabled={uploading}>
@@ -740,9 +740,9 @@ function AiCheck() {
     setResult(null);
     try {
       const r = await api.aiCheck();
-      setResult(r.ok ? `✅ يعمل — النموذج ${r.model} · أبعاد المتجه ${r.dimensions} · ${r.ms}ms` : `❌ لا يعمل — ${r.error}`);
+      setResult(r.ok ? `يعمل — النموذج ${r.model} · أبعاد المتجه ${r.dimensions} · ${r.ms}ms` : `لا يعمل — ${r.error}`);
     } catch (e: any) {
-      setResult(`❌ فشل الفحص — ${e.message ?? ''}`);
+      setResult(`فشل الفحص — ${e.message ?? ''}`);
     } finally {
       setBusy(false);
     }
@@ -750,7 +750,7 @@ function AiCheck() {
   return (
     <div>
       <button className="btn-sm primary" onClick={run} disabled={busy}>
-        {busy ? <><span className="spinner" /> جارٍ الفحص…</> : '🔬 فحص Workers AI'}
+        {busy ? <><span className="spinner" /> جارٍ الفحص…</> : 'فحص Workers AI'}
       </button>
       {result && <p style={{ marginTop: 8, fontSize: '0.875rem' }}>{result}</p>}
     </div>

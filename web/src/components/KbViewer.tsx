@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Icon, ICON_MD } from '../lib/icons';
+import { ICON_MD, ICON_SM, Icon } from '../lib/icons';
 
 export type ViewKind = 'pdf' | 'image' | 'text';
 
@@ -53,7 +53,7 @@ export default function KbViewer({ target, onClose }: { target: ViewerTarget; on
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="modal-title">
-            {target.kind === 'pdf' ? '📕 ' : target.kind === 'image' ? '🖼 ' : '📄 '}
+            {target.kind === 'pdf' ? 'PDF ' : target.kind === 'image' ? <Icon.fileImage size={ICON_SM} aria-hidden /> : <Icon.fileText size={ICON_SM} aria-hidden />}{' '}
             {target.title}
           </span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import NafMark from './NafMark';
+import { Icon, ICON_MD } from '../lib/icons';
 
 // شاشة تعيين كلمة مرور جديدة عند أول دخول (كلمة المرور الافتراضية 1234)
 export default function ChangePassword({
@@ -36,7 +37,9 @@ export default function ChangePassword({
   return (
     <div className="auth-wrap">
       <button className="theme-toggle floating" onClick={onToggleTheme} title="تبديل السمة">
-        {theme === 'dark' ? '☀️' : '🌙'}
+        {theme === 'dark'
+          ? <Icon.light size={ICON_MD} aria-hidden />
+          : <Icon.dark size={ICON_MD} aria-hidden />}
       </button>
       <div className="auth-card">
         <div className="auth-brand">

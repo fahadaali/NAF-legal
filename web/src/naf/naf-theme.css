@@ -113,6 +113,17 @@
      يجعل أيقونات المنصات غير قابلة للتعرّف. تُسجَّل هنا لتبقى تحت
      السجلّ بدل أن تتكرّر خاماً في كل منصة.
      تُستعمل لخلفيات أيقونات المنصات حصراً — لا لأي عنصر واجهة آخر. */
+  /* [جديد] حجاب النوافذ المنبثقة — لم يكن له رمز، فكانت كل منصة
+     تكتب rgba سوداء بنسبة تخمّنها. مشتقّ من أسود الثيم لا مستقل. */
+  --overlay: color-mix(in oklab, var(--shadow-color) 60%, transparent);
+
+  /* [جديد] ألوان علامة ناف — مأخوذة من ملفات الشعار نفسها لا بالعين.
+     للشعار حصراً كألوان العلامات الخارجية أدناه: عنصر الواجهة يأخذ
+     رمزاً دلالياً، ولو ناسبه الكحلي. الهوية ليست لوحة ألوان. */
+  --mark-navy: #233143;
+  --mark-mint: #E5EEE8;
+  --mark-taupe: #C0B3A3;
+
   --brand-linkedin: #0A66C2;
   --brand-x: #000000;
   --brand-instagram: #DD2A7B;
@@ -242,6 +253,10 @@
   --color-success-soft: var(--success-soft);
   --color-warning-soft: var(--warning-soft);
   --color-info-soft: var(--info-soft);
+  --color-overlay: var(--overlay);
+  --color-mark-navy: var(--mark-navy);
+  --color-mark-mint: var(--mark-mint);
+  --color-mark-taupe: var(--mark-taupe);
   --color-brand-linkedin: var(--brand-linkedin);
   --color-brand-x: var(--brand-x);
   --color-brand-instagram: var(--brand-instagram);

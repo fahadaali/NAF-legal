@@ -13,8 +13,9 @@ export function useTheme(): [Theme, () => void] {
     try {
       localStorage.setItem('naf-theme', theme);
     } catch {}
-    // القيمتان هما --background في ثيم ناف بالوضعين، مكتوبتان hex لأن
-    // <meta> لا يقرأ متغيّرات CSS. أي تغيير في الثيم يستوجب تحديثهما.
+    // القيمتان هما --background في ثيم ناف بالوضعين، مكتوبتان hex بموجب
+    // استثناء <meta name="theme-color"> في CLAUDE.md §1: الوسم لا يحلّ
+    // var(). أي تغيير في الثيم يستوجب تحديثهما هنا وفي index.html.
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme === 'dark' ? '#1c2433' : '#e8ebed');
   }, [theme]);

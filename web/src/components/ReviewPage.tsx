@@ -3,7 +3,7 @@ import { publicApi } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { labelFor } from '../lib/consultations';
 import { formatDate, formatTime } from '../lib/format';
-import { Icon, ICON_MD } from '../lib/icons';
+import { ICON_MD, ICON_SM, Icon } from '../lib/icons';
 import NafMark from './NafMark';
 
 // صفحة المراجعة العامة (بلا حساب) — يفتحها المحامي عبر رابط الرمز
@@ -94,7 +94,7 @@ export default function ReviewPage({ token }: { token: string }) {
               <Icon.approved size={ICON_MD} aria-hidden /> اعتماد المسودّة
             </button>
             <button className="btn-sm" onClick={() => decide('changes_requested')} disabled={busy}>
-              ✏️ طلب تعديلات
+              <Icon.changesRequested size={ICON_SM} aria-hidden /> طلب تعديلات
             </button>
           </div>
         </div>

@@ -37,11 +37,15 @@ If a value you need does not exist in the token set, **stop and ask**. Adding a 
 
 **No parallel systems.** A platform must not define its own theme, token set, colour scale or utility palette in `tailwind.config.js` or anywhere else. If you find one, it predates this system and must be replaced entirely and its definition removed. Two sources of truth in one repository is worse than no system at all.
 
-**Two exceptions, and only these two.**
+**Four exceptions, and only these four.** Every one of them is a context that cannot read a CSS custom property. Nothing else qualifies — "it was simpler" is not a context.
 
 *Email templates.* Email clients do not support CSS custom properties. A template that renders inside an inbox carries literal values by necessity, and so does any in-app preview of it — a preview styled from the app theme shows the author something the subscriber will never receive. Keep those values in one template file, comment why, and mirror the same values in the preview. Everything else in the same repository still obeys the rule.
 
 *External brand colours.* Platform marks — LinkedIn, X, Instagram, YouTube, Facebook, TikTok, Snapchat, Threads, Google — are identities owned by other parties. Recolouring them to fit our theme makes them unrecognisable, which defeats the icon. They are registered as `--brand-*` tokens in `naf-theme.css`; consume those. Never type the hex, and never use a `--brand-*` token for anything but that platform's own mark.
+
+*Print and PDF documents.* A document generated into its own window — `document.write`, a print stylesheet, a server-rendered PDF — does not inherit the app's stylesheet and cannot resolve `var(--…)`. It also must stay light regardless of the reader's theme: a dark-themed invoice wastes toner and a dark-themed pleading is not filed. Keep those values in the one function that builds the document, comment why, and never let them leak back into the interface. Substituting tokens there does not degrade the output — it breaks the export.
+
+*`<meta name="theme-color">`.* The tag takes a literal colour and nothing else; no browser resolves `var()` inside it. Mirror `--background` for both modes and update the two literals whenever the theme changes. This is the only place in an app shell where a background colour is written by hand.
 
 ---
 
@@ -140,6 +144,8 @@ bg-primary  text-primary-foreground  hover:bg-primary/90
 - Accent is emphasis, not decoration. More than one accent element visible at once means one is wrong.
 - Never communicate meaning by colour alone — pair status colours with an icon and a label.
 - Light and dark must both work. Test both.
+
+**Our own mark.** The navy, mint and taupe of the NAF mark are registered as `--mark-navy`, `--mark-mint` and `--mark-taupe`, taken from the logo files themselves rather than sampled by eye. They exist to render the mark and nothing else. An interface element takes a semantic token — a heading is `text-foreground`, never `text-mark-navy`, however well the navy happens to suit it. The rule is the same one that governs `--brand-*`: an identity colour is not a palette.
 
 **Soft state backgrounds.** `--primary-soft`, `--destructive-soft`, `--success-soft`, `--warning-soft`, `--info-soft` and `--secondary-soft` are derived from their base token by `color-mix` into the card surface, so they follow both modes from a single definition. Use them for status badges and quiet alerts. Never define your own soft value — a hand-picked tint is the exact drift that survives a palette change and then clashes with it.
 

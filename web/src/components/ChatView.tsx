@@ -329,7 +329,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         <span className="ch-title">{messages.find((m) => m.role === 'user')?.content.slice(0, 50) ?? 'محادثة جديدة'}</span>
         {folders.length > 0 && (
           <select className="folder-select" value={convFolder} onChange={(e) => assignFolder(e.target.value)} title="ربط بقضية">
-            <option value="">📁 بدون قضية</option>
+            <option value="">بدون قضية</option>
             {folders.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
@@ -358,11 +358,11 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                   ) : (
                     <div dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
                   )}
-                  {m.clarifying && <div className="clarify-note">⏸ بانتظار توضيحك للمتابعة</div>}
+                  {m.clarifying && <div className="clarify-note"><Icon.awaitingClarification size={ICON_SM} aria-hidden /> بانتظار توضيحك للمتابعة</div>}
                   {m.verification && !m.streaming && (
                     <div className={`verify-badge ${m.verification.verified ? 'ok' : 'warn'}`}>
                       {m.verification.verified
-                        ? '✓ تحقّق الإسناد: كل المواد المذكورة مسنودة في قاعدة المعرفة'
+                        ? 'تحقّق الإسناد: كل المواد المذكورة مسنودة في قاعدة المعرفة'
                         : `<Icon.warning size={ICON_SM} aria-hidden /> مواد بحاجة لتأكيد يدوي: ${m.verification.unsupported.join('، ')}`}
                     </div>
                   )}
@@ -390,8 +390,8 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                     <button onClick={() => navigator.clipboard.writeText(m.content)}>نسخ</button>
                     <button onClick={() => setEditing({ id: m.id, title: labelFor(convType) })}><Icon.edit size={ICON_SM} aria-hidden /> تعديل واعتماد</button>
                     <button onClick={() => shareDraft(m)}><Icon.share size={ICON_SM} aria-hidden /> مشاركة للمراجعة</button>
-                    <button className={feedback[m.id] === 1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, 1)} title="مفيد">👍</button>
-                    <button className={feedback[m.id] === -1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, -1)} title="يحتاج تحسين">👎</button>
+                    <button className={feedback[m.id] === 1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, 1)} title="مفيد"><Icon.helpful size={ICON_SM} aria-hidden /></button>
+                    <button className={feedback[m.id] === -1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, -1)} title="يحتاج تحسين"><Icon.needsWork size={ICON_SM} aria-hidden /></button>
                   </div>
                 )}
               </div>
@@ -437,17 +437,17 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
               title="البحث في الإنترنت"
               onClick={() => setInternet((v) => !v)}
             >
-              🌐
+              <Icon.webSearch size={ICON_MD} aria-hidden />
             </button>
             <button
               className={`icon-btn ${recording ? 'on rec' : ''}`}
               title="إدخال صوتي (تفريغ عربي)"
               onClick={toggleRecording}
             >
-              {recording ? '⏹' : '🎙'}
+              {recording ? <Icon.micStop size={ICON_MD} aria-hidden /> : <Icon.micStart size={ICON_MD} aria-hidden />}
             </button>
             <button className="icon-btn" title="بنك البنود" onClick={() => setClausePicker(true)}>
-              📚
+              <Icon.clauseBank size={ICON_MD} aria-hidden />
             </button>
             <button
               className={`icon-btn ${bilingual ? 'on' : ''}`}
@@ -477,7 +477,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             </button>
           </div>
           <div className="composer-hint">
-            {internet ? '🌐 البحث في الإنترنت مُفعَّل' : 'يعتمد الرد على قاعدة المعرفة النظامية'}
+            {internet ? <><Icon.webSearch size={ICON_SM} aria-hidden /> البحث في الإنترنت مُفعَّل</> : 'يعتمد الرد على قاعدة المعرفة النظامية'}
           </div>
         </div>
       </div>

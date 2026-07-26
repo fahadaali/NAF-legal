@@ -198,8 +198,8 @@ export default function DraftEditor({
         </div>
 
         <div className="modal-foot">
-          <button className="btn-sm" onClick={proofread} disabled={busy}>✍ تدقيق لغوي</button>
-          <button className="btn-sm" onClick={alternative} disabled={busy}>🔀 صياغة بديلة</button>
+          <button className="btn-sm" onClick={proofread} disabled={busy}><Icon.proofread size={ICON_SM} aria-hidden /> تدقيق لغوي</button>
+          <button className="btn-sm" onClick={alternative} disabled={busy}><Icon.rewrite size={ICON_SM} aria-hidden /> صياغة بديلة</button>
           {approval ? (
             <button className="btn-sm" onClick={unapprove} disabled={busy}>إلغاء الاعتماد</button>
           ) : (
