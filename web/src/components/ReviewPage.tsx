@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { publicApi } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { labelFor } from '../lib/consultations';
-import { Aurora } from '../App';
 
 // صفحة المراجعة العامة (بلا حساب) — يفتحها المحامي عبر رابط الرمز
 export default function ReviewPage({ token }: { token: string }) {
@@ -51,7 +50,6 @@ export default function ReviewPage({ token }: { token: string }) {
 
   return (
     <div className="review-wrap">
-      <Aurora />
       <div className="review-card">
         <div className="review-header">
           <div className="brand"><img className="brand-logo-img" src="/logo.jpeg" alt="ناف" /><div>

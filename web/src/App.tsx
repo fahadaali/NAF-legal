@@ -11,14 +11,6 @@ import Deadlines from './components/Deadlines';
 import CaseFile from './components/CaseFile';
 import { useTheme } from './lib/theme';
 
-export function Aurora() {
-  return (
-    <div className="aurora-bg" aria-hidden>
-      <div className="aurora-glow3" />
-    </div>
-  );
-}
-
 export default function App() {
   // مسار المراجعة العامة (بلا مصادقة)
   const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
@@ -73,7 +65,6 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Aurora />
       <div className="main">
         {view === 'chat' && (
           <ChatView

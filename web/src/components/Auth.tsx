@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { api, User } from '../lib/api';
-import { Aurora } from '../App';
 
 export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: User) => void; theme: 'light' | 'dark'; onToggleTheme: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -26,7 +25,6 @@ export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: Use
 
   return (
     <div className="auth-wrap">
-      <Aurora />
       <button className="theme-toggle floating" onClick={onToggleTheme} title="تبديل السمة">
         {theme === 'dark' ? '☀️' : '🌙'}
       </button>

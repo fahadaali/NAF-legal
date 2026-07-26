@@ -3,18 +3,20 @@ import { useEffect, useState } from 'react';
 export type Theme = 'light' | 'dark';
 
 export function useTheme(): [Theme, () => void] {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const attr = document.documentElement.getAttribute('data-theme');
-    return (attr as Theme) || 'dark';
-  });
+  const [theme, setTheme] = useState<Theme>(() =>
+    document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+  );
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    // صنف `dark` هو آلية ثيم ناف — مصدر حقيقة واحد لا اثنان.
+    document.documentElement.classList.toggle('dark', theme === 'dark');
     try {
       localStorage.setItem('naf-theme', theme);
     } catch {}
+    // القيمتان هما --background في ثيم ناف بالوضعين، مكتوبتان hex لأن
+    // <meta> لا يقرأ متغيّرات CSS. أي تغيير في الثيم يستوجب تحديثهما.
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#232a3d' : '#f4f2ea');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#1c2433' : '#e8ebed');
   }, [theme]);
 
   const toggle = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));

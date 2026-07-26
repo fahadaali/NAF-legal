@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
-import { Aurora } from '../App';
 
 // شاشة تعيين كلمة مرور جديدة عند أول دخول (كلمة المرور الافتراضية 1234)
 export default function ChangePassword({
@@ -35,7 +34,6 @@ export default function ChangePassword({
 
   return (
     <div className="auth-wrap">
-      <Aurora />
       <button className="theme-toggle floating" onClick={onToggleTheme} title="تبديل السمة">
         {theme === 'dark' ? '☀️' : '🌙'}
       </button>
