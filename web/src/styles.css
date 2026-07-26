@@ -537,3 +537,20 @@ a { color: var(--primary); }
   .cards { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr; }
 }
+
+/* ── الأيقونات ── */
+/* الأيقونة ترث لون النص المحيط ولا تُلوَّن يدوياً (naf-icons.md §اللون). */
+.tools-link, .admin-tab, .folder-chip, .attach-chip, .citation-chip,
+.new-chat-btn, .btn-primary, .clarify-note, .modal-title {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.tools-link, .admin-tab { justify-content: flex-start; }
+.new-chat-btn, .btn-primary { justify-content: center; }
+/* الأيقونة لا تنكمش داخل عبارة طويلة، وتحاذي خطّ النص لا مربّعه. */
+button svg, .pill svg, .verify-badge svg, .modal-title svg,
+.source-note svg, .error-box svg, td svg, .search-mode svg { flex-shrink: 0; }
+
+/* `Send` لا يحمل اسمه جهة، والورقة الطائرة في Lucide تشير يميناً.
+   في RTL اتجاه الإرسال يسار — فتُقلب صراحةً هنا.
+   الأسهم والشيفرون لا تُقلب: أسماؤها في السجلّ مسجَّلة بمظهرها في RTL. */
+[dir='rtl'] .send-btn svg { transform: scaleX(-1); }

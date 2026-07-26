@@ -3,7 +3,10 @@ export interface ConsultationOption {
   type: string;
   label: string;
   description: string;
-  icon: string;
+  /** مفتاح من Icon في lib/icons — المعنى مسجَّل في naf-icons.md. */
+  iconKey?: 'memo' | 'pleading' | 'consultation' | 'contract';
+  /** إيموجي مؤقّتة لمفهوم لم يُسجَّل بعد في السجلّ. لا تُضِف جديداً. */
+  icon?: string;
   group?: string;
 }
 
@@ -19,14 +22,14 @@ export const CONSULTATIONS: ConsultationOption[] = [
     type: 'litigation.reply_memo',
     label: 'مذكرة رد',
     description: 'تفنيد ادّعاءات الخصم دفعًا شكليًا وموضوعيًا.',
-    icon: '📝',
+    iconKey: 'memo',
     group: 'التقاضي',
   },
   {
     type: 'litigation.objection',
     label: 'لائحة اعتراضية',
     description: 'بناء أسباب اعتراض مسبَّبة مع ضبط المواعيد النظامية.',
-    icon: '📋',
+    iconKey: 'pleading',
     group: 'التقاضي',
   },
   {
@@ -40,7 +43,7 @@ export const CONSULTATIONS: ConsultationOption[] = [
     type: 'contract',
     label: 'صياغة عقد',
     description: 'صياغة عقد متوازن مكتمل البنود وفق نظام المعاملات المدنية.',
-    icon: '🤝',
+    iconKey: 'contract',
   },
   {
     type: 'policy',
@@ -52,7 +55,7 @@ export const CONSULTATIONS: ConsultationOption[] = [
     type: 'consultation',
     label: 'استشارة قانونية',
     description: 'رأي قانوني مسبَّب مع الإسناد لمواد نظامية محدّدة.',
-    icon: '💬',
+    iconKey: 'consultation',
   },
   {
     type: 'document_review',
@@ -65,6 +68,6 @@ export const CONSULTATIONS: ConsultationOption[] = [
 export function labelFor(type: string | null | undefined): string {
   return CONSULTATIONS.find((c) => c.type === type)?.label ?? 'استشارة';
 }
-export function iconFor(type: string | null | undefined): string {
-  return CONSULTATIONS.find((c) => c.type === type)?.icon ?? '💬';
+export function optionFor(type: string | null | undefined): ConsultationOption | undefined {
+  return CONSULTATIONS.find((c) => c.type === type);
 }

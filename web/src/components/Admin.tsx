@@ -3,6 +3,7 @@ import { api, ConsultConfig, FieldDef, FieldType } from '../lib/api';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import ClauseLibrary from './ClauseLibrary';
 import { formatDate, formatTime } from '../lib/format';
+import { Icon, ICON_SM } from '../lib/icons';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
@@ -153,7 +154,7 @@ function KbTab() {
               <span className="spinner" /> جارٍ الرفع والتصنيف…
             </>
           ) : (
-            <>📤 ارفع وثيقة نظام/لائحة (PDF · DOCX · صورة · نص) — سيُستخرج محتواها ويُصنَّف ويُضمَّن تلقائيًا</>
+            <><Icon.upload size={ICON_SM} aria-hidden /> ارفع وثيقة نظام/لائحة (PDF · DOCX · صورة · نص) — سيُستخرج محتواها ويُصنَّف ويُضمَّن تلقائيًا</>
           )}
         </div>
       ) : (
@@ -263,7 +264,7 @@ function TrackingTab() {
       <p className="source-note">🔒 {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : '🔄 تشغيل فحص التتبّع الآن'}
+          {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> تشغيل فحص التتبّع الآن'}
         </button>
       </div>
 
@@ -426,7 +427,7 @@ function VersionUpload({ docId, version, onDone }: { docId: string; version: num
     <>
       <input ref={ref} type="file" hidden accept=".pdf,.docx,.txt,.md" onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm" onClick={() => ref.current?.click()} disabled={busy} title="رفع نسخة أحدث وأرشفة الحالية">
-        {busy ? '…' : '⬆ نسخة جديدة'}
+        {busy ? '…' : '<Icon.upload size={ICON_SM} aria-hidden /> نسخة جديدة'}
       </button>
     </>
   );
@@ -481,7 +482,7 @@ function NewsTab() {
       <p className="source-note">🔒 يُرصد الجديد والمحدَّث من: جريدة أم القرى (خلاصة RSS رسمية) · هيئة الخبراء بمجلس الوزراء · المركز الوطني للوثائق والمحفوظات.</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '🔄 رصد الأنظمة الجديدة والمحدَّثة'}
+          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> رصد الأنظمة الجديدة والمحدَّثة'}
         </button>
       </div>
       {news.length === 0 ? (
@@ -704,7 +705,7 @@ function SettingsTab() {
       </p>
       <input ref={lhInput} type="file" hidden accept="image/png,image/jpeg" onChange={(e) => { uploadLetterhead(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm primary" onClick={() => lhInput.current?.click()} disabled={uploading}>
-        {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : '📤 رفع صورة الرأسية'}
+        {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : '<Icon.upload size={ICON_SM} aria-hidden /> رفع صورة الرأسية'}
       </button>
 
       <div className="section-title">بوّابة الاعتماد قبل التصدير</div>

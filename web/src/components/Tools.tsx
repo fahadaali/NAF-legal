@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { formatDate } from '../lib/format';
+import { Icon, ICON_SM } from '../lib/icons';
 
 // أدوات قانونية مستقلّة: مقارنة نسختين + حاسبة المواعيد
 export default function Tools() {
@@ -50,7 +51,7 @@ function Shares() {
     load();
   };
 
-  if (shares.length === 0) return <div className="empty-state">لم تُنشئ روابط مراجعة بعد. استخدم «🔗 مشاركة للمراجعة» أسفل أي مسودّة.</div>;
+  if (shares.length === 0) return <div className="empty-state">لم تُنشئ روابط مراجعة بعد. استخدم «<Icon.share size={ICON_SM} aria-hidden /> مشاركة للمراجعة» أسفل أي مسودّة.</div>;
   return (
     <table className="data-table">
       <thead>
@@ -115,14 +116,14 @@ function Compare() {
             <textarea className="tool-textarea" value={ta} onChange={(e) => setTa(e.target.value)} placeholder="النسخة الأولى…" />
           </div>
           <input ref={fa} type="file" hidden accept=".txt,.md" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setTa)} />
-          <button className="btn-sm" onClick={() => fa.current?.click()}>📎 رفع ملف نصّي</button>
+          <button className="btn-sm" onClick={() => fa.current?.click()}><Icon.upload size={ICON_SM} aria-hidden /> رفع ملف نصّي</button>
         </div>
         <div>
           <div className="field"><label>النسخة (ب)</label>
             <textarea className="tool-textarea" value={tb} onChange={(e) => setTb(e.target.value)} placeholder="النسخة الثانية…" />
           </div>
           <input ref={fb} type="file" hidden accept=".txt,.md" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setTb)} />
-          <button className="btn-sm" onClick={() => fb.current?.click()}>📎 رفع ملف نصّي</button>
+          <button className="btn-sm" onClick={() => fb.current?.click()}><Icon.upload size={ICON_SM} aria-hidden /> رفع ملف نصّي</button>
         </div>
       </div>
       <button className="btn-primary" style={{ marginTop: 16, width: 'auto', padding: '10px 24px' }} onClick={run} disabled={busy}>

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { api, ConsultConfig } from '../lib/api';
+import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
 
 // نافذة إدخال البيانات الأولية ورفع الملف قبل الدخول إلى المحادثة
 export default function IntakeModal({
@@ -63,7 +64,7 @@ export default function IntakeModal({
       <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="modal-title">{config.label} — البيانات الأولية</span>
-          <button className="modal-close" onClick={onClose} title="إغلاق">×</button>
+          <button className="modal-close" onClick={onClose} title="إغلاق"><Icon.close size={ICON_MD} aria-hidden /></button>
         </div>
 
         <div className="modal-body intake-body">
@@ -118,7 +119,9 @@ export default function IntakeModal({
                     onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                   />
                   <div className="dropzone" onClick={() => fileInput.current?.click()}>
-                    {file ? `📎 ${file.name}` : '📤 اضغط لاختيار الملف (PDF · DOCX · صورة · نص)'}
+                    {file
+                      ? <><Icon.attachment size={ICON_SM} aria-hidden /> <bdi>{file.name}</bdi></>
+                      : <><Icon.upload size={ICON_SM} aria-hidden /> اضغط لاختيار الملف (PDF · DOCX · صورة · نص)</>}
                   </div>
                 </>
               ) : (
@@ -137,7 +140,7 @@ export default function IntakeModal({
         <div className="modal-foot">
           <button className="btn-sm" onClick={onClose}>إلغاء</button>
           <button className="btn-primary" style={{ width: 'auto', padding: '11px 26px' }} onClick={submit} disabled={busy}>
-            {busy ? 'جارٍ البدء…' : 'بدء الاستشارة ←'}
+            {busy ? 'جارٍ البدء…' : 'بدء الاستشارة <Icon.next size={ICON_SM} aria-hidden />'}
           </button>
         </div>
       </div>

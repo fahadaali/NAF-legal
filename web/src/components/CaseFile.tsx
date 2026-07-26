@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, Folder } from '../lib/api';
 import { labelFor } from '../lib/consultations';
 import { formatDate } from '../lib/format';
+import { Icon, ICON_SM } from '../lib/icons';
 
 // ملف القضية: عرض مجمّع لكل ما يتعلق بقضية + تصدير حزمة
 export default function CaseFile({ onOpenConversation }: { onOpenConversation: (id: string) => void }) {
@@ -39,7 +40,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
               </select>
               {active && (
                 <a href={api.caseExportUrl(active)} download>
-                  <button className="btn-sm primary">⬇ تصدير حزمة القضية (ZIP)</button>
+                  <button className="btn-sm primary"><Icon.export size={ICON_SM} aria-hidden /> تصدير حزمة القضية (ZIP)</button>
                 </a>
               )}
             </div>
@@ -118,7 +119,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
                     <tbody>
                       {data.attachments.map((a: any) => (
                         <tr key={a.id}>
-                          <td>📎 {a.filename}</td>
+                          <td><Icon.attachment size={ICON_SM} aria-hidden /> <bdi>{a.filename}</bdi></td>
                           <td>{Math.round((a.size ?? 0) / 1024)} كيلوبايت</td>
                           <td><bdi>{formatDate(a.created_at)}</bdi></td>
                         </tr>

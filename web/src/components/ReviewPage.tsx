@@ -3,6 +3,7 @@ import { publicApi } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { labelFor } from '../lib/consultations';
 import { formatDate, formatTime } from '../lib/format';
+import { Icon, ICON_MD } from '../lib/icons';
 
 // صفحة المراجعة العامة (بلا حساب) — يفتحها المحامي عبر رابط الرمز
 export default function ReviewPage({ token }: { token: string }) {
@@ -84,12 +85,12 @@ export default function ReviewPage({ token }: { token: string }) {
               rows={2}
               style={{ flex: 1, border: 'none', background: 'none', resize: 'none', color: 'var(--foreground)', fontFamily: 'inherit', fontSize: '0.875rem', outline: 'none' }}
             />
-            <button className="send-btn" onClick={addComment} disabled={busy || !body.trim()}>➤</button>
+            <button className="send-btn" onClick={addComment} disabled={busy || !body.trim()}><Icon.send size={ICON_MD} aria-hidden /></button>
           </div>
 
           <div className="review-actions">
             <button className="btn-primary" style={{ background: 'var(--success)', color: 'var(--success-foreground)' }} onClick={() => decide('approved')} disabled={busy}>
-              ✅ اعتماد المسودّة
+              <Icon.approved size={ICON_MD} aria-hidden /> اعتماد المسودّة
             </button>
             <button className="btn-sm" onClick={() => decide('changes_requested')} disabled={busy}>
               ✏️ طلب تعديلات

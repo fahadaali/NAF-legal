@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { formatDate, formatTime } from '../lib/format';
+import { Icon, ICON_MD } from '../lib/icons';
 
 // جرس الإشعارات داخل المنصّة
 export default function NotificationBell() {
@@ -42,7 +43,7 @@ export default function NotificationBell() {
   return (
     <div className="notif-wrap" ref={wrap}>
       <button className="theme-toggle" onClick={toggle} title="الإشعارات">
-        🔔{unread > 0 && <span className="notif-badge">{unread > 9 ? '9+' : unread}</span>}
+        <Icon.notifications size={ICON_MD} aria-hidden />{unread > 0 && <span className="notif-badge">{unread > 9 ? '9+' : unread}</span>}
       </button>
       {open && (
         <div className="notif-panel">

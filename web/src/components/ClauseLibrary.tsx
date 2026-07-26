@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { Icon, ICON_MD } from '../lib/icons';
 
 interface Clause {
   id: string;
@@ -107,7 +108,7 @@ export default function ClauseLibrary({
       <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="modal-title">📚 بنك البنود</span>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <button className="modal-close" onClick={onClose}><Icon.close size={ICON_MD} aria-hidden /></button>
         </div>
         <div className="modal-body" style={{ padding: 16 }}>{body}</div>
       </div>

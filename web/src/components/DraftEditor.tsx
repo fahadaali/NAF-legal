@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { formatDate, formatTime } from '../lib/format';
+import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
 
 interface Version {
   id: string;
@@ -140,14 +141,14 @@ export default function DraftEditor({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">✎ {title}</span>
+          <span className="modal-title"><Icon.edit size={ICON_SM} aria-hidden /> {title}</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {approval ? (
-              <span className="pill ready" title={`اعتمدها ${approval.approver ?? ''}`}>معتمَدة ✅</span>
+              <span className="pill ready" title={`اعتمدها ${approval.approver ?? ''}`}><Icon.approved size={ICON_SM} aria-hidden /> معتمَدة</span>
             ) : (
               <span className="pill pending">غير معتمَدة</span>
             )}
-            <button className="modal-close" onClick={onClose} title="إغلاق">×</button>
+            <button className="modal-close" onClick={onClose} title="إغلاق"><Icon.close size={ICON_MD} aria-hidden /></button>
           </div>
         </div>
 
@@ -202,7 +203,7 @@ export default function DraftEditor({
           {approval ? (
             <button className="btn-sm" onClick={unapprove} disabled={busy}>إلغاء الاعتماد</button>
           ) : (
-            <button className="btn-sm" onClick={approve} disabled={busy}>✅ اعتماد المسودّة</button>
+            <button className="btn-sm" onClick={approve} disabled={busy}><Icon.approved size={ICON_SM} aria-hidden /> اعتماد المسودّة</button>
           )}
           <button className="btn-sm" onClick={onClose}>إغلاق</button>
           <button className="btn-primary" style={{ width: 'auto', padding: '11px 24px' }} onClick={save} disabled={busy || !dirty}>

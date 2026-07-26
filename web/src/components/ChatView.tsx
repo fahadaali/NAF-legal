@@ -5,6 +5,7 @@ import { renderMarkdown } from '../lib/markdown';
 import IntakeModal from './IntakeModal';
 import DraftEditor from './DraftEditor';
 import ClauseLibrary from './ClauseLibrary';
+import { ConsultationIcon, Icon, ICON_SM, ICON_MD, ICON_LG } from '../lib/icons';
 
 interface Props {
   conversationId: string | null;
@@ -190,7 +191,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         failed = true;
         setMessages((msgs) => {
           const copy = [...msgs];
-          copy[copy.length - 1] = { ...asstMsg, content: `⚠️ ${err}`, streaming: false };
+          copy[copy.length - 1] = { ...asstMsg, content: err, streaming: false };
           return copy;
         });
         setSending(false);
@@ -285,7 +286,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           <div className="cards">
             {grouped.map((c) => (
               <button key={c.type} className="card" onClick={() => openIntake(c.type)}>
-                <div className="card-icon">{c.icon}</div>
+                <div className="card-icon"><ConsultationIcon option={c} size={ICON_LG} /></div>
                 <div className="card-title">{c.label}</div>
                 <div className="card-desc">{c.description}</div>
               </button>
@@ -296,7 +297,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           <div className="cards">
             {others.map((c) => (
               <button key={c.type} className="card" onClick={() => openIntake(c.type)}>
-                <div className="card-icon">{c.icon}</div>
+                <div className="card-icon"><ConsultationIcon option={c} size={ICON_LG} /></div>
                 <div className="card-title">{c.label}</div>
                 <div className="card-desc">{c.description}</div>
               </button>
@@ -323,7 +324,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     <>
       <div className="chat-header">
         <button className="icon-btn" style={{ display: 'none' }} onClick={onToggleSidebar}>
-          ☰
+          <Icon.menu size={ICON_MD} aria-hidden />
         </button>
         <span className="ch-title">{messages.find((m) => m.role === 'user')?.content.slice(0, 50) ?? 'محادثة جديدة'}</span>
         {folders.length > 0 && (
@@ -349,7 +350,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                 <div className="msg-content">
                   {m.streaming && !m.content ? (
                     <div className="typing-dots">
-                      {searching && <span style={{ fontSize: '0.875rem', marginInlineEnd: 8 }}>🔎 يبحث في المصادر…</span>}
+                      {searching && <span style={{ fontSize: '0.875rem', marginInlineEnd: 8 }}><Icon.search size={ICON_SM} aria-hidden /> يبحث في المصادر…</span>}
                       <span></span>
                       <span></span>
                       <span></span>
@@ -362,7 +363,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                     <div className={`verify-badge ${m.verification.verified ? 'ok' : 'warn'}`}>
                       {m.verification.verified
                         ? '✓ تحقّق الإسناد: كل المواد المذكورة مسنودة في قاعدة المعرفة'
-                        : `⚠ مواد بحاجة لتأكيد يدوي: ${m.verification.unsupported.join('، ')}`}
+                        : `<Icon.warning size={ICON_SM} aria-hidden /> مواد بحاجة لتأكيد يدوي: ${m.verification.unsupported.join('، ')}`}
                     </div>
                   )}
                   {m.citations && m.citations.length > 0 && (
@@ -380,15 +381,15 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                 {m.role === 'assistant' && !m.streaming && m.content && !m.clarifying && (
                   <div className="msg-actions">
                     <a href={api.exportUrl(m.id, 'docx')} download>
-                      <button>⬇ Word</button>
+                      <button><Icon.download size={ICON_SM} aria-hidden /> Word</button>
                     </a>
-                    <button onClick={() => exportPdf(m)}>⬇ PDF</button>
+                    <button onClick={() => exportPdf(m)}><Icon.download size={ICON_SM} aria-hidden /> PDF</button>
                     <a href={api.exportUrl(m.id, 'txt')} download>
-                      <button>⬇ نص</button>
+                      <button><Icon.download size={ICON_SM} aria-hidden /> نص</button>
                     </a>
                     <button onClick={() => navigator.clipboard.writeText(m.content)}>نسخ</button>
-                    <button onClick={() => setEditing({ id: m.id, title: labelFor(convType) })}>✎ تحرير واعتماد</button>
-                    <button onClick={() => shareDraft(m)}>🔗 مشاركة للمراجعة</button>
+                    <button onClick={() => setEditing({ id: m.id, title: labelFor(convType) })}><Icon.edit size={ICON_SM} aria-hidden /> تحرير واعتماد</button>
+                    <button onClick={() => shareDraft(m)}><Icon.share size={ICON_SM} aria-hidden /> مشاركة للمراجعة</button>
                     <button className={feedback[m.id] === 1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, 1)} title="مفيد">👍</button>
                     <button className={feedback[m.id] === -1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, -1)} title="يحتاج تحسين">👎</button>
                   </div>
@@ -406,7 +407,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             <div className="attachments-row">
               {attachments.map((a) => (
                 <span key={a.id} className="attach-chip">
-                  📎 {a.filename}
+                  <Icon.attachment size={ICON_SM} aria-hidden /> <bdi>{a.filename}</bdi>
                 </span>
               ))}
             </div>
@@ -429,7 +430,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
               onClick={() => fileInput.current?.click()}
               disabled={uploading}
             >
-              {uploading ? <span className="spinner" /> : '📎'}
+              {uploading ? <span className="spinner" /> : <Icon.attachment size={ICON_MD} aria-hidden />}
             </button>
             <button
               className={`icon-btn ${internet ? 'on' : ''}`}
@@ -472,7 +473,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
               rows={1}
             />
             <button className="send-btn" onClick={() => send()} disabled={sending || !input.trim()}>
-              {sending ? <span className="spinner" /> : '➤'}
+              {sending ? <span className="spinner" /> : <Icon.send size={ICON_MD} aria-hidden />}
             </button>
           </div>
           <div className="composer-hint">

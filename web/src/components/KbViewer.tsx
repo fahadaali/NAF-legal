@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Icon, ICON_MD } from '../lib/icons';
 
 export type ViewKind = 'pdf' | 'image' | 'text';
 
@@ -62,7 +63,7 @@ export default function KbViewer({ target, onClose }: { target: ViewerTarget; on
             <a href={target.kind === 'text' ? target.textUrl : target.fileUrl} target="_blank" rel="noopener">
               <button className="btn-sm">فتح في تبويب</button>
             </a>
-            <button className="modal-close" onClick={onClose} title="إغلاق">×</button>
+            <button className="modal-close" onClick={onClose} title="إغلاق"><Icon.close size={ICON_MD} aria-hidden /></button>
           </div>
         </div>
 
