@@ -89,7 +89,7 @@ export default function ReviewPage({ token }: { token: string }) {
           </div>
 
           <div className="review-actions">
-            <button className="btn-primary" style={{ background: '#0f766e' }} onClick={() => decide('approved')} disabled={busy}>
+            <button className="btn-primary" style={{ background: 'var(--success)' }} onClick={() => decide('approved')} disabled={busy}>
               ✅ اعتماد المسودّة
             </button>
             <button className="btn-sm" onClick={() => decide('changes_requested')} disabled={busy}>

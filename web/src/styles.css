@@ -209,7 +209,7 @@ a { color: var(--accent); }
 
 /* ── مبدّل السمة ── */
 .theme-toggle {
-  width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border);
+  width: 34px; height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--border);
   background: var(--surface-2); color: var(--text); display: grid; place-items: center;
   font-size: 15px; transition: 0.2s var(--ease);
 }
@@ -400,7 +400,7 @@ a { color: var(--accent); }
 .auth-switch button { background: none; border: none; color: var(--primary); font-weight: 700; }
 .error-box {
   background: color-mix(in srgb, var(--danger) 14%, transparent); border: 1px solid var(--danger);
-  color: var(--danger); padding: 11px 13px; border-radius: 10px; font-size: 13px; margin-bottom: 15px;
+  color: var(--danger); padding: 11px 13px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 15px;
 }
 
 /* ── لوحة الإدارة والأدوات ── */
@@ -479,7 +479,7 @@ a { color: var(--accent); }
 .review-doc { background: var(--surface-2) !important; }
 .review-section { margin-top: 26px; }
 .review-section h3 { font-size: 15px; color: var(--text-strong); }
-.review-comment { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; margin-bottom: 9px; font-size: 13.5px; }
+.review-comment { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px 13px; margin-bottom: 9px; font-size: 13.5px; }
 .rc-head { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
 .review-actions { display: flex; gap: 10px; margin-top: 16px; }
 .review-actions .btn-primary { width: auto; padding: 11px 22px; }
@@ -487,7 +487,7 @@ a { color: var(--accent); }
 /* ملاحظة المصادر الرسمية */
 .source-note {
   font-size: 12.5px; color: var(--muted); background: var(--surface-2);
-  border: 1px solid var(--border); border-radius: 10px; padding: 10px 13px; margin: 0 0 14px; line-height: 1.7;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 13px; margin: 0 0 14px; line-height: 1.7;
 }
 
 /* عارض قاعدة المعرفة المنبثق */
@@ -517,14 +517,14 @@ a { color: var(--accent); }
 .modal-imgwrap img { max-width: 100%; height: auto; border-radius: 8px; }
 .kb-text-view {
   margin: 0; padding: 20px 22px; white-space: pre-wrap; word-break: break-word; user-select: text;
-  font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 14.5px; line-height: 1.9; color: var(--text);
+  font-family: var(--font); font-size: 14.5px; line-height: 1.9; color: var(--text);
 }
 
 /* نافذة الإدخال الأولي */
 .modal-card.intake { height: auto; max-height: 92vh; width: min(680px, 96vw); }
 .modal-body.intake-body { padding: 20px 22px; }
 .intake-textarea {
-  width: 100%; min-height: 84px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px;
+  width: 100%; min-height: 84px; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface-2); color: var(--text); font-family: inherit; font-size: 14px; line-height: 1.8;
   resize: none; overflow: hidden;
 }
@@ -565,12 +565,12 @@ a { color: var(--accent); }
 /* محرّر المسودّة */
 .draft-textarea {
   width: 100%; height: 100%; min-height: 48vh; padding: 16px; border: 1px solid var(--border);
-  border-radius: 10px; background: var(--surface-2); color: var(--text); font-family: inherit;
+  border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font-family: inherit;
   font-size: 14.5px; line-height: 1.9; resize: vertical;
 }
 .draft-textarea:focus { outline: none; border-color: var(--primary); }
 .version-row {
-  border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; margin-bottom: 9px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px 13px; margin-bottom: 9px;
   background: var(--surface); display: flex; flex-direction: column; gap: 8px;
 }
 .version-row > div:first-child { display: flex; align-items: baseline; flex-wrap: wrap; }
@@ -589,7 +589,7 @@ a { color: var(--accent); }
 }
 .cfg-field-row input:focus, .cfg-field-row select:focus { outline: none; border-color: var(--primary); }
 .cfg-prompt {
-  width: 100%; min-height: 200px; padding: 13px; border: 1px solid var(--border); border-radius: 10px;
+  width: 100%; min-height: 200px; padding: 13px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface-2); color: var(--text); font-family: inherit; font-size: 13.5px; line-height: 1.8; resize: vertical;
 }
 .cfg-prompt:focus { outline: none; border-color: var(--primary); }
