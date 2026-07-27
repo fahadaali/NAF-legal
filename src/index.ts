@@ -100,7 +100,15 @@ app.route('/api/members', memberRoutes);
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));
 
 // كل ما تبقّى → أصول الواجهة (SPA)
-app.get('*', (c) => c.env.ASSETS.fetch(c.req.raw));
+//
+// الاستجابة تُنسخ ولا تُعاد كما هي: `ASSETS.fetch` يعيد ترويسات غير قابلة
+// للتعديل، و`secureHeaders` أعلاه يكتب فيها فيرمي «Can't modify immutable
+// headers» وتسقط كل أصول الواجهة بـ 500. ولم يظهر هذا قبل `run_worker_first`
+// لأن الأصول كانت تُقدَّم دون أن يعمل Worker أصلاً.
+app.get('*', async (c) => {
+  const res = await c.env.ASSETS.fetch(c.req.raw);
+  return new Response(res.body, res);
+});
 
 export default {
   fetch: app.fetch,
