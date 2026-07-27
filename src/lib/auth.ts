@@ -1,30 +1,26 @@
 // وسيط المصادقة والصلاحيات
 import type { Context, Next } from 'hono';
-import { getCookie } from 'hono/cookie';
-import { verifyJwt } from './crypto';
 import type { Env, Variables } from '../types';
 
 export const SESSION_COOKIE = 'naf_session';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
+// المصادقة صارت مركزية: وسيط الدخول الموحّد (`lib/sso.ts`) يعمل على كل
+// المسارات قبل هذه الدالة، ويحقن المستخدم في السياق أو يردّ بنفسه تحويلاً
+// أو رفضاً. فلم يبقَ لهذا الحارس إلا التأكد من وجود المحقون.
+//
+// ولا تُقرأ هنا جلسةٌ محلية ولا يُتحقَّق من `JWT_SECRET`: جلسةٌ تجدّد نفسها
+// من كوكي محلي تُبقي الموقوفَ مركزياً داخلاً حتى انتهاء كوكيه.
 export async function requireAuth(c: Ctx, next: Next) {
-  const token = getCookie(c, SESSION_COOKIE);
-  if (!token) return c.json({ error: 'غير مصرّح' }, 401);
-  const payload = await verifyJwt(token, c.env.JWT_SECRET);
-  if (!payload) return c.json({ error: 'جلسة منتهية أو غير صالحة' }, 401);
-  c.set('user', {
-    id: payload.sub,
-    email: payload.email,
-    role: payload.role as 'user' | 'admin',
-    name: payload.name,
-  });
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'غير مصرّح' }, 401);
   await next();
 }
 
 export async function requireAdmin(c: Ctx, next: Next) {
   const user = c.get('user');
-  if (!user || user.role !== 'admin') return c.json({ error: 'يتطلب صلاحية مسؤول' }, 403);
+  if (!user || user.role !== 'admin') return c.json({ error: 'هذه العملية تتطلب صلاحية مسؤول' }, 403);
   await next();
 }
 

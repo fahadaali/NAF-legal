@@ -20,6 +20,7 @@
     "wrangler": "^4.0.0"
   },
   "dependencies": {
-    "hono": "^4.6.3"
+    "hono": "^4.6.3",
+    "naf-auth": "github:fahadaali/naf-auth#v1.0.0"
   }
 }

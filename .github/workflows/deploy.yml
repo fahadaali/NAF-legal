@@ -4,8 +4,17 @@ name: نشر مستشار ناف على Cloudflare
 # wrangler.toml، يطبّق الترحيلات، ثم ينشر — دون أي عمل من الطرفية.
 #
 # المطلوب مرّة واحدة: أضِف في GitHub › Settings › Secrets and variables › Actions
-#   CLOUDFLARE_API_TOKEN   — رمز بصلاحيات: Workers Scripts, D1, KV, R2, Queues, Vectorize (Edit)
-#   CLOUDFLARE_ACCOUNT_ID  — معرّف حسابك في Cloudflare
+#
+#   Secrets:
+#     CLOUDFLARE_API_TOKEN   — رمز بصلاحيات: Workers Scripts, D1, KV, R2, Queues, Vectorize (Edit)
+#     CLOUDFLARE_ACCOUNT_ID  — معرّف حسابك في Cloudflare
+#     AUTH_CLIENT_SECRET     — سرّ هذه المنصة لدى مركز الهوية naf-id
+#
+#   Variables:
+#     PLATFORM_ID            — معرّف المنصة في جدول `platforms` بالمركز
+#     AUTH_ISSUER            — نطاق المركز، بالصيغة https://…
+#
+# الثلاثة الأخيرة إلزامية: النشر يتوقّف قبل بلوغ Cloudflare إن نقص أحدها.
 # أما سرّا التطبيق (ANTHROPIC_API_KEY و JWT_SECRET) فتُضافان بعد أول نشر من لوحة
 # Cloudflare (Workers › الإعداد › Variables and Secrets) لتبقى داخل Cloudflare فقط.
 
@@ -60,6 +69,44 @@ jobs:
           sed -i "s/REPLACE_WITH_D1_ID/$D1_ID/" wrangler.toml
           sed -i "s/REPLACE_WITH_KV_ID/$KV_ID/" wrangler.toml
           echo "D1=$D1_ID  KV=$KV_ID"
+
+      # إعداد الدخول الموحّد يأتي من إعدادات المستودع لا من الشيفرة: المعرّف
+      # والنطاق متغيّران عامّان، والسرّ سرّ. والخطوة تتوقّف قبل النشر إن نقص
+      # أحدها — فنشرٌ بقيمة نائبة يسقط كل طلب بـ 500، لأن الوسيط يحمي كل مسار.
+      - name: حقن إعداد الدخول الموحّد
+        env:
+          PLATFORM_ID: ${{ vars.PLATFORM_ID }}
+          AUTH_ISSUER: ${{ vars.AUTH_ISSUER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PLATFORM_ID:-}" ] || [ -z "${AUTH_ISSUER:-}" ]; then
+            echo "::error::اضبط PLATFORM_ID و AUTH_ISSUER في GitHub › Settings › Secrets and variables › Actions › Variables" >&2
+            exit 1
+          fi
+          case "$AUTH_ISSUER" in
+            https://*) ;;
+            *) echo "::error::AUTH_ISSUER يجب أن يبدأ بـ https://" >&2; exit 1 ;;
+          esac
+          sed -i "s|REPLACE_WITH_PLATFORM_ID|$PLATFORM_ID|" wrangler.toml
+          sed -i "s|REPLACE_WITH_AUTH_ISSUER|$AUTH_ISSUER|" wrangler.toml
+          # مسحة أخيرة: لا تبقى قيمة نائبة واحدة في ملف يُنشر.
+          if grep -q "REPLACE_WITH_" wrangler.toml; then
+            echo "::error::بقيت قيمة نائبة في wrangler.toml" >&2
+            grep -n "REPLACE_WITH_" wrangler.toml >&2
+            exit 1
+          fi
+
+      - name: ضبط سرّ المنصة لدى المركز
+        env:
+          AUTH_CLIENT_SECRET: ${{ secrets.AUTH_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AUTH_CLIENT_SECRET:-}" ]; then
+            echo "::error::اضبط AUTH_CLIENT_SECRET في أسرار المستودع — بدونه تفشل مبادلة رمز العبور" >&2
+            exit 1
+          fi
+          # عبر المدخل القياسي: لا يظهر في سطر أمر ولا في سجلّ التشغيل.
+          printf '%s' "$AUTH_CLIENT_SECRET" | npx wrangler secret put AUTH_CLIENT_SECRET
 
       - name: تطبيق ترحيلات قاعدة البيانات
         run: npx wrangler d1 migrations apply naf_legal --remote

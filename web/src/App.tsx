@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api, User } from './lib/api';
-import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import Admin from './components/Admin';
@@ -10,10 +9,16 @@ import ChangePassword from './components/ChangePassword';
 import Deadlines from './components/Deadlines';
 import CaseFile from './components/CaseFile';
 import Support from './components/Support';
+import Denied from './components/Denied';
+import Members from './components/Members';
 import { useTheme } from './lib/theme';
-import { Icon, ICON_MD } from './lib/icons';
+import { Icon, ICON_MD, ICON_LG } from './lib/icons';
 
 export default function App() {
+  // صفحة الرفض — عامة، وإليها يحوّل وسيط الدخول الموحّد من رُدّ على الباب.
+  // تُفحص قبل كل شيء: لا جلسة لقارئها ولا مستخدم يُقرأ.
+  if (location.pathname === '/denied') return <Denied />;
+
   // مسار المراجعة العامة (بلا مصادقة)
   const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
   if (reviewMatch) return <ReviewPage token={reviewMatch[1]} />;
@@ -21,7 +26,7 @@ export default function App() {
   const [theme, setTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines' | 'case' | 'support'>('chat');
+  const [view, setView] = useState<'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support'>('chat');
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [pendingInitial, setPendingInitial] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -52,7 +57,26 @@ export default function App() {
     );
   }
 
-  if (!user) return <Auth onAuth={setUser} theme={theme} onThemeChange={setTheme} />;
+  // بابُ المنصة المركزُ وحده، فبلوغُ هذه النقطة يعني أن الوسيط سمح بالطلب
+  // ثم تعذّرت قراءة الحساب — خللٌ في النظام لا نقصُ دخول. ولا تُعرض هنا
+  // شاشةُ كلمة مرور: مسارها مغلق، وعرضُها يُوهم القارئ أن بيده حيلة.
+  // ولا يُعاد التحميل تلقائياً: الوسيط سيسمح ثانيةً فتدور الصفحة بلا نهاية.
+  if (!user) {
+    return (
+      <div className="auth-wrap">
+        <div className="auth-card denied-card">
+          <Icon.failed size={ICON_LG} className="denied-icon" aria-hidden />
+          <h1 className="denied-title">تعذّر الدخول</h1>
+          <p className="denied-reason" role="status">
+            حدث خطأ في النظام. أعد المحاولة بعد قليل
+          </p>
+          <a className="btn-primary denied-action" href="/">
+            إعادة المحاولة
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   // بوابة أول دخول: إجبار تعيين كلمة مرور جديدة
   if (user.must_change_password) {
@@ -100,6 +124,7 @@ export default function App() {
           />
         )}
         {view === 'admin' && <Admin />}
+        {view === 'members' && <Members />}
         {view === 'tools' && <Tools />}
         {view === 'deadlines' && <Deadlines />}
         {view === 'case' && (
@@ -126,6 +151,7 @@ export default function App() {
           openView('chat');
         }}
         onOpenAdmin={() => openView('admin')}
+        onOpenMembers={() => openView('members')}
         onOpenTools={() => openView('tools')}
         onOpenDeadlines={() => openView('deadlines')}
         onOpenCase={() => openView('case')}

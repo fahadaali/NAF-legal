@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, Conversation, Folder, User } from '../lib/api';
+import { api, Conversation, Folder, ROLE_LABELS, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
 import NotificationBell from './NotificationBell';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD } from '../lib/icons';
@@ -11,11 +11,12 @@ interface Props {
   user: User;
   open: boolean;
   activeConv: string | null;
-  view: 'chat' | 'admin' | 'tools' | 'deadlines' | 'case' | 'support';
+  view: 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support';
   refreshKey: number;
   onSelectConv: (id: string) => void;
   onNewChat: () => void;
   onOpenAdmin: () => void;
+  onOpenMembers: () => void;
   onOpenTools: () => void;
   onOpenDeadlines: () => void;
   onOpenCase: () => void;
@@ -166,16 +167,21 @@ export default function Sidebar(props: Props) {
           <div>
             <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{props.user.name ?? 'مستخدم'}</div>
             <div style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>
-              {props.user.role === 'admin' ? 'مسؤول' : 'مستخدم'}
+              {ROLE_LABELS[props.user.role]}
             </div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
             {props.user.role === 'admin' && (
-              <button className="link-btn" onClick={props.onOpenAdmin}>
-                لوحة الإدارة
-              </button>
+              <>
+                <button className="link-btn" onClick={props.onOpenAdmin}>
+                  لوحة الإدارة
+                </button>
+                <button className="link-btn" onClick={props.onOpenMembers}>
+                  المستخدمون والصلاحيات
+                </button>
+              </>
             )}
             <button className="link-btn" onClick={props.onLogout}>
               خروج

@@ -610,3 +610,22 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .naf-mark-dark { display: none; }
 .dark .naf-mark-light { display: none; }
 .dark .naf-mark-dark { display: block; }
+
+/* ── صفحة الرفض ──
+   تبني على `.auth-wrap` و `.auth-card` القائمتين، وتزيد ما يخصّها وحدها.
+   كل قيمة لون ومقاس خط من رموز naf-theme، والاتجاه منطقي لا فيزيائي. */
+.denied-card { text-align: center; }
+.denied-icon { color: var(--destructive); margin-bottom: 16px; }
+.denied-title {
+  font-size: var(--text-xl); font-weight: 700; color: var(--foreground); margin: 0;
+}
+.denied-reason {
+  font-size: var(--text-base); color: var(--muted-foreground);
+  margin-block: 16px 0; margin-inline: auto; max-width: 34ch;
+}
+/* المقاس المقروء لا يُضغط: العربية تحتاج ارتفاعاً للصواعد والنوازل. */
+.denied-reason { line-height: 1.8; }
+.denied-action { margin-block-start: 24px; text-decoration: none; }
+/* «معطّل» مسجَّل بـ muted-foreground لا destructive: عضويةٌ موقوفة
+   ليست عطلاً في النظام، واللون يقول ذلك قبل النصّ. */
+.denied-icon.muted { color: var(--muted-foreground); }
