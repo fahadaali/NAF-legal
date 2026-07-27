@@ -10,10 +10,16 @@ import ChangePassword from './components/ChangePassword';
 import Deadlines from './components/Deadlines';
 import CaseFile from './components/CaseFile';
 import Support from './components/Support';
+import Denied from './components/Denied';
+import Members from './components/Members';
 import { useTheme } from './lib/theme';
 import { Icon, ICON_MD } from './lib/icons';
 
 export default function App() {
+  // صفحة الرفض — عامة، وإليها يحوّل وسيط الدخول الموحّد من رُدّ على الباب.
+  // تُفحص قبل كل شيء: لا جلسة لقارئها ولا مستخدم يُقرأ.
+  if (location.pathname === '/denied') return <Denied />;
+
   // مسار المراجعة العامة (بلا مصادقة)
   const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
   if (reviewMatch) return <ReviewPage token={reviewMatch[1]} />;
@@ -21,7 +27,7 @@ export default function App() {
   const [theme, setTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines' | 'case' | 'support'>('chat');
+  const [view, setView] = useState<'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support'>('chat');
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [pendingInitial, setPendingInitial] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -100,6 +106,7 @@ export default function App() {
           />
         )}
         {view === 'admin' && <Admin />}
+        {view === 'members' && <Members />}
         {view === 'tools' && <Tools />}
         {view === 'deadlines' && <Deadlines />}
         {view === 'case' && (
@@ -126,6 +133,7 @@ export default function App() {
           openView('chat');
         }}
         onOpenAdmin={() => openView('admin')}
+        onOpenMembers={() => openView('members')}
         onOpenTools={() => openView('tools')}
         onOpenDeadlines={() => openView('deadlines')}
         onOpenCase={() => openView('case')}

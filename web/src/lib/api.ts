@@ -1,10 +1,41 @@
 // عميل API للواجهة
+
+/** أدوار هذه المنصة، وألفاظها في naf-terms.md §١٠. لا رابع لها. */
+export type PlatformRole = 'admin' | 'editor' | 'viewer';
+
+/**
+ * الألفاظ المسجَّلة للأدوار. مصدرها واحد هنا لا في كل شاشة تعرض دوراً:
+ * لفظان لمعنى واحد هما الانحراف الذي يمنعه السجلّ.
+ *
+ * `admin` و `viewer` من naf-terms.md §٢ «تسميات الحقول والأعمدة»، و«مدير»
+ * ممنوعة هناك صراحةً للـ Administrator. و`editor` من §١٠، وهو الوحيد الذي
+ * لم يكن له مقابل مسجَّل قبل أدوار الدخول الموحّد.
+ */
+export const ROLE_LABELS: Record<PlatformRole, string> = {
+  admin: 'مسؤول',
+  editor: 'محرّر',
+  viewer: 'مستخدم (اطّلاع)',
+};
+
 export interface User {
   id: string;
   email: string;
-  role: 'user' | 'admin';
+  role: PlatformRole;
   name?: string;
   must_change_password?: boolean;
+}
+
+/** عضو في هذه المنصة — سجلّه المحلي مقابلَ هويته في المركز. */
+export interface Member {
+  user_id: string;
+  display_name: string | null;
+  email: string | null;
+  role: PlatformRole;
+  is_active: boolean;
+  last_seen_at: number | null;
+  created_at: number | null;
+  /** صفّ القارئ نفسه: لا يعطّل نفسه ولا يغيّر صلاحيته. */
+  is_self: boolean;
 }
 
 export interface Conversation {
@@ -96,6 +127,13 @@ async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
     headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
     credentials: 'same-origin',
   });
+  // الجلسة المنتهية: الوسيط يردّ 401 على نداءات الـ API بدل تحويلٍ لا يستطيع
+  // `fetch` اتّباعه عبر النطاقات. وإعادة التحميل تُمرّر الطلب على الوسيط
+  // نفسه تنقّلَ متصفحٍ، فيحوّل إلى المركز — ولا تجدّد الجلسة نفسها.
+  if (res.status === 401) {
+    location.reload();
+    throw new Error('انتهت جلسة دخولك. سجّل الدخول من جديد');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as any).error ?? 'خطأ في الاتصال');
   return data as T;
@@ -108,7 +146,21 @@ export const api = {
     req<{ user: User }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   register: (email: string, password: string, name: string) =>
     req<{ user: User }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
-  logout: () => req('/auth/logout', { method: 'POST' }),
+  // الخروج تنقّلُ متصفحٍ لا نداءُ `fetch`: يحذف الجلسة من KV ويُسقط الكوكي
+  // ثم يحوّل — وثلاثتها تحتاج استجابةً يتّبعها المتصفح نفسه.
+  logout: async () => {
+    location.href = '/auth/logout';
+  },
+
+  // الأعضاء والصلاحيات — لمدير المنصة
+  members: () => req<{ members: Member[] }>('/members'),
+  setMemberRole: (id: string, role: PlatformRole) =>
+    req(`/members/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+  setMemberActive: (id: string, is_active: boolean, reason?: string) =>
+    req<{ ok: true; reported: boolean }>(`/members/${id}/active`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_active, reason }),
+    }),
   changePassword: (new_password: string, current_password?: string) =>
     req('/auth/change-password', { method: 'POST', body: JSON.stringify({ new_password, current_password }) }),
 

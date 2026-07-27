@@ -16,8 +16,10 @@ import {
   Bell,
   Briefcase,
   Calendar,
+  CircleAlert,
   CircleCheck,
   CircleHelp,
+  CircleSlash,
   CircleX,
   Clock,
   Download,
@@ -43,11 +45,14 @@ import {
   Pencil,
   RefreshCw,
   Replace,
+  RotateCcw,
   ScanText,
   ScrollText,
   Search,
   Send,
   Share2,
+  ShieldCheck,
+  ShieldX,
   SpellCheck,
   Square,
   Stamp,
@@ -58,6 +63,7 @@ import {
   Trash2,
   TriangleAlert,
   Upload,
+  Users,
   Wrench,
   X,
 } from 'lucide-react';
@@ -111,8 +117,16 @@ export const Icon = {
   pendingReview: Clock,    // بانتظار المراجعة
   rejected: CircleX,       // مرفوض — وليست X (إغلاق)
   warning: TriangleAlert,  // تحذير
+  failed: CircleAlert,     // فشل — وليست TriangleAlert (تحذير: لم يقع بعد)
   changesRequested: MessageSquareWarning, // مطلوب تعديلات — وليست CircleX (مرفوض)
   awaitingClarification: CircleHelp,      // بانتظار توضيح — وليست Clock
+  accessDenied: ShieldX,   // الوصول مرفوض — وليست CircleX (مرفوض: حكمٌ على مستند)
+  // الأعضاء والصلاحيات
+  permissions: ShieldCheck, // صلاحيات
+  members: Users,          // مستخدمو النظام جمعاً — وليست User (عميل فرد)
+  enabled: CircleCheck,    // مفعّل
+  disabled: CircleSlash,   // معطّل
+  reactivate: RotateCcw,   // إعادة التفعيل — استعادة لا اعتماد، فلا UserCheck
   // التنقّل
   support: LifeBuoy,       // الدعم — قرار معتمد من المالك، بانتظار تسجيله في naf-icons.md
   notifications: Bell,     // الإشعارات
