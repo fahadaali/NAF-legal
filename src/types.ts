@@ -16,19 +16,36 @@ export interface Env {
   GENERATION_MODEL: string;
   EMBEDDING_MODEL: string;
   DATA_REGION: string;
+  // ── الدخول الموحّد ──
+  // وهذه وحدها ما يتغيّر بين منصة وأخرى. `AUTH_KV_BINDING` يوجّه الحزمة إلى
+  // مساحة KV القائمة بدل إنشاء ثانية، ومفاتيحها (`sess:` و `jwks:` و `st:`)
+  // لا تزاحم مفاتيح حدّ المعدّل (`rl:`).
+  PLATFORM_ID: string;
+  AUTH_ISSUER: string;
+  AUTH_KV_BINDING?: string;
   // secrets
   ANTHROPIC_API_KEY: string;
   JWT_SECRET: string;
+  // سرّ المنصة لدى المركز — عبر `wrangler secret` حصراً
+  AUTH_CLIENT_SECRET: string;
   // اختيارية: لتفعيل إشعارات البريد
   RESEND_API_KEY?: string;
   NOTIFY_FROM?: string;
 }
 
+// أدوار هذه المنصة. المصادقة مركزية والصلاحيات موزّعة، فمفردات الأدوار
+// تُقرأ من `members` وتُدار من إعدادات المنصة ولا شأن للمركز بها.
+export type PlatformRole = 'admin' | 'editor' | 'viewer';
+
 export interface AuthUser {
   id: string;
   email: string;
-  role: 'user' | 'admin';
+  role: PlatformRole;
   name?: string;
+  // المعرّف المركزي (`sub`). يبقى منفصلاً عن `id` لأن الأول مفتاح `members`
+  // والثاني مفتاح كل جداول المنصة القائمة — ودمجهما يقطع المستخدم عن بياناته.
+  memberId?: string;
+  perms?: Record<string, unknown> | null;
 }
 
 export type Variables = {

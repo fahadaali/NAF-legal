@@ -1,8 +1,9 @@
 // نقطة دخول Worker — التوجيه، المصادقة، الأمان، Cron، Queue
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
-import { getCookie } from 'hono/cookie';
 import authRoutes from './routes/auth';
+import ssoRoutes from './routes/ssoCallback';
+import memberRoutes from './routes/members';
 import conversationRoutes from './routes/conversations';
 import chatRoutes from './routes/chat';
 import fileRoutes from './routes/files';
@@ -21,18 +22,27 @@ import clauseRoutes from './routes/clauses';
 import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
 import { runTrackingScan, runNewsDigest, runDeadlineReminders } from './cron';
-import { verifyJwt } from './lib/crypto';
-import { SESSION_COOKIE } from './lib/auth';
+import { ssoMiddleware } from './lib/sso';
 import type { Env, Variables } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.use('*', secureHeaders());
 
+// مسار الاستقبال والخروج قبل الوسيط: الأول عام بطبيعته — إليه يعود القادم
+// من المركز بلا جلسة بعد — والثاني لا معنى لحمايته بجلسةٍ هو يُسقطها.
+app.route('/auth', ssoRoutes);
+
+// الدخول الموحّد — يحمي كل ما بعده. وأي مسار جديد محمي افتراضياً ما لم
+// يُضَف صراحةً إلى القائمة العامة في `lib/sso.ts`.
+app.use('*', ssoMiddleware);
+
 // حدّ معدّل بسيط عبر KV على مسارات الـ API (§12)
 app.use('/api/*', async (c, next) => {
-  const token = getCookie(c, SESSION_COOKIE);
-  const key = token ? `rl:${(await verifyJwt(token, c.env.JWT_SECRET))?.sub ?? 'anon'}` : `rl:ip:${c.req.header('cf-connecting-ip') ?? 'x'}`;
+  // المفتاح يأتي من المستخدم الذي حقنه وسيط الدخول الموحّد. وبقاؤه على
+  // الكوكي المحلي بعد الربط كان يهبط بكل مستخدم إلى حدّ العنوان المشترك.
+  const user = c.get('user');
+  const key = user ? `rl:${user.id}` : `rl:ip:${c.req.header('cf-connecting-ip') ?? 'x'}`;
   const WINDOW = 60; // ثانية
   const LIMIT = 60; // 60 طلب/دقيقة
   try {
@@ -84,6 +94,7 @@ app.route('/api/notifications', notificationRoutes);
 app.route('/api/clauses', clauseRoutes);
 app.route('/api/cases', caseRoutes);
 app.route('/api/regulation-requests', regulationRequestRoutes);
+app.route('/api/members', memberRoutes);
 
 // أي مسار /api غير معروف
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));

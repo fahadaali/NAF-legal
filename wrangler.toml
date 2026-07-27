@@ -8,6 +8,11 @@ compatibility_flags = ["nodejs_compat"]
 directory = "./web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+# الوسيط قبل الأصول. بالقيمة الافتراضية (false) تُقدَّم الأصول المطابِقة —
+# ومنها `index.html` على الجذر — دون أن يعمل Worker أصلاً، فتُحمَّل قشرة
+# الواجهة لزائر بلا جلسة ولا يُحوَّل إلى المركز. والحماية عندئذ تقتصر على
+# `/api/*`، وهو ما يخالف «وأي مسار غيرها محمي افتراضياً».
+run_worker_first = true
 
 # ── قاعدة البيانات D1 ──
 [[d1_databases]]
@@ -58,6 +63,22 @@ GENERATION_MODEL = "claude-opus-4-8"
 EMBEDDING_MODEL = "@cf/baai/bge-m3"
 DATA_REGION = "auto"
 
+# ── الدخول الموحّد ──
+# وهذان وحدهما ما يتغيّر بين منصة وأخرى.
+#
+# ⚠ لم تصلني قيمتهما في هذه الجلسة ولم أخمّنهما. املأهما قبل أي نشر:
+#   PLATFORM_ID — معرّف هذه المنصة في جدول `platforms` بالمركز
+#   AUTH_ISSUER — نطاق خدمة الهوية، بالصيغة "https://…"
+PLATFORM_ID = "REPLACE_WITH_PLATFORM_ID"
+AUTH_ISSUER = "REPLACE_WITH_AUTH_ISSUER"
+
+# الحزمة تتوقّع ارتباط KV باسم `AUTH_KV`. توجيهها إلى المساحة القائمة يغني
+# عن ثانية، ومفاتيحها (`sess:` و `jwks:` و `st:`) لا تزاحم مفاتيح حدّ
+# المعدّل (`rl:`) في المساحة نفسها.
+AUTH_KV_BINDING = "KV"
+
 # الأسرار المطلوبة (لا تُوضع هنا):
-#   ANTHROPIC_API_KEY  — مفتاح Claude API
-#   JWT_SECRET         — سرّ توقيع الجلسات
+#   ANTHROPIC_API_KEY   — مفتاح Claude API
+#   JWT_SECRET          — سرّ توقيع الجلسات
+#   AUTH_CLIENT_SECRET  — سرّ هذه المنصة لدى المركز:
+#                         wrangler secret put AUTH_CLIENT_SECRET
