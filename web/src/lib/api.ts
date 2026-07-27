@@ -45,6 +45,35 @@ export interface ConsultConfig {
   fields: FieldDef[];
 }
 
+// طلب إضافة نظام غير موجود في قاعدة المعرفة
+export type RegulationRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export interface RegulationRequestInput {
+  name: string;
+  url?: string;
+  has_bylaw: boolean;
+  bylaw_url?: string;
+  note?: string;
+  source: 'chat' | 'support';
+  conversation_id?: string | null;
+}
+
+export interface RegulationRequest {
+  id: string;
+  name: string;
+  url: string | null;
+  has_bylaw: number;
+  bylaw_url: string | null;
+  note: string | null;
+  source: 'chat' | 'support';
+  status: RegulationRequestStatus;
+  admin_note: string | null;
+  created_at: number;
+  handled_at: number | null;
+  requester_email?: string;
+  requester_name?: string | null;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -138,6 +167,18 @@ export const api = {
   news: () => req<{ news: any[] }>('/admin/news'),
   scanNews: () => req<{ found: number }>('/admin/news/scan', { method: 'POST' }),
   ingestNews: (id: string) => req(`/admin/news/${id}/ingest`, { method: 'POST' }),
+
+  // طلبات إضافة الأنظمة
+  regulationRequests: () => req<{ requests: RegulationRequest[] }>('/regulation-requests'),
+  createRegulationRequest: (payload: RegulationRequestInput) =>
+    req<{ id: string; duplicate: boolean }>('/regulation-requests', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  adminRegulationRequests: (status = 'all') =>
+    req<{ requests: RegulationRequest[]; pending: number }>(`/admin/regulation-requests?status=${status}`),
+  decideRegulationRequest: (id: string, status: RegulationRequestStatus, admin_note?: string) =>
+    req(`/admin/regulation-requests/${id}`, { method: 'PATCH', body: JSON.stringify({ status, admin_note }) }),
 
   // التقييم
   getFeedback: (messageId: string) => req<{ feedback: { rating: number; comment?: string } | null }>(`/feedback/${messageId}`),

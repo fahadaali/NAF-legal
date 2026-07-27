@@ -9,7 +9,7 @@ interface Props {
   user: User;
   open: boolean;
   activeConv: string | null;
-  view: 'chat' | 'admin' | 'tools' | 'deadlines' | 'case';
+  view: 'chat' | 'admin' | 'tools' | 'deadlines' | 'case' | 'support';
   refreshKey: number;
   onSelectConv: (id: string) => void;
   onNewChat: () => void;
@@ -17,6 +17,7 @@ interface Props {
   onOpenTools: () => void;
   onOpenDeadlines: () => void;
   onOpenCase: () => void;
+  onOpenSupport: () => void;
   onLogout: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
@@ -116,6 +117,7 @@ export default function Sidebar(props: Props) {
       <button className="tools-link" onClick={props.onOpenTools}><Icon.tools size={ICON_SM} aria-hidden /> الأدوات القانونية</button>
       <button className="tools-link" onClick={props.onOpenDeadlines}><Icon.appointment size={ICON_SM} aria-hidden /> المواعيد النظامية</button>
       <button className="tools-link" onClick={props.onOpenCase}><Icon.matter size={ICON_SM} aria-hidden /> ملف القضية</button>
+      <button className="tools-link" onClick={props.onOpenSupport}><Icon.support size={ICON_SM} aria-hidden /> الدعم</button>
 
       <div className="folder-bar">
         <button className={`folder-chip ${!activeFolder ? 'active' : ''}`} onClick={() => setActiveFolder(null)}>

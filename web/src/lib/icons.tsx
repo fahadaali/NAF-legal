@@ -18,6 +18,8 @@ import {
   Calendar,
   CircleCheck,
   CircleHelp,
+  CircleX,
+  Clock,
   Download,
   FileImage,
   FileOutput,
@@ -28,6 +30,7 @@ import {
   Folder,
   Globe,
   Library,
+  LifeBuoy,
   Link2,
   Link2Off,
   Menu,
@@ -104,10 +107,13 @@ export const Icon = {
   disconnected: Link2Off,  // غير مربوط
   // الحالات
   approved: CircleCheck,   // معتمد
+  pendingReview: Clock,    // بانتظار المراجعة
+  rejected: CircleX,       // مرفوض — وليست X (إغلاق)
   warning: TriangleAlert,  // تحذير
   changesRequested: MessageSquareWarning, // مطلوب تعديلات — وليست CircleX (مرفوض)
   awaitingClarification: CircleHelp,      // بانتظار توضيح — وليست Clock
   // التنقّل
+  support: LifeBuoy,       // الدعم — قرار معتمد من المالك، بانتظار تسجيله في naf-icons.md
   notifications: Bell,     // الإشعارات
   menu: Menu,              // القائمة
   next: ArrowLeft,         // التالي

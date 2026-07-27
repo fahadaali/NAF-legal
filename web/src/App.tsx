@@ -9,6 +9,7 @@ import ReviewPage from './components/ReviewPage';
 import ChangePassword from './components/ChangePassword';
 import Deadlines from './components/Deadlines';
 import CaseFile from './components/CaseFile';
+import Support from './components/Support';
 import { useTheme } from './lib/theme';
 
 export default function App() {
@@ -19,7 +20,7 @@ export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines' | 'case'>('chat');
+  const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines' | 'case' | 'support'>('chat');
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [pendingInitial, setPendingInitial] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -90,6 +91,7 @@ export default function App() {
         {view === 'case' && (
           <CaseFile onOpenConversation={(id) => { setActiveConv(id); setView('chat'); }} />
         )}
+        {view === 'support' && <Support />}
         <div className="disclaimer-bar">
           كل مخرجات المنصّة مسوّدات مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.
         </div>
@@ -115,6 +117,7 @@ export default function App() {
         onOpenTools={() => setView('tools')}
         onOpenDeadlines={() => setView('deadlines')}
         onOpenCase={() => setView('case')}
+        onOpenSupport={() => setView('support')}
         onLogout={handleLogout}
         theme={theme}
         onToggleTheme={toggleTheme}

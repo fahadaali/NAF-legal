@@ -5,6 +5,7 @@ import { renderMarkdown } from '../lib/markdown';
 import IntakeModal from './IntakeModal';
 import DraftEditor from './DraftEditor';
 import ClauseLibrary from './ClauseLibrary';
+import RegulationRequestModal from './RegulationRequestModal';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD, ICON_LG } from '../lib/icons';
 
 interface Props {
@@ -21,6 +22,8 @@ interface UiMessage extends Message {
   clarifying?: boolean;
   streaming?: boolean;
   verification?: { verified: boolean; unsupported: string[]; note: string } | null;
+  // أنظمة يتطلّبها الإسناد ولا وجود لها في قاعدة المعرفة
+  missingRegulations?: string[];
 }
 
 export default function ChatView({ conversationId, initialMessage, onInitialConsumed, onStartConversation, onConversationChange, onToggleSidebar }: Props) {
@@ -29,6 +32,10 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   const [intake, setIntake] = useState<ConsultConfig | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [clausePicker, setClausePicker] = useState(false);
+  // طلب إضافة نظام: اسم النظام المعروض في النافذة، والأسماء التي عولجت في هذه الجلسة
+  const [regRequest, setRegRequest] = useState<string | null>(null);
+  const [handledRegs, setHandledRegs] = useState<string[]>([]);
+  const autoAsked = useRef<Set<string>>(new Set());
   const autoSent = useRef(false);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -58,14 +65,15 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         setConvType(r.conversation.consultation_type);
         setConvFolder((r.conversation as any).folder_id ?? '');
         const msgs = r.messages.map((m) => {
-          let citations, clarifying, verification;
+          let citations, clarifying, verification, missingRegulations;
           try {
             const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
             citations = meta.citations;
             clarifying = meta.clarifying;
             verification = meta.verification;
+            missingRegulations = meta.missing_regulations;
           } catch {}
-          return { ...m, citations, clarifying, verification };
+          return { ...m, citations, clarifying, verification, missingRegulations };
         });
         setMessages(msgs);
         setAttachments(r.attachments);
@@ -172,7 +180,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         setSearching(false);
         setMessages((msgs) => {
           const copy = [...msgs];
-          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: true, citations: meta.citations, clarifying: meta.clarifying };
+          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: true, citations: meta.citations, clarifying: meta.clarifying, missingRegulations: meta.missing_regulations };
           return copy;
         });
       },
@@ -180,12 +188,19 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         if (failed) return; // أُبلِغ الخطأ سابقًا
         setMessages((msgs) => {
           const copy = [...msgs];
-          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: false, citations: meta.citations, clarifying: meta.clarifying, verification };
+          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: false, citations: meta.citations, clarifying: meta.clarifying, verification, missingRegulations: meta.missing_regulations };
           return copy;
         });
         setSending(false);
         setSearching(false);
         onConversationChange(conversationId);
+        // نظام يتطلّبه الإسناد وغير موجود: تُعرض النافذة مرّة واحدة لكل نظام،
+        // ويبقى التنبيه أسفل الرد لفتحها متى شاء المستخدم بعد إغلاقها.
+        const pending: string[] = (meta.missing_regulations ?? []).filter((n: string) => !autoAsked.current.has(n));
+        if (pending.length) {
+          autoAsked.current.add(pending[0]);
+          setRegRequest(pending[0]);
+        }
       },
       onError: (err) => {
         failed = true;
@@ -366,6 +381,20 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                         : `<Icon.warning size={ICON_SM} aria-hidden /> مواد بحاجة لتأكيد يدوي: ${m.verification.unsupported.join('، ')}`}
                     </div>
                   )}
+                  {!m.streaming &&
+                    (m.missingRegulations ?? [])
+                      .filter((n) => !handledRegs.includes(n))
+                      .map((n) => (
+                        <div className="missing-reg-note" key={n}>
+                          <span className="missing-reg-label">
+                            <Icon.warning size={ICON_SM} aria-hidden /> غير موجود في قاعدة المعرفة:
+                          </span>
+                          <bdi>{n}</bdi>
+                          <button className="btn-sm" onClick={() => setRegRequest(n)}>
+                            طلب إضافته
+                          </button>
+                        </div>
+                      ))}
                   {m.citations && m.citations.length > 0 && (
                     <div className="citations">
                       <span>المصادر:</span>
@@ -490,6 +519,16 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             setInput((v) => `${v}${v ? '\n\n' : ''}أدرِج البند التالي بنصّه:\n\n${cl.body}`);
             setClausePicker(false);
           }}
+        />
+      )}
+
+      {regRequest !== null && (
+        <RegulationRequestModal
+          initialName={regRequest}
+          source="chat"
+          conversationId={conversationId}
+          onClose={() => setRegRequest(null)}
+          onDone={() => setHandledRegs((h) => (h.includes(regRequest) ? h : [...h, regRequest]))}
         />
       )}
 

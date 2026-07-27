@@ -84,6 +84,12 @@ app.post('/:conversationId', async (c) => {
     }
   }
 
+  // الأنظمة التي رشّحها المُخطِّط ولا وجود لها في قاعدة المعرفة: تُبلَّغ للواجهة
+  // ليعرضها على المستخدم ويعرض عليه طلب إضافتها (§6 — لا إسناد بلا مصدر).
+  const missingRegulations = plan.needs_knowledge_base
+    ? await findMissingRegulations(c.env, plan.target_regulations, user.id)
+    : [];
+
   // [3] تجميع البرومبت (يُستخدم البرومبت القابل للتحكّم من الإدارة إن وُجد)
   const effectiveConfig = await getEffectiveConfig(c.env, plan.consultation_type);
   let system = effectiveConfig.system_prompt;
@@ -132,7 +138,11 @@ app.post('/:conversationId', async (c) => {
   const outStream = new ReadableStream<Uint8Array>({
     async start(controller) {
       // أرسل بيانات وصفية أولية
-      controller.enqueue(encoder.encode(`event: meta\ndata: ${JSON.stringify({ messageId: asstId, plan, citations })}\n\n`));
+      controller.enqueue(
+        encoder.encode(
+          `event: meta\ndata: ${JSON.stringify({ messageId: asstId, plan, citations, missing_regulations: missingRegulations })}\n\n`
+        )
+      );
 
       const reader = claudeStream.getReader();
       const decoder = new TextDecoder();
@@ -181,7 +191,13 @@ app.post('/:conversationId', async (c) => {
             conversationId,
             'assistant',
             fullText,
-            JSON.stringify({ plan, citations, output_format: plan.output_format, verification }),
+            JSON.stringify({
+              plan,
+              citations,
+              output_format: plan.output_format,
+              verification,
+              missing_regulations: missingRegulations,
+            }),
             Date.now()
           )
           .run();
@@ -225,6 +241,55 @@ app.post('/:conversationId', async (c) => {
     },
   });
 });
+
+// ── كشف الأنظمة الغائبة عن قاعدة المعرفة ──
+// المُخطِّط يُسمّي الأنظمة التي تحتاجها المسألة؛ نقارنها بعناوين وثائق قاعدة
+// المعرفة. المطابقة في الاتجاهين لأن العنوان قد يكون أطول من الاسم المرشَّح
+// («نظام العمل السعودي» مقابل «نظام العمل») أو أقصر منه.
+// نستخدم instr لا LIKE: الاتجاه العكسي يبني النمط بالدمج فيرفضه D1
+// («LIKE or GLOB pattern too complex»)، كما أنّ instr لا يفسّر % و _ داخل
+// اسم النظام القادم من المُخطِّط.
+const MISSING_REGULATIONS_MAX = 3;
+
+async function findMissingRegulations(env: Env, names: string[], userId: string): Promise<string[]> {
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of names) {
+    if (missing.length >= MISSING_REGULATIONS_MAX) break;
+    const name = (raw ?? '').trim().replace(/\s+/g, ' ');
+    if (name.length < 4 || name.length > 200) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    try {
+      const hit = await env.DB.prepare(
+        `SELECT id FROM kb_documents
+         WHERE status != 'repealed' AND length(title) >= 4
+           AND (instr(lower(title), ?) > 0 OR instr(?, lower(title)) > 0)
+         LIMIT 1`
+      )
+        .bind(key, key)
+        .first();
+      if (hit) continue;
+
+      // طلب قائم للنظام نفسه (معلّق أو معتمد): لا نُزعج المستخدم بطلبه مجددًا
+      const requested = await env.DB.prepare(
+        `SELECT id FROM regulation_requests
+         WHERE user_id = ? AND status != 'rejected' AND lower(name) = ? LIMIT 1`
+      )
+        .bind(userId, key)
+        .first();
+      if (requested) continue;
+
+      missing.push(name);
+    } catch {
+      // جدول غير مهيّأ بعد — لا نُفشل المحادثة بسبب الكشف
+      return missing;
+    }
+  }
+  return missing;
+}
 
 // يبني كتلة الملفات المرفوعة بسقف كلّي للحجم (يوزَّع على الملفات)
 const ATTACH_TOTAL_BUDGET = 60_000; // حروف

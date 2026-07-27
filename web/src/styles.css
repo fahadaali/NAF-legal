@@ -232,6 +232,14 @@ a { color: var(--primary); }
   color: var(--foreground); border-radius: var(--radius-lg); padding: 4px 12px; font-size: 0.875rem; margin-top: 8px; display: inline-block;
 }
 
+/* تنبيه: نظام يتطلّبه الإسناد وغير موجود في قاعدة المعرفة */
+.missing-reg-note {
+  margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-lg);
+  background: var(--warning-soft); color: var(--foreground);
+  font-size: 0.875rem; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.missing-reg-note .missing-reg-label { color: var(--warning); font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+
 .verify-badge { margin-top: 12px; font-size: 0.875rem; padding: 8px 12px; border-radius: var(--radius-lg); font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
 .verify-badge.ok { background: var(--success-soft); color: var(--success); }
 .verify-badge.warn { background: var(--warning-soft); color: var(--warning); }
@@ -367,6 +375,8 @@ a { color: var(--primary); }
   border-color: transparent; box-shadow: var(--shadow-xs);
 }
 .btn-sm.primary:hover { color: var(--primary-foreground); background: color-mix(in oklab, var(--primary) 90%, transparent); }
+/* جدول أعرض من الشاشة: يُمرَّر داخل حاويته، لا داخل الصفحة */
+.table-scroll { overflow-x: auto; }
 .section-title { font-size: 1rem; font-weight: 700; margin: 24px 0 8px; color: var(--foreground); }
 .empty-state { text-align: center; color: var(--muted-foreground); padding: 44px; font-size: 0.875rem; }
 .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 8px; }
