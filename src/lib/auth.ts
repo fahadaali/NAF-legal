@@ -20,7 +20,7 @@ export async function requireAuth(c: Ctx, next: Next) {
 
 export async function requireAdmin(c: Ctx, next: Next) {
   const user = c.get('user');
-  if (!user || user.role !== 'admin') return c.json({ error: 'يتطلب صلاحية مسؤول' }, 403);
+  if (!user || user.role !== 'admin') return c.json({ error: 'هذه العملية تتطلب صلاحية مسؤول' }, 403);
   await next();
 }
 

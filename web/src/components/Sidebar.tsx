@@ -179,7 +179,7 @@ export default function Sidebar(props: Props) {
                   لوحة الإدارة
                 </button>
                 <button className="link-btn" onClick={props.onOpenMembers}>
-                  الأعضاء
+                  المستخدمون والصلاحيات
                 </button>
               </>
             )}

@@ -626,3 +626,6 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 /* المقاس المقروء لا يُضغط: العربية تحتاج ارتفاعاً للصواعد والنوازل. */
 .denied-reason { line-height: 1.8; }
 .denied-action { margin-block-start: 24px; text-decoration: none; }
+/* «معطّل» مسجَّل بـ muted-foreground لا destructive: عضويةٌ موقوفة
+   ليست عطلاً في النظام، واللون يقول ذلك قبل النصّ. */
+.denied-icon.muted { color: var(--muted-foreground); }

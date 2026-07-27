@@ -13,27 +13,37 @@
 
 import { Icon, ICON_LG } from '../lib/icons';
 
-/** الرموز الأربعة التي تمرّرها `naf-auth`. أي قيمة غيرها نصٌّ من المركز. */
-const REASONS: Record<string, string> = {
-  not_member: 'لا تملك صلاحية الوصول لهذه المنصة',
-  inactive: 'عطّل مسؤول المنصة وصولك إليها',
-  bad_state: 'انتهت مهلة الدخول. أعد المحاولة',
-  auth_failed: 'تعذّر التحقق من دخولك. أعد المحاولة',
+/**
+ * الرموز الأربعة التي تمرّرها `naf-auth`، بنصوصها وأيقوناتها من
+ * naf-terms.md §١٠ «منع الدخول إلى منصة». أي قيمة غيرها نصٌّ من المركز.
+ *
+ * ولكلٍّ أيقونته: `ShieldX` للحرمان وحده — بابٌ مغلق أمام هذا القارئ —
+ * و`CircleSlash` لعضوية معطّلة، و`CircleAlert` لعطلٍ في المحاولة نفسها.
+ * ولكلٍّ لونُها المسجَّل معها: `muted-foreground` للمعطّل و`destructive` لغيره.
+ */
+const REASONS: Record<string, { text: string; icon: keyof typeof Icon; muted?: true }> = {
+  not_member: { text: 'لا تملك صلاحية الوصول لهذه المنصة', icon: 'accessDenied' },
+  inactive: { text: 'عضويتك في هذه المنصة معطّلة. راجع مسؤول المنصة.', icon: 'disabled', muted: true },
+  bad_state: { text: 'انتهت جلسة دخولك. سجّل الدخول من جديد', icon: 'failed' },
+  auth_failed: { text: 'تعذّر التحقق من دخولك. أعد المحاولة.', icon: 'failed' },
 };
 
-/** السببان العارضان وحدهما تُجدي فيهما إعادة المحاولة. */
+/** العارضان وحدهما تُجدي فيهما إعادة المحاولة. الحرمان والتعطيل لا حيلة فيهما. */
 const RETRYABLE = new Set(['bad_state', 'auth_failed']);
 
 export default function Denied() {
   const raw = new URLSearchParams(location.search).get('r') ?? '';
-  const message = REASONS[raw] ?? raw.trim();
+  const known = REASONS[raw];
+  // سببٌ نصّيٌّ من المركز يُعرض كما كُتب، وأيقونته الحرمان: هي حالته.
+  const message = known?.text ?? raw.trim();
+  const Glyph = Icon[known?.icon ?? 'accessDenied'];
   const retryable = RETRYABLE.has(raw);
 
   return (
     <div className="auth-wrap">
       <div className="auth-card denied-card">
         {/* الحالة لا تُبلَّغ باللون وحده: أيقونة وعنوان ونصّ. */}
-        <Icon.accessDenied size={ICON_LG} className="denied-icon" aria-hidden />
+        <Glyph size={ICON_LG} className={`denied-icon${known?.muted ? ' muted' : ''}`} aria-hidden />
         <h1 className="denied-title">تعذّر الدخول</h1>
 
         {message && (

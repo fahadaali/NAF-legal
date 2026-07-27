@@ -1,12 +1,13 @@
 /* ============================================================
-   إعدادات الأدوار — شاشة مدير المنصة.
+   المستخدمون والصلاحيات — شاشة مسؤول المنصة.
 
-   المصادقة مركزية والصلاحيات موزّعة: الأعضاء يصلون من المركز، والدور
-   يُقرَّر هنا ولا شأن للمركز به. والمركز لا يُبلَّغ إلا بالتعطيل، ليظهر
-   السبب للعضو في شبكته.
+   المصادقة مركزية والصلاحيات موزّعة: الأعضاء يصلون من المركز، والصلاحية
+   تُقرَّر هنا ولا شأن للمركز بها. والمركز لا يُبلَّغ إلا بسحب الوصول،
+   ليظهر السبب للعضو في شبكته.
 
-   كل نصّ هنا من naf-terms.md §١٠ «أعضاء المنصة وصلاحياتهم»، وكل أيقونة
-   من naf-icons.md عبر خريطة lib/icons.
+   كل نصّ هنا من naf-terms.md §١٠ «أعضاء المنصة»، وكل أيقونة من
+   naf-icons.md عبر خريطة lib/icons. و«سحب» لا «تعطيل»: الأخيرة ممنوعة
+   هناك صراحةً — «معطّل» تصف حالة العضوية لا الفعل الذي أنتجها.
    ============================================================ */
 
 import { useEffect, useState } from 'react';
@@ -17,11 +18,11 @@ import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
 const ROLES = Object.keys(ROLE_LABELS) as PlatformRole[];
 
 /**
- * سبب التعطيل. نافذةٌ بنمط المنصة لا `window.prompt`: الأخيرة نافذة
+ * سبب سحب الوصول. نافذةٌ بنمط المنصة لا `window.prompt`: الأخيرة نافذة
  * متصفح تفلت من الثيم والاتجاه ومن حالة التركيز الظاهرة، ولا وجود لها
  * في السجلّ. والسبب يُعرض للعضو في شبكة المركز كما كُتب، فلا يُرسَل فارغاً.
  */
-function DeactivateModal({
+function RevokeModal({
   member,
   onCancel,
   onConfirm,
@@ -44,7 +45,7 @@ function DeactivateModal({
 
   const submit = () => {
     if (!reason.trim()) {
-      setError('اكتب سبب التعطيل — يُعرض للعضو في شبكته');
+      setError('اكتب سبب السحب — يُعرض للعضو في شبكته');
       return;
     }
     onConfirm(reason.trim());
@@ -56,7 +57,7 @@ function DeactivateModal({
         <div className="modal-head">
           {/* التأكيد يسمّي الفعل والمفعول به، ولا يكتفي بسؤال عام */}
           <span className="modal-title">
-            <Icon.disabled size={ICON_MD} aria-hidden /> تعطيل {member.display_name ?? member.email ?? ''}
+            سحب الوصول
           </span>
           <button className="modal-close" onClick={onCancel} title="إغلاق">
             <Icon.close size={ICON_MD} aria-hidden />
@@ -70,10 +71,13 @@ function DeactivateModal({
               <span>{error}</span>
             </div>
           )}
+          <p style={{ color: 'var(--muted-foreground)', fontSize: 'var(--text-sm)', marginTop: 0 }}>
+            {member.display_name ?? member.email ?? ''}
+          </p>
           <div className="field">
-            <label htmlFor="deactivate-reason">السبب</label>
+            <label htmlFor="revoke-reason">السبب</label>
             <textarea
-              id="deactivate-reason"
+              id="revoke-reason"
               className="intake-textarea"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -88,7 +92,7 @@ function DeactivateModal({
           </button>
           {/* زرّ التأكيد يحمل اسم الفعل لا «نعم» */}
           <button className="btn-sm primary" onClick={submit}>
-            تعطيل
+            سحب
           </button>
         </div>
       </div>
@@ -101,7 +105,7 @@ export default function Members() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const [pendingOff, setPendingOff] = useState<Member | null>(null);
+  const [pendingRevoke, setPendingRevoke] = useState<Member | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -129,12 +133,12 @@ export default function Members() {
 
   const toggleActive = async (m: Member, reason = '') => {
     setError('');
-    setPendingOff(null);
+    setPendingRevoke(null);
     setBusy(m.user_id);
     try {
       const r = await api.setMemberActive(m.user_id, !m.is_active, reason);
       if (r.reported === false) {
-        setError('عُطّل العضو في هذه المنصة، ولم يبلغ التعطيل المركز. أعد المحاولة');
+        setError('سُحب الوصول في هذه المنصة، ولم يبلغ السحبُ المركزَ. أعد المحاولة');
       }
       load();
     } catch (e) {
@@ -154,17 +158,20 @@ export default function Members() {
 
   return (
     <div className="admin-inner">
-      {pendingOff && (
-        <DeactivateModal
-          member={pendingOff}
-          onCancel={() => setPendingOff(null)}
-          onConfirm={(reason) => toggleActive(pendingOff, reason)}
+      {pendingRevoke && (
+        <RevokeModal
+          member={pendingRevoke}
+          onCancel={() => setPendingRevoke(null)}
+          onConfirm={(reason) => toggleActive(pendingRevoke, reason)}
         />
       )}
 
       <div className="section-title">
-        <Icon.members size={ICON_SM} aria-hidden /> الأعضاء
+        <Icon.permissions size={ICON_SM} aria-hidden /> المستخدمون والصلاحيات
       </div>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: 'var(--text-sm)', marginTop: 0 }}>
+        العضوية تأتي من نظام الدخول الموحّد، والصلاحية تُقرّر هنا
+      </p>
 
       {error && (
         <div className="error-box" role="alert">
@@ -176,6 +183,13 @@ export default function Members() {
       {members.length === 0 ? (
         <div className="empty-state">لا أعضاء بعد. يظهر العضو هنا بعد أول دخول له.</div>
       ) : (
+        <>
+        <div className="section-title">
+          <Icon.members size={ICON_SM} aria-hidden /> أعضاء المنصة
+        </div>
+        <p style={{ color: 'var(--muted-foreground)', fontSize: 'var(--text-sm)', marginTop: 0 }}>
+          «مسؤول» يملك كل الصلاحيات · «محرّر» يعمل دون إدارة الأعضاء · «مستخدم (اطّلاع)» يطّلع فقط.
+        </p>
         <table className="data-table">
           <thead>
             <tr>
@@ -228,17 +242,12 @@ export default function Members() {
                     <button
                       className="btn-sm"
                       disabled={busy === m.user_id}
-                      onClick={() => (m.is_active ? setPendingOff(m) : toggleActive(m))}
+                      onClick={() => (m.is_active ? setPendingRevoke(m) : toggleActive(m))}
                     >
-                      {m.is_active ? (
-                        <>
-                          <Icon.disabled size={ICON_SM} aria-hidden /> تعطيل
-                        </>
-                      ) : (
-                        <>
-                          <Icon.reactivate size={ICON_SM} aria-hidden /> تفعيل
-                        </>
-                      )}
+                      {/* «منح» و«سحب» لا أيقونة لهما في naf-icons.md، فلا
+                          تُختار لهما واحدة بالشبه. النصّ وحده — والشارة
+                          المجاورة تحمل حالةَ العضو بأيقونتها المسجّلة. */}
+                      {m.is_active ? 'سحب' : 'منح'}
                     </button>
                   )}
                 </td>
@@ -246,6 +255,7 @@ export default function Members() {
             ))}
           </tbody>
         </table>
+        </>
       )}
     </div>
   );

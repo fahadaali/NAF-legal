@@ -1,7 +1,10 @@
-// إعدادات الأدوار — عرض الأعضاء، وتغيير الصلاحية، وتعطيل العضو
+// المستخدمون والصلاحيات — شاشة مسؤول المنصة
 //
 // «كل ما بعد الباب تقرّره هذه المنصة من إعداداتها.» فالمركز لا يُسأل عن دور
-// ولا يُخبَر به؛ ولا يُبلَّغ إلا بالتعطيل، ليظهر السبب للمستخدم في شبكته.
+// ولا يُخبَر به؛ ولا يُبلَّغ إلا بسحب الوصول، ليظهر السبب للعضو في شبكته.
+//
+// والمفردات من naf-terms.md §١٠: «سحب» و«منح» زوجٌ واحد، و«تعطيل العضو»
+// ممنوعة هناك صراحةً — «معطّل» تصف حالة العضوية لا الفعل الذي أنتجها.
 
 import { Hono } from 'hono';
 import { reportAccessChange } from 'naf-auth';
@@ -47,7 +50,7 @@ app.get('/', async (c) => {
       is_active: !!m.is_active,
       last_seen_at: toMillis(m.last_seen_at),
       created_at: toMillis(m.created_at),
-      // ليعرف العميل أيّ صفٍّ هو صفّ القارئ نفسه فيمنع عنه أزرار التعطيل
+      // ليعرف العميل أيّ صفٍّ هو صفّ القارئ نفسه فيمنع عنه أزرار السحب
       is_self: m.user_id === me.memberId,
     })),
   });
@@ -70,7 +73,7 @@ app.patch('/:id/role', async (c) => {
   const res = await c.env.DB.prepare('UPDATE members SET role = ? WHERE user_id = ?')
     .bind(role, id)
     .run();
-  if (!res.meta.changes) return c.json({ error: 'العضو غير موجود' }, 404);
+  if (!res.meta.changes) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
 
   await audit(c, 'member.role_change', id, { role });
   return c.json({ ok: true });
@@ -86,23 +89,23 @@ app.patch('/:id/active', async (c) => {
 
   const me = c.get('user');
   if (id === me.memberId && !body.is_active) {
-    return c.json({ error: 'لا يمكنك تعطيل نفسك' }, 400);
+    return c.json({ error: 'لا يمكنك سحب وصولك بنفسك' }, 400);
   }
 
   const reason = (body.reason ?? '').trim();
-  // السبب يُعرض للمستخدم في شبكة المركز، فلا يُرسَل فارغاً عند التعطيل.
+  // السبب يُعرض للعضو في شبكة المركز، فلا يُرسَل فارغاً عند السحب.
   if (!body.is_active && !reason) {
-    return c.json({ error: 'اكتب سبب التعطيل — يُعرض للعضو في شبكته' }, 400);
+    return c.json({ error: 'اكتب سبب السحب — يُعرض للعضو في شبكته' }, 400);
   }
 
   const res = await c.env.DB.prepare('UPDATE members SET is_active = ? WHERE user_id = ?')
     .bind(body.is_active ? 1 : 0, id)
     .run();
-  if (!res.meta.changes) return c.json({ error: 'العضو غير موجود' }, 404);
+  if (!res.meta.changes) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
 
-  await audit(c, body.is_active ? 'member.activate' : 'member.deactivate', id, { reason });
+  await audit(c, body.is_active ? 'member.grant' : 'member.revoke', id, { reason });
 
-  // التعطيل يسري محلياً فور كتابته: الوسيط يقرأ `is_active` في كل طلب،
+  // السحب يسري محلياً فور كتابته: الوسيط يقرأ `is_active` في كل طلب،
   // فالعضو ممنوع من هذه المنصة سواء بلغ التبليغُ المركزَ أم لم يبلغ.
   // ولذلك يُكتب أولاً ثم يُبلَّغ — والعكس يترك ثغرة بين النداء والكتابة.
   if (!body.is_active) {
@@ -114,7 +117,7 @@ app.patch('/:id/active', async (c) => {
       });
     } catch {
       // لا يُرفَع الاستثناء إلى المستخدم: نصّه قد يحمل تفصيلاً تقنياً.
-      // والتعطيل قائم، والناقص إظهارُ سببه في شبكة المركز وحده.
+      // والسحب قائم، والناقص إظهارُ سببه في شبكة المركز وحده.
       return c.json({ ok: true, reported: false });
     }
   }
