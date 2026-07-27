@@ -140,7 +140,7 @@ export default function IntakeModal({
         <div className="modal-foot">
           <button className="btn-sm" onClick={onClose}>إلغاء</button>
           <button className="btn-primary" style={{ width: 'auto', padding: '11px 26px' }} onClick={submit} disabled={busy}>
-            {busy ? 'جارٍ البدء…' : 'بدء الاستشارة <Icon.next size={ICON_SM} aria-hidden />'}
+            {busy ? 'جارٍ البدء…' : <>بدء الاستشارة <Icon.next size={ICON_SM} aria-hidden /></>}
           </button>
         </div>
       </div>

@@ -372,9 +372,14 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                   {m.clarifying && <div className="clarify-note"><Icon.awaitingClarification size={ICON_SM} aria-hidden /> بانتظار توضيحك للمتابعة</div>}
                   {m.verification && !m.streaming && (
                     <div className={`verify-badge ${m.verification.verified ? 'ok' : 'warn'}`}>
-                      {m.verification.verified
-                        ? 'تحقّق الإسناد: كل المواد المذكورة مسنودة في قاعدة المعرفة'
-                        : `<Icon.warning size={ICON_SM} aria-hidden /> مواد بحاجة لتأكيد يدوي: ${m.verification.unsupported.join('، ')}`}
+                      {m.verification.verified ? (
+                        'تحقّق الإسناد: كل المواد المذكورة مسنودة في قاعدة المعرفة'
+                      ) : (
+                        <>
+                          <Icon.warning size={ICON_SM} aria-hidden /> مواد بحاجة لتأكيد يدوي:{' '}
+                          <bdi>{m.verification.unsupported.join('، ')}</bdi>
+                        </>
+                      )}
                     </div>
                   )}
                   {!m.streaming &&

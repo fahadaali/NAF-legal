@@ -408,7 +408,7 @@ function TrackingTab() {
       <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> تشغيل فحص التتبّع الآن'}
+          {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : <><Icon.refresh size={ICON_SM} aria-hidden /> تشغيل فحص التتبّع الآن</>}
         </button>
       </div>
 
@@ -571,7 +571,7 @@ function VersionUpload({ docId, version, onDone }: { docId: string; version: num
     <>
       <input ref={ref} type="file" hidden accept=".pdf,.docx,.txt,.md" onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm" onClick={() => ref.current?.click()} disabled={busy} title="رفع نسخة أحدث وأرشفة الحالية">
-        {busy ? '…' : '<Icon.upload size={ICON_SM} aria-hidden /> نسخة جديدة'}
+        {busy ? '…' : <><Icon.upload size={ICON_SM} aria-hidden /> نسخة جديدة</>}
       </button>
     </>
   );
@@ -626,7 +626,7 @@ function NewsTab() {
       <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> يُرصد الجديد والمحدَّث من: جريدة أم القرى (خلاصة RSS رسمية) · هيئة الخبراء بمجلس الوزراء · المركز الوطني للوثائق والمحفوظات.</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> رصد الأنظمة الجديدة والمحدَّثة'}
+          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : <><Icon.refresh size={ICON_SM} aria-hidden /> رصد الأنظمة الجديدة والمحدَّثة</>}
         </button>
       </div>
       {news.length === 0 ? (
@@ -849,7 +849,7 @@ function SettingsTab() {
       </p>
       <input ref={lhInput} type="file" hidden accept="image/png,image/jpeg" onChange={(e) => { uploadLetterhead(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm primary" onClick={() => lhInput.current?.click()} disabled={uploading}>
-        {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : '<Icon.upload size={ICON_SM} aria-hidden /> رفع صورة الرأسية'}
+        {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : <><Icon.upload size={ICON_SM} aria-hidden /> رفع صورة الرأسية</>}
       </button>
 
       <div className="section-title">بوّابة الاعتماد قبل التصدير</div>
