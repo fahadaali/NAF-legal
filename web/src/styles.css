@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    مستشار ناف — أنماط المنصة
-   الرموز كلها من ثيم ناف (fahadaali/naf-ui/naf-theme#v1.3.0).
+   الرموز كلها من ثيم ناف (fahadaali/naf-ui/naf-theme#v1.9.0).
    لا يُعرَّف هنا أي رمز تصميم: القاعدة في CLAUDE.md §1 تمنع
    وجود مصدر حقيقة ثانٍ في المستودع.
    الوضع الداكن: صنف `dark` على الجذر — آلية ثيم ناف نفسها.
@@ -24,7 +24,11 @@ a { color: var(--primary); }
 ::selection { background: var(--primary-soft); }
 
 /* ── تخطيط عام ── */
-.app-shell { display: flex; height: 100vh; overflow: hidden; }
+.app-shell { display: flex; height: 100vh; overflow: hidden; position: relative; }
+
+/* مفتاح الشريط الجانبي وحجابه: لا وجود لهما إلا حين يخرج الشريط عن الشاشة
+   (انظر استعلام الشاشات الصغيرة في آخر الملف). */
+.sidebar-toggle, .sidebar-backdrop { display: none; }
 
 /* ── الشعار ── */
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -120,10 +124,14 @@ a { color: var(--primary); }
 .conv-item:hover .conv-del { opacity: 1; }
 .conv-item .conv-del:hover { color: var(--destructive); }
 
+/* صفّان عند الحاجة: هويّة المستخدم ثم أدوات الحساب. مُبدِّل المظهر ثلاثة
+   أزرار لا زرّ واحد، فصفٌّ واحد يعصر أسماء الأزرار على سطرين. */
 .sidebar-footer {
   padding: 12px 16px; border-top: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between; font-size: 0.875rem; gap: 8px;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.875rem; gap: 8px; flex-wrap: wrap;
 }
+.sidebar-footer .link-btn { white-space: nowrap; }
 .user-chip { display: flex; align-items: center; gap: 8px; }
 .user-avatar {
   width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
@@ -133,7 +141,22 @@ a { color: var(--primary); }
 .link-btn { background: none; border: none; color: var(--muted-foreground); font-size: 0.875rem; transition: color 0.15s; }
 .link-btn:hover { color: var(--primary); }
 
-/* ── مبدّل السمة ── */
+/* ── مُبدِّل المظهر: ثلاث حالات (عقد naf-theme-toggle) ── */
+.appearance-toggle {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card);
+}
+.appearance-toggle button {
+  width: 28px; height: 28px; border: none; border-radius: var(--radius-sm);
+  background: none; color: var(--muted-foreground);
+  display: grid; place-items: center; transition: background 0.2s ease-out, color 0.2s ease-out;
+}
+.appearance-toggle button:hover { background: var(--muted); color: var(--foreground); }
+.appearance-toggle button.on { background: var(--primary); color: var(--primary-foreground); }
+.appearance-toggle.floating { position: fixed; top: 18px; inset-inline-start: 18px; z-index: 50; }
+
+/* زرّ أيقونة مفرد في الشريط الجانبي (الإشعارات) */
 .theme-toggle {
   width: 32px; height: 32px; border-radius: var(--radius-lg); border: 1px solid var(--border);
   background: var(--muted); color: var(--foreground); display: grid; place-items: center;
@@ -232,9 +255,17 @@ a { color: var(--primary); }
   color: var(--foreground); border-radius: var(--radius-lg); padding: 4px 12px; font-size: 0.875rem; margin-top: 8px; display: inline-block;
 }
 
+/* تنبيه: نظام يتطلّبه الإسناد وغير موجود في قاعدة المعرفة */
+.missing-reg-note {
+  margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-lg);
+  background: var(--warning-soft); color: var(--foreground);
+  font-size: 0.875rem; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.missing-reg-note .missing-reg-label { color: var(--warning-strong); font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+
 .verify-badge { margin-top: 12px; font-size: 0.875rem; padding: 8px 12px; border-radius: var(--radius-lg); font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
-.verify-badge.ok { background: var(--success-soft); color: var(--success); }
-.verify-badge.warn { background: var(--warning-soft); color: var(--warning); }
+.verify-badge.ok { background: var(--success-soft); color: var(--success-strong); }
+.verify-badge.warn { background: var(--warning-soft); color: var(--warning-strong); }
 
 .icon-btn.rec { background: var(--destructive); border-color: var(--destructive); color: var(--destructive-foreground); animation: pulse 1.2s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
@@ -344,9 +375,9 @@ a { color: var(--primary); }
 .data-table tr { transition: background 0.15s; }
 .data-table tbody tr:hover td { background: var(--muted); }
 .pill { padding: 4px 8px; border-radius: var(--radius-lg); font-size: 0.875rem; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
-.pill.active, .pill.ready { background: var(--success-soft); color: var(--success); }
-.pill.warn { background: var(--warning-soft); color: var(--warning); }
-.pill.error { background: var(--destructive-soft); color: var(--destructive); }
+.pill.active, .pill.ready { background: var(--success-soft); color: var(--success-strong); }
+.pill.warn { background: var(--warning-soft); color: var(--warning-strong); }
+.pill.error { background: var(--destructive-soft); color: var(--destructive-strong); }
 .pill.pending { background: var(--muted); color: var(--muted-foreground); }
 .user-add-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
 .user-add-row input, .user-add-row select {
@@ -367,6 +398,8 @@ a { color: var(--primary); }
   border-color: transparent; box-shadow: var(--shadow-xs);
 }
 .btn-sm.primary:hover { color: var(--primary-foreground); background: color-mix(in oklab, var(--primary) 90%, transparent); }
+/* جدول أعرض من الشاشة: يُمرَّر داخل حاويته، لا داخل الصفحة */
+.table-scroll { overflow-x: auto; }
 .section-title { font-size: 1rem; font-weight: 700; margin: 24px 0 8px; color: var(--foreground); }
 .empty-state { text-align: center; color: var(--muted-foreground); padding: 44px; font-size: 0.875rem; }
 .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 8px; }
@@ -540,6 +573,19 @@ a { color: var(--primary); }
   .sidebar.open { transform: translateX(0); box-shadow: var(--shadow-xl); }
   .cards { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr; }
+
+  /* يجلس في صدر المنطقة الرئيسية لا فوقها، فلا يغطّي عنوان الشاشة */
+  .sidebar-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    align-self: flex-start; flex-shrink: 0;
+    width: 40px; height: 40px; margin: 8px 12px 0;
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    background: var(--card); color: var(--foreground);
+  }
+  .sidebar-backdrop {
+    display: block; position: absolute; inset: 0; z-index: 15;
+    background: color-mix(in oklab, var(--foreground) 45%, transparent);
+  }
 }
 
 /* ── الأيقونات ── */

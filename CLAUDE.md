@@ -124,7 +124,7 @@ Never upgrade in one repository alone. Six repositories on two different icon vo
 
 - One family. Never import another font anywhere.
 - Weights 400, 500, 600, 700 only.
-- Sizes from the scale. Never `text-[15px]`.
+- Sizes from the scale. Never `text-[15px]`. The scale is registered as `--text-xs` through `--text-5xl` in `naf-theme.css`, so a platform writing plain CSS consumes the same steps as a platform writing Tailwind. Setting a size by hand is how seventeen sizes appear in one stylesheet.
 - **Do not reduce line heights.** The scale is deliberately taller than a Latin-only scale because Arabic needs vertical room for ascenders, descenders and diacritics.
 - Long-form body copy gets a capped measure.
 
@@ -147,7 +147,17 @@ bg-primary  text-primary-foreground  hover:bg-primary/90
 
 **Our own mark.** The navy, mint and taupe of the NAF mark are registered as `--mark-navy`, `--mark-mint` and `--mark-taupe`, taken from the logo files themselves rather than sampled by eye. They exist to render the mark and nothing else. An interface element takes a semantic token — a heading is `text-foreground`, never `text-mark-navy`, however well the navy happens to suit it. The rule is the same one that governs `--brand-*`: an identity colour is not a palette.
 
+**Status text on soft backgrounds.** A status colour token on its own `--*-soft` background reaches only 3.7–3.8:1 — below AA for badge-sized text. Use `--success-strong`, `--warning-strong`, `--destructive-strong`, `--info-strong` and `--primary-strong` for the text and icon in that pairing; they are the same hue at a lightness measured to clear 4.5:1 in both modes. Never darken a status colour by hand to fix contrast.
+
+**The deep surface.** `--surface-deep` is the semantic dark surface — page backgrounds outside the card, slide covers, section dividers — with `--surface-deep-foreground` for text on it and `--surface-deep-muted` for secondary text. It is not `--mark-navy`: that renders the mark and nothing else. A dark surface takes the semantic token even when the mark's navy would look identical.
+
+**Elevated cards.** A card floating on `--surface-deep` needs more depth than the ordinary shadow scale carries. Use `--shadow-elevated`; do not write an `rgba` shadow to get there.
+
 **Soft state backgrounds.** `--primary-soft`, `--destructive-soft`, `--success-soft`, `--warning-soft`, `--info-soft` and `--secondary-soft` are derived from their base token by `color-mix` into the card surface, so they follow both modes from a single definition. Use them for status badges and quiet alerts. Never define your own soft value — a hand-picked tint is the exact drift that survives a palette change and then clashes with it.
+
+**Appearance follows the reader, and the reader may override it.** Both modes must work, and a platform that offers a switch uses the registered one: three states — system, light, dark — with system as the default, the choice persisted, and `.dark` toggled on the root element. Two states is a trap: a reader whose system is light and who picked light has no way back to "follow the system" when it changes. The terms are in `naf-terms.md` and the icons in `naf-icons.md`; the component is `naf-theme-toggle`.
+
+**Print stays light.** A generated document keeps the light values whatever the reader's mode is — see the print and PDF exception above.
 
 **No undocumented status.** Every status shown to a user must exist in `naf-terms.md` with a registered colour token and a registered icon. A status that appears in one screen without passing through the registry — however reasonable it looks — is the first step back to five different systems.
 

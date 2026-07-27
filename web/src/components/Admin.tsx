@@ -1,17 +1,19 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { api, ConsultConfig, FieldDef, FieldType } from '../lib/api';
+import { api, ConsultConfig, FieldDef, FieldType, RegulationRequest } from '../lib/api';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import ClauseLibrary from './ClauseLibrary';
+import { RequestStatusPill } from './Support';
 import { formatDate, formatTime } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
 
-type Tab = 'kb' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
+type Tab = 'kb' | 'requests' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
 
 const TABS: [Tab, string][] = [
   ['kb', 'قاعدة المعرفة'],
+  ['requests', 'طلبات الأنظمة'],
   ['tracking', 'تتبّع الأنظمة'],
   ['news', 'خلاصة الأخبار'],
   ['forms', 'نماذج الاستشارات'],
@@ -24,6 +26,15 @@ const TABS: [Tab, string][] = [
 
 export default function Admin() {
   const [tab, setTab] = useState<Tab>('kb');
+  const [pendingRequests, setPendingRequests] = useState(0);
+
+  // عدّاد الطلبات المعلّقة على التبويب — ليعرف مسؤول النظام دون فتحه
+  const loadPending = () =>
+    api.adminRegulationRequests('pending').then((r) => setPendingRequests(r.pending)).catch(() => {});
+  useEffect(() => {
+    loadPending();
+  }, []);
+
   return (
     <div className="admin-wrap">
       <div className="admin-inner">
@@ -32,10 +43,16 @@ export default function Admin() {
           {TABS.map(([t, label]) => (
             <button key={t} className={`admin-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
               {label}
+              {t === 'requests' && pendingRequests > 0 && (
+                <span className="pill warn" title="طلبات بانتظار المراجعة">
+                  <bdi>{pendingRequests}</bdi>
+                </span>
+              )}
             </button>
           ))}
         </div>
         {tab === 'kb' && <KbTab />}
+        {tab === 'requests' && <RequestsTab onChange={loadPending} />}
         {tab === 'tracking' && <TrackingTab />}
         {tab === 'news' && <NewsTab />}
         {tab === 'forms' && <FormsTab />}
@@ -237,6 +254,133 @@ function KbTab() {
   );
 }
 
+// طلبات المستخدمين لإضافة أنظمة غير موجودة في قاعدة المعرفة
+const REQUEST_FILTERS: [string, string][] = [
+  ['pending', 'بانتظار المراجعة'],
+  ['approved', 'معتمد'],
+  ['rejected', 'مرفوض'],
+  ['all', 'الكل'],
+];
+
+function RequestsTab({ onChange }: { onChange: () => void }) {
+  const [requests, setRequests] = useState<RegulationRequest[]>([]);
+  const [filter, setFilter] = useState('pending');
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = () => api.adminRegulationRequests(filter).then((r) => setRequests(r.requests)).catch(() => {});
+  useEffect(() => {
+    load();
+  }, [filter]);
+
+  const decide = async (r: RegulationRequest, status: 'approved' | 'rejected') => {
+    const note = prompt(
+      status === 'approved'
+        ? 'ملاحظة لمقدّم الطلب (اختياري):'
+        : 'سبب الرفض لمقدّم الطلب (اختياري):'
+    );
+    if (note === null) return; // ألغى المسؤول
+    setBusy(r.id);
+    try {
+      await api.decideRegulationRequest(r.id, status, note || undefined);
+      load();
+      onChange();
+    } catch (e: any) {
+      alert(e.message ?? 'تعذّر الحفظ');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginTop: 0 }}>
+        أنظمة ولوائح طلب المستخدمون إضافتها إلى قاعدة المعرفة — من داخل المحادثة عند تعذّر الإسناد، أو من صفحة الدعم.
+        بعد الاعتماد ارفع النظام من تبويب «قاعدة المعرفة».
+      </p>
+
+      <div className="intake-toggle" style={{ marginBottom: 16 }}>
+        {REQUEST_FILTERS.map(([key, label]) => (
+          <button key={key} className={`seg ${filter === key ? 'on' : ''}`} onClick={() => setFilter(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {requests.length === 0 ? (
+        <div className="empty-state">لا طلبات في هذه الحالة. جرّب حالة أخرى.</div>
+      ) : (
+        <div className="table-scroll">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>النظام</th>
+              <th>اللائحة التنفيذية</th>
+              <th>مقدّم الطلب</th>
+              <th>المصدر</th>
+              <th>الملاحظة</th>
+              <th>التاريخ</th>
+              <th>الحالة</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {requests.map((r) => (
+              <tr key={r.id}>
+                <td style={{ fontWeight: 600 }}>
+                  {r.url ? (
+                    <a href={r.url} target="_blank" rel="noopener">
+                      {r.name}
+                    </a>
+                  ) : (
+                    r.name
+                  )}
+                </td>
+                <td>
+                  {r.has_bylaw ? (
+                    r.bylaw_url ? (
+                      <a href={r.bylaw_url} target="_blank" rel="noopener">
+                        نعم
+                      </a>
+                    ) : (
+                      'نعم'
+                    )
+                  ) : (
+                    'لا'
+                  )}
+                </td>
+                <td dir="ltr" style={{ textAlign: 'end' }}>
+                  {r.requester_email ?? '—'}
+                </td>
+                <td>{r.source === 'chat' ? 'من المحادثة' : 'من صفحة الدعم'}</td>
+                <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{r.note ?? '—'}</td>
+                <td>
+                  <bdi>{formatDate(r.created_at)}</bdi>
+                </td>
+                <td>
+                  <RequestStatusPill status={r.status} />
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {r.status === 'pending' && (
+                    <>
+                      <button className="btn-sm primary" disabled={busy === r.id} onClick={() => decide(r, 'approved')}>
+                        اعتماد
+                      </button>{' '}
+                      <button className="btn-sm" disabled={busy === r.id} onClick={() => decide(r, 'rejected')}>
+                        رفض
+                      </button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrackingTab() {
   const [data, setData] = useState<{ needs_update: any[] }>({ needs_update: [] });
   const [scanning, setScanning] = useState(false);
@@ -264,7 +408,7 @@ function TrackingTab() {
       <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> تشغيل فحص التتبّع الآن'}
+          {scanning ? <><span className="spinner" /> جارٍ الفحص…</> : <><Icon.refresh size={ICON_SM} aria-hidden /> تشغيل فحص التتبّع الآن</>}
         </button>
       </div>
 
@@ -427,7 +571,7 @@ function VersionUpload({ docId, version, onDone }: { docId: string; version: num
     <>
       <input ref={ref} type="file" hidden accept=".pdf,.docx,.txt,.md" onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm" onClick={() => ref.current?.click()} disabled={busy} title="رفع نسخة أحدث وأرشفة الحالية">
-        {busy ? '…' : '<Icon.upload size={ICON_SM} aria-hidden /> نسخة جديدة'}
+        {busy ? '…' : <><Icon.upload size={ICON_SM} aria-hidden /> نسخة جديدة</>}
       </button>
     </>
   );
@@ -482,7 +626,7 @@ function NewsTab() {
       <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> يُرصد الجديد والمحدَّث من: جريدة أم القرى (خلاصة RSS رسمية) · هيئة الخبراء بمجلس الوزراء · المركز الوطني للوثائق والمحفوظات.</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
-          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : '<Icon.refresh size={ICON_SM} aria-hidden /> رصد الأنظمة الجديدة والمحدَّثة'}
+          {scanning ? <><span className="spinner" /> جارٍ الرصد…</> : <><Icon.refresh size={ICON_SM} aria-hidden /> رصد الأنظمة الجديدة والمحدَّثة</>}
         </button>
       </div>
       {news.length === 0 ? (
@@ -705,7 +849,7 @@ function SettingsTab() {
       </p>
       <input ref={lhInput} type="file" hidden accept="image/png,image/jpeg" onChange={(e) => { uploadLetterhead(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm primary" onClick={() => lhInput.current?.click()} disabled={uploading}>
-        {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : '<Icon.upload size={ICON_SM} aria-hidden /> رفع صورة الرأسية'}
+        {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : <><Icon.upload size={ICON_SM} aria-hidden /> رفع صورة الرأسية</>}
       </button>
 
       <div className="section-title">بوّابة الاعتماد قبل التصدير</div>

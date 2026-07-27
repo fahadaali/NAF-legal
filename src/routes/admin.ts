@@ -5,6 +5,7 @@ import { runTrackingScan, runNewsDigest } from '../cron';
 import { ingestDocument } from '../ingest';
 import { getAllEffectiveConfigs, getEffectiveConfig, defaultConfig } from '../lib/consultationConfig';
 import { uuid, hashPassword } from '../lib/crypto';
+import { notify } from '../lib/notify';
 import type { Env, Variables } from '../types';
 
 // كلمة المرور الافتراضية للحسابات الجديدة (تُغيَّر إجباريًا عند أول دخول)
@@ -71,6 +72,58 @@ app.delete('/users/:id', async (c) => {
   const res = await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
   if (!res.meta.changes) return c.json({ error: 'المستخدم غير موجود' }, 404);
   await audit(c, 'user.delete', id, {});
+  return c.json({ ok: true });
+});
+
+// ── طلبات إضافة الأنظمة المرفوعة من المستخدمين ──
+app.get('/regulation-requests', async (c) => {
+  const status = c.req.query('status') ?? 'all';
+  const base = `SELECT r.id, r.name, r.url, r.has_bylaw, r.bylaw_url, r.note, r.source, r.status,
+                       r.admin_note, r.created_at, r.handled_at, r.conversation_id,
+                       u.email AS requester_email, u.name AS requester_name
+                FROM regulation_requests r LEFT JOIN users u ON u.id = r.user_id`;
+  const rows =
+    status === 'all'
+      ? await c.env.DB.prepare(`${base} ORDER BY r.created_at DESC LIMIT 200`).all()
+      : await c.env.DB.prepare(`${base} WHERE r.status = ? ORDER BY r.created_at DESC LIMIT 200`).bind(status).all();
+  const pending = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM regulation_requests WHERE status = 'pending'"
+  ).first<{ n: number }>();
+  return c.json({ requests: rows.results, pending: pending?.n ?? 0 });
+});
+
+// البتّ في الطلب: اعتماد أو رفض، مع إشعار مقدّم الطلب
+app.patch('/regulation-requests/:id', async (c) => {
+  const id = c.req.param('id');
+  const me = c.get('user');
+  const { status, admin_note } = await c.req.json().catch(() => ({} as any));
+  if (!['pending', 'approved', 'rejected'].includes(status)) return c.json({ error: 'حالة غير صالحة' }, 400);
+
+  const row = await c.env.DB.prepare(
+    'SELECT r.user_id, r.name, u.email FROM regulation_requests r LEFT JOIN users u ON u.id = r.user_id WHERE r.id = ?'
+  )
+    .bind(id)
+    .first<{ user_id: string; name: string; email: string | null }>();
+  if (!row) return c.json({ error: 'غير موجود' }, 404);
+
+  const note = typeof admin_note === 'string' && admin_note.trim() ? admin_note.trim().slice(0, 1000) : null;
+  await c.env.DB.prepare(
+    'UPDATE regulation_requests SET status = ?, admin_note = ?, handled_by = ?, handled_at = ? WHERE id = ?'
+  )
+    .bind(status, note, me.id, status === 'pending' ? null : Date.now(), id)
+    .run();
+
+  if (status !== 'pending') {
+    await notify(c.env, {
+      userId: row.user_id,
+      kind: 'system',
+      title: status === 'approved' ? 'تم اعتماد طلب إضافة النظام' : 'تم رفض طلب إضافة النظام',
+      body: note ? `${row.name} — ${note}` : row.name,
+      email: row.email ?? undefined,
+    });
+  }
+
+  await audit(c, 'regulation_request.decide', id, { status });
   return c.json({ ok: true });
 });
 

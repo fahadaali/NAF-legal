@@ -4,12 +4,14 @@ import { optionFor } from '../lib/consultations';
 import NotificationBell from './NotificationBell';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD } from '../lib/icons';
 import NafMark from './NafMark';
+import ThemeToggle from './ThemeToggle';
+import type { ThemeChoice } from '../lib/theme';
 
 interface Props {
   user: User;
   open: boolean;
   activeConv: string | null;
-  view: 'chat' | 'admin' | 'tools' | 'deadlines' | 'case';
+  view: 'chat' | 'admin' | 'tools' | 'deadlines' | 'case' | 'support';
   refreshKey: number;
   onSelectConv: (id: string) => void;
   onNewChat: () => void;
@@ -17,9 +19,10 @@ interface Props {
   onOpenTools: () => void;
   onOpenDeadlines: () => void;
   onOpenCase: () => void;
+  onOpenSupport: () => void;
   onLogout: () => void;
-  theme: 'light' | 'dark';
-  onToggleTheme: () => void;
+  theme: ThemeChoice;
+  onThemeChange: (c: ThemeChoice) => void;
 }
 
 export default function Sidebar(props: Props) {
@@ -116,6 +119,7 @@ export default function Sidebar(props: Props) {
       <button className="tools-link" onClick={props.onOpenTools}><Icon.tools size={ICON_SM} aria-hidden /> الأدوات القانونية</button>
       <button className="tools-link" onClick={props.onOpenDeadlines}><Icon.appointment size={ICON_SM} aria-hidden /> المواعيد النظامية</button>
       <button className="tools-link" onClick={props.onOpenCase}><Icon.matter size={ICON_SM} aria-hidden /> ملف القضية</button>
+      <button className="tools-link" onClick={props.onOpenSupport}><Icon.support size={ICON_SM} aria-hidden /> الدعم</button>
 
       <div className="folder-bar">
         <button className={`folder-chip ${!activeFolder ? 'active' : ''}`} onClick={() => setActiveFolder(null)}>
@@ -178,11 +182,7 @@ export default function Sidebar(props: Props) {
             </button>
           </div>
           <NotificationBell />
-          <button className="theme-toggle" onClick={props.onToggleTheme} title="تبديل السمة">
-            {props.theme === 'dark'
-          ? <Icon.light size={ICON_MD} aria-hidden />
-          : <Icon.dark size={ICON_MD} aria-hidden />}
-          </button>
+          <ThemeToggle choice={props.theme} onChange={props.onThemeChange} />
         </div>
       </div>
     </aside>

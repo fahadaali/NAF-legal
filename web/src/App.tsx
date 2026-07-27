@@ -9,17 +9,19 @@ import ReviewPage from './components/ReviewPage';
 import ChangePassword from './components/ChangePassword';
 import Deadlines from './components/Deadlines';
 import CaseFile from './components/CaseFile';
+import Support from './components/Support';
 import { useTheme } from './lib/theme';
+import { Icon, ICON_MD } from './lib/icons';
 
 export default function App() {
   // مسار المراجعة العامة (بلا مصادقة)
   const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
   if (reviewMatch) return <ReviewPage token={reviewMatch[1]} />;
 
-  const [theme, toggleTheme] = useTheme();
+  const [theme, setTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines' | 'case'>('chat');
+  const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines' | 'case' | 'support'>('chat');
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [pendingInitial, setPendingInitial] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -50,22 +52,36 @@ export default function App() {
     );
   }
 
-  if (!user) return <Auth onAuth={setUser} theme={theme} onToggleTheme={toggleTheme} />;
+  if (!user) return <Auth onAuth={setUser} theme={theme} onThemeChange={setTheme} />;
 
   // بوابة أول دخول: إجبار تعيين كلمة مرور جديدة
   if (user.must_change_password) {
     return (
       <ChangePassword
         theme={theme}
-        onToggleTheme={toggleTheme}
+        onThemeChange={setTheme}
         onDone={() => setUser({ ...user, must_change_password: false })}
       />
     );
   }
 
+  // فتح شاشة مع إغلاق الشريط الجانبي — على الشاشات الصغيرة يغطّي الشريط المحتوى
+  const openView = (v: typeof view) => {
+    setView(v);
+    setSidebarOpen(false);
+  };
+
   return (
     <div className="app-shell">
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+
       <div className="main">
+        {/* مفتاح الشريط الجانبي — يظهر على الشاشات الصغيرة وحدها، حيث يكون
+            الشريط خارج الشاشة. يبقى في كل الشاشات لا في المحادثة فقط. */}
+        <button className="sidebar-toggle" onClick={() => setSidebarOpen((o) => !o)} title="القائمة">
+          <Icon.menu size={ICON_MD} aria-hidden />
+        </button>
+
         {view === 'chat' && (
           <ChatView
             key={activeConv ?? 'new'}
@@ -81,15 +97,15 @@ export default function App() {
               setActiveConv(id);
               refreshConversations();
             }}
-            onToggleSidebar={() => setSidebarOpen((o) => !o)}
           />
         )}
         {view === 'admin' && <Admin />}
         {view === 'tools' && <Tools />}
         {view === 'deadlines' && <Deadlines />}
         {view === 'case' && (
-          <CaseFile onOpenConversation={(id) => { setActiveConv(id); setView('chat'); }} />
+          <CaseFile onOpenConversation={(id) => { setActiveConv(id); openView('chat'); }} />
         )}
+        {view === 'support' && <Support />}
         <div className="disclaimer-bar">
           كل مخرجات المنصّة مسوّدات مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.
         </div>
@@ -103,21 +119,20 @@ export default function App() {
         refreshKey={refreshKey}
         onSelectConv={(id) => {
           setActiveConv(id);
-          setView('chat');
-          setSidebarOpen(false);
+          openView('chat');
         }}
         onNewChat={() => {
           setActiveConv(null);
-          setView('chat');
-          setSidebarOpen(false);
+          openView('chat');
         }}
-        onOpenAdmin={() => setView('admin')}
-        onOpenTools={() => setView('tools')}
-        onOpenDeadlines={() => setView('deadlines')}
-        onOpenCase={() => setView('case')}
+        onOpenAdmin={() => openView('admin')}
+        onOpenTools={() => openView('tools')}
+        onOpenDeadlines={() => openView('deadlines')}
+        onOpenCase={() => openView('case')}
+        onOpenSupport={() => openView('support')}
         onLogout={handleLogout}
         theme={theme}
-        onToggleTheme={toggleTheme}
+        onThemeChange={setTheme}
       />
     </div>
   );

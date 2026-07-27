@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { api, User } from '../lib/api';
 import NafMark from './NafMark';
-import { Icon, ICON_MD } from '../lib/icons';
+import ThemeToggle from './ThemeToggle';
+import type { ThemeChoice } from '../lib/theme';
 
-export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: User) => void; theme: 'light' | 'dark'; onToggleTheme: () => void }) {
+export default function Auth({ onAuth, theme, onThemeChange }: { onAuth: (u: User) => void; theme: ThemeChoice; onThemeChange: (c: ThemeChoice) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -27,11 +28,7 @@ export default function Auth({ onAuth, theme, onToggleTheme }: { onAuth: (u: Use
 
   return (
     <div className="auth-wrap">
-      <button className="theme-toggle floating" onClick={onToggleTheme} title="تبديل السمة">
-        {theme === 'dark'
-          ? <Icon.light size={ICON_MD} aria-hidden />
-          : <Icon.dark size={ICON_MD} aria-hidden />}
-      </button>
+      <ThemeToggle choice={theme} onChange={onThemeChange} className="floating" />
       <div className="auth-card">
         <div className="auth-brand">
           <NafMark />
