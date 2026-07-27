@@ -108,6 +108,43 @@
   --warning-soft: color-mix(in oklab, var(--warning) 14%, var(--card));
   --info-soft: color-mix(in oklab, var(--info) 14%, var(--card));
 
+  /* [جديد] نصّ الحالات فوق خلفياتها الناعمة — قياساً لا تخميناً.
+     النصّ بالرمز الأساس على خلفيته الناعمة يعطي 3.7–3.8 فقط، ونصّ الشارة
+     صغير فحدّه 4.5. هذه الرموز تخفض الإضاءة حتى تتجاوزه، وتبقى مشتقّة
+     من الصبغة نفسها فلا تُدخل لوناً جديداً.
+     تُستعمل لنصّ الشارة والتنبيه الهادئ فوق ‎--*-soft‎ حصراً. */
+  --success-strong: oklch(0.5040 0.1200 155.0000);
+  --warning-strong: oklch(0.5220 0.1400 75.0000);
+  --destructive-strong: oklch(0.5430 0.2078 25.3313);
+  --info-strong: oklch(0.5140 0.1200 240.0000);
+  --primary-strong: oklch(0.5200 0.0904 80.9413);
+
+  /* [جديد] السطح العميق — سطح دلاليّ داكن يحمل نصاً فاتحاً: خلفيات الصفحات
+     خارج البطاقة، وأغلفة الشرائح وفواصلها وختامها.
+     ليس ‎--mark-navy‎: ذاك لرسم العلامة وحدها ولا يُستعمل سطحاً، وهذا رمز
+     دلاليّ للسطح لا لون هوية. والتمييز بينهما هو ما يمنع «الهوية لوحة ألوان». */
+  --surface-deep: oklch(0.3451 0.0833 260.8804);
+  --surface-deep-foreground: oklch(1.0000 0 0);
+  --surface-deep-muted: oklch(0.9119 0.0222 243.8174);
+
+  /* [جديد] ظلّ البطاقة المرتفعة — البطاقة العائمة على سطح عميق تحتاج عمقاً
+     أكبر من سلّم الظلال العادي، وكانت المنصات تكتبه rgba خاماً. */
+  --shadow-elevated: 0px 18px 50px 0px hsl(0 0% 0% / 0.28);
+
+  /* [جديد] سلّم المقاسات رموزاً — كان السلّم متاحاً لمنصات Tailwind فقط،
+     والمنصات التي تكتب CSS خاماً كانت تضبط كل مقاس يدوياً. القيم هي درجات
+     السلّم نفسها المعروضة في صفحة المعاينة، لا سلّم جديد.
+     ارتفاعات السطر تبقى من قواعد الجسم — لا تُخفَّض للعربية. */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+
   /* [جديد] ألوان العلامات الخارجية — استثناء منصوص عليه.
      هذه ليست قيم تصميم لناف بل هويات مملوكة لأطراف أخرى، وتغييرها
      يجعل أيقونات المنصات غير قابلة للتعرّف. تُسجَّل هنا لتبقى تحت
@@ -176,6 +213,13 @@
   --warning-foreground: oklch(0.2100 0.0250 262.0000);
   --info: oklch(0.7300 0.1100 240.0000);
   --info-foreground: oklch(0.2100 0.0250 262.0000);
+
+  /* [جديد] نظائر الوضع الداكن: النصّ يفتح لا يغمق فوق الخلفية الناعمة الداكنة */
+  --success-strong: oklch(0.7300 0.1300 155.0000);
+  --warning-strong: oklch(0.7800 0.1300 75.0000);
+  --destructive-strong: oklch(0.8050 0.1900 25.3313);
+  --info-strong: oklch(0.7400 0.1100 240.0000);
+  --primary-strong: oklch(0.7450 0.0904 80.9413);
 
   --border: oklch(0.3843 0.0301 269.7337);
   --input: oklch(0.3843 0.0301 269.7337);
@@ -253,6 +297,16 @@
   --color-success-soft: var(--success-soft);
   --color-warning-soft: var(--warning-soft);
   --color-info-soft: var(--info-soft);
+  --color-success-strong: var(--success-strong);
+  --color-warning-strong: var(--warning-strong);
+  --color-destructive-strong: var(--destructive-strong);
+  --color-info-strong: var(--info-strong);
+  --color-primary-strong: var(--primary-strong);
+  --color-surface-deep: var(--surface-deep);
+  --color-surface-deep-foreground: var(--surface-deep-foreground);
+  --color-surface-deep-muted: var(--surface-deep-muted);
+  --shadow-elevated: var(--shadow-elevated);
+  --radius-2xl: var(--radius-2xl);
   --color-overlay: var(--overlay);
   --color-mark-navy: var(--mark-navy);
   --color-mark-mint: var(--mark-mint);
@@ -293,6 +347,7 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 10px);
 
   --shadow-2xs: var(--shadow-2xs);
   --shadow-xs: var(--shadow-xs);
