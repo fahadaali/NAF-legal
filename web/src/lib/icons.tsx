@@ -1,6 +1,6 @@
 /* ============================================================
    ربط مفاهيم المنصة بأيقونات Lucide.
-   المرجع الوحيد: naf-icons.md من fahadaali/naf-ui#v1.3.0.
+   المرجع الوحيد: naf-icons.md من fahadaali/naf-ui#v1.9.0.
    لا تُضِف مفتاحاً هنا قبل تسجيل معناه في السجلّ — القاعدة في
    CLAUDE.md §3: المعنى الواحد أيقونة واحدة في المنصات الخمس.
    ============================================================ */
@@ -35,6 +35,7 @@ import {
   Link2Off,
   Menu,
   MessageSquare,
+  Monitor,
   MessageSquareWarning,
   Mic,
   Moon,
@@ -117,8 +118,9 @@ export const Icon = {
   notifications: Bell,     // الإشعارات
   menu: Menu,              // القائمة
   next: ArrowLeft,         // التالي
-  light: Sun,              // الوضع الفاتح
-  dark: Moon,              // الوضع الداكن
+  light: Sun,              // المظهر: الوضع الفاتح
+  dark: Moon,              // المظهر: الوضع الداكن
+  system: Monitor,         // المظهر: يتبع النظام
   // الوسائط وأنواع الملفات
   fileImage: FileImage,    // ملف صورة
   fileText: FileType,      // ملف نصّي — وليست FileText (مذكرة)

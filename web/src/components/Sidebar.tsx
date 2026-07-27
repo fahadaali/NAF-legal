@@ -4,6 +4,8 @@ import { optionFor } from '../lib/consultations';
 import NotificationBell from './NotificationBell';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD } from '../lib/icons';
 import NafMark from './NafMark';
+import ThemeToggle from './ThemeToggle';
+import type { ThemeChoice } from '../lib/theme';
 
 interface Props {
   user: User;
@@ -19,8 +21,8 @@ interface Props {
   onOpenCase: () => void;
   onOpenSupport: () => void;
   onLogout: () => void;
-  theme: 'light' | 'dark';
-  onToggleTheme: () => void;
+  theme: ThemeChoice;
+  onThemeChange: (c: ThemeChoice) => void;
 }
 
 export default function Sidebar(props: Props) {
@@ -180,11 +182,7 @@ export default function Sidebar(props: Props) {
             </button>
           </div>
           <NotificationBell />
-          <button className="theme-toggle" onClick={props.onToggleTheme} title="تبديل السمة">
-            {props.theme === 'dark'
-          ? <Icon.light size={ICON_MD} aria-hidden />
-          : <Icon.dark size={ICON_MD} aria-hidden />}
-          </button>
+          <ThemeToggle choice={props.theme} onChange={props.onThemeChange} />
         </div>
       </div>
     </aside>

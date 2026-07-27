@@ -18,7 +18,7 @@ export default function App() {
   const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
   if (reviewMatch) return <ReviewPage token={reviewMatch[1]} />;
 
-  const [theme, toggleTheme] = useTheme();
+  const [theme, setTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'chat' | 'admin' | 'tools' | 'deadlines' | 'case' | 'support'>('chat');
@@ -52,14 +52,14 @@ export default function App() {
     );
   }
 
-  if (!user) return <Auth onAuth={setUser} theme={theme} onToggleTheme={toggleTheme} />;
+  if (!user) return <Auth onAuth={setUser} theme={theme} onThemeChange={setTheme} />;
 
   // بوابة أول دخول: إجبار تعيين كلمة مرور جديدة
   if (user.must_change_password) {
     return (
       <ChangePassword
         theme={theme}
-        onToggleTheme={toggleTheme}
+        onThemeChange={setTheme}
         onDone={() => setUser({ ...user, must_change_password: false })}
       />
     );
@@ -132,7 +132,7 @@ export default function App() {
         onOpenSupport={() => openView('support')}
         onLogout={handleLogout}
         theme={theme}
-        onToggleTheme={toggleTheme}
+        onThemeChange={setTheme}
       />
     </div>
   );

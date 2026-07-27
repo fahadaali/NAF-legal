@@ -1,17 +1,18 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import NafMark from './NafMark';
-import { Icon, ICON_MD } from '../lib/icons';
+import ThemeToggle from './ThemeToggle';
+import type { ThemeChoice } from '../lib/theme';
 
 // شاشة تعيين كلمة مرور جديدة عند أول دخول (كلمة المرور الافتراضية 1234)
 export default function ChangePassword({
   onDone,
   theme,
-  onToggleTheme,
+  onThemeChange,
 }: {
   onDone: () => void;
-  theme: 'light' | 'dark';
-  onToggleTheme: () => void;
+  theme: ThemeChoice;
+  onThemeChange: (c: ThemeChoice) => void;
 }) {
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -36,11 +37,7 @@ export default function ChangePassword({
 
   return (
     <div className="auth-wrap">
-      <button className="theme-toggle floating" onClick={onToggleTheme} title="تبديل السمة">
-        {theme === 'dark'
-          ? <Icon.light size={ICON_MD} aria-hidden />
-          : <Icon.dark size={ICON_MD} aria-hidden />}
-      </button>
+      <ThemeToggle choice={theme} onChange={onThemeChange} className="floating" />
       <div className="auth-card">
         <div className="auth-brand">
           <NafMark />
