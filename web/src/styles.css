@@ -24,7 +24,11 @@ a { color: var(--primary); }
 ::selection { background: var(--primary-soft); }
 
 /* ── تخطيط عام ── */
-.app-shell { display: flex; height: 100vh; overflow: hidden; }
+.app-shell { display: flex; height: 100vh; overflow: hidden; position: relative; }
+
+/* مفتاح الشريط الجانبي وحجابه: لا وجود لهما إلا حين يخرج الشريط عن الشاشة
+   (انظر استعلام الشاشات الصغيرة في آخر الملف). */
+.sidebar-toggle, .sidebar-backdrop { display: none; }
 
 /* ── الشعار ── */
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -550,6 +554,19 @@ a { color: var(--primary); }
   .sidebar.open { transform: translateX(0); box-shadow: var(--shadow-xl); }
   .cards { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr; }
+
+  /* يجلس في صدر المنطقة الرئيسية لا فوقها، فلا يغطّي عنوان الشاشة */
+  .sidebar-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    align-self: flex-start; flex-shrink: 0;
+    width: 40px; height: 40px; margin: 8px 12px 0;
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    background: var(--card); color: var(--foreground);
+  }
+  .sidebar-backdrop {
+    display: block; position: absolute; inset: 0; z-index: 15;
+    background: color-mix(in oklab, var(--foreground) 45%, transparent);
+  }
 }
 
 /* ── الأيقونات ── */

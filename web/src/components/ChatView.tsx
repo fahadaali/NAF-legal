@@ -14,7 +14,6 @@ interface Props {
   onInitialConsumed?: () => void;
   onStartConversation?: (conversationId: string, message: string) => void;
   onConversationChange: (id: string) => void;
-  onToggleSidebar: () => void;
 }
 
 interface UiMessage extends Message {
@@ -26,7 +25,7 @@ interface UiMessage extends Message {
   missingRegulations?: string[];
 }
 
-export default function ChatView({ conversationId, initialMessage, onInitialConsumed, onStartConversation, onConversationChange, onToggleSidebar }: Props) {
+export default function ChatView({ conversationId, initialMessage, onInitialConsumed, onStartConversation, onConversationChange }: Props) {
   const [convType, setConvType] = useState<string | null>(null);
   const [configs, setConfigs] = useState<ConsultConfig[]>([]);
   const [intake, setIntake] = useState<ConsultConfig | null>(null);
@@ -338,9 +337,6 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   return (
     <>
       <div className="chat-header">
-        <button className="icon-btn" style={{ display: 'none' }} onClick={onToggleSidebar}>
-          <Icon.menu size={ICON_MD} aria-hidden />
-        </button>
         <span className="ch-title">{messages.find((m) => m.role === 'user')?.content.slice(0, 50) ?? 'محادثة جديدة'}</span>
         {folders.length > 0 && (
           <select className="folder-select" value={convFolder} onChange={(e) => assignFolder(e.target.value)} title="ربط بقضية">

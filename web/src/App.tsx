@@ -11,6 +11,7 @@ import Deadlines from './components/Deadlines';
 import CaseFile from './components/CaseFile';
 import Support from './components/Support';
 import { useTheme } from './lib/theme';
+import { Icon, ICON_MD } from './lib/icons';
 
 export default function App() {
   // مسار المراجعة العامة (بلا مصادقة)
@@ -64,9 +65,23 @@ export default function App() {
     );
   }
 
+  // فتح شاشة مع إغلاق الشريط الجانبي — على الشاشات الصغيرة يغطّي الشريط المحتوى
+  const openView = (v: typeof view) => {
+    setView(v);
+    setSidebarOpen(false);
+  };
+
   return (
     <div className="app-shell">
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+
       <div className="main">
+        {/* مفتاح الشريط الجانبي — يظهر على الشاشات الصغيرة وحدها، حيث يكون
+            الشريط خارج الشاشة. يبقى في كل الشاشات لا في المحادثة فقط. */}
+        <button className="sidebar-toggle" onClick={() => setSidebarOpen((o) => !o)} title="القائمة">
+          <Icon.menu size={ICON_MD} aria-hidden />
+        </button>
+
         {view === 'chat' && (
           <ChatView
             key={activeConv ?? 'new'}
@@ -82,14 +97,13 @@ export default function App() {
               setActiveConv(id);
               refreshConversations();
             }}
-            onToggleSidebar={() => setSidebarOpen((o) => !o)}
           />
         )}
         {view === 'admin' && <Admin />}
         {view === 'tools' && <Tools />}
         {view === 'deadlines' && <Deadlines />}
         {view === 'case' && (
-          <CaseFile onOpenConversation={(id) => { setActiveConv(id); setView('chat'); }} />
+          <CaseFile onOpenConversation={(id) => { setActiveConv(id); openView('chat'); }} />
         )}
         {view === 'support' && <Support />}
         <div className="disclaimer-bar">
@@ -105,19 +119,17 @@ export default function App() {
         refreshKey={refreshKey}
         onSelectConv={(id) => {
           setActiveConv(id);
-          setView('chat');
-          setSidebarOpen(false);
+          openView('chat');
         }}
         onNewChat={() => {
           setActiveConv(null);
-          setView('chat');
-          setSidebarOpen(false);
+          openView('chat');
         }}
-        onOpenAdmin={() => setView('admin')}
-        onOpenTools={() => setView('tools')}
-        onOpenDeadlines={() => setView('deadlines')}
-        onOpenCase={() => setView('case')}
-        onOpenSupport={() => setView('support')}
+        onOpenAdmin={() => openView('admin')}
+        onOpenTools={() => openView('tools')}
+        onOpenDeadlines={() => openView('deadlines')}
+        onOpenCase={() => openView('case')}
+        onOpenSupport={() => openView('support')}
         onLogout={handleLogout}
         theme={theme}
         onToggleTheme={toggleTheme}
