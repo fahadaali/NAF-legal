@@ -1,17 +1,19 @@
 // الدخول الموحّد — مسار الاستقبال
 //
-// يقابل `functions/auth/callback.js` في وثيقة الربط، بصيغة Worker على Hono
-// كما يوثّقها README الحزمة. ولا منطق هنا: المبادلة والتحقق والإدراج وفتح
-// الجلسة كلها داخل `handleCallback` ولا يُنسخ منها شيء.
+// وهو المسار المسجَّل في المركز لهذه المنصة:
+//   https://naf-legal.naflaw-sa.workers.dev/auth/callback
+//
+// ولا منطق هنا: المبادلة والتحقق في `lib/handoff.ts`، والإدراج وفتح الجلسة
+// في `lib/sso.ts`. وهذا الملف تركيبٌ لا غير.
 
 import { Hono } from 'hono';
-import { clearCookie, handleCallback, readCookie } from 'naf-auth';
-import { ssoConfig } from '../lib/sso';
+import { clearCookie, readCookie } from 'naf-auth';
+import { ssoCallback, ssoConfig } from '../lib/sso';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-app.get('/callback', (c) => handleCallback(c.req.raw, c.env, ssoConfig(c.env)));
+app.get('/callback', (c) => ssoCallback(c));
 
 /**
  * الخروج. تنقّلُ متصفحٍ لا نداءُ `fetch`، لأن إسقاط الكوكي يصاحبه تحويل.

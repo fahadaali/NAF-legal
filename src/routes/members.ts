@@ -7,8 +7,8 @@
 // ممنوعة هناك صراحةً — «معطّل» تصف حالة العضوية لا الفعل الذي أنتجها.
 
 import { Hono } from 'hono';
-import { reportAccessChange } from 'naf-auth';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
+import { reportAccessChange } from '../lib/handoff';
 import { ssoConfig } from '../lib/sso';
 import type { Env, Variables, PlatformRole } from '../types';
 
@@ -98,6 +98,12 @@ app.patch('/:id/active', async (c) => {
     return c.json({ error: 'اكتب سبب السحب — يُعرض للعضو في شبكته' }, 400);
   }
 
+  // البريد يُقرأ قبل الكتابة: المركز يفتّش به لا بالمعرّف المركزي.
+  const member = await c.env.DB.prepare('SELECT email FROM members WHERE user_id = ?')
+    .bind(id)
+    .first<{ email: string | null }>();
+  if (!member) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
+
   const res = await c.env.DB.prepare('UPDATE members SET is_active = ? WHERE user_id = ?')
     .bind(body.is_active ? 1 : 0, id)
     .run();
@@ -105,26 +111,30 @@ app.patch('/:id/active', async (c) => {
 
   await audit(c, body.is_active ? 'member.grant' : 'member.revoke', id, { reason });
 
-  // السحب يسري محلياً فور كتابته: الوسيط يقرأ `is_active` في كل طلب،
+  // التغيير يسري محلياً فور كتابته: الوسيط يقرأ `is_active` في كل طلب،
   // فالعضو ممنوع من هذه المنصة سواء بلغ التبليغُ المركزَ أم لم يبلغ.
   // ولذلك يُكتب أولاً ثم يُبلَّغ — والعكس يترك ثغرة بين النداء والكتابة.
-  if (!body.is_active) {
-    try {
-      await reportAccessChange(c.env, ssoConfig(c.env), {
-        userId: id,
-        status: 'revoked',
-        reason,
-      });
-    } catch {
-      // لا يُرفَع الاستثناء إلى المستخدم: نصّه قد يحمل تفصيلاً تقنياً.
-      // والسحب قائم، والناقص إظهارُ سببه في شبكة المركز وحده.
-      return c.json({ ok: true, reported: false });
-    }
+  //
+  // ويُبلَّغ الطرفان لا السحب وحده: المركز يقبل `granted` و `revoked`، وترك
+  // المنح بلا تبليغ يُبقي بطاقةً مرفوضةً في شبكة عضوٍ أُعيد وصولُه.
+  const email = member.email?.trim();
+  if (!email) {
+    // عضو بلا بريد لا يمكن تبليغه: المركز يفتّش بالبريد وحده.
+    return c.json({ ok: true, reported: false });
   }
 
-  // إعادةُ التفعيل لا تُبلَّغ: مفردات `status` لدى المركز غير موثّقة إلا
-  // لحالة السحب، وإرسال قيمة مخمَّنة أسوأ من عدم الإرسال. الأثر موصوف في
-  // `audit/sso-report.md` تحت ما يحتاج قراراً.
+  try {
+    await reportAccessChange(c.env, ssoConfig(c.env), {
+      email,
+      state: body.is_active ? 'granted' : 'revoked',
+      reason,
+    });
+  } catch {
+    // لا يُرفَع الاستثناء إلى المستخدم: نصّه قد يحمل تفصيلاً تقنياً.
+    // والقرار قائم محلياً، والناقص موافقةُ جدول المركز له وحدها.
+    return c.json({ ok: true, reported: false });
+  }
+
   return c.json({ ok: true, reported: true });
 });
 

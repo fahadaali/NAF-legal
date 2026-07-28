@@ -52,6 +52,7 @@ jobs:
           npx wrangler d1 create naf_legal
           npx wrangler r2 bucket create naf-legal-files
           npx wrangler kv namespace create KV
+          npx wrangler kv namespace create AUTH_KV
           # فهارس Vectorize اختيارية (تتطلّب صلاحية Vectorize في الرمز):
           npx wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
           npx wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
@@ -61,34 +62,49 @@ jobs:
         run: |
           set -euo pipefail
           D1_ID=$(npx wrangler d1 list --json | jq -r '.[] | select(.name=="naf_legal") | .uuid' | head -1)
-          KV_ID=$(npx wrangler kv namespace list | jq -r '.[] | select(.title|endswith("KV")) | .id' | head -1)
-          if [ -z "$D1_ID" ] || [ -z "$KV_ID" ]; then
-            echo "تعذّر الحصول على معرّفات D1/KV — تحقّق من صلاحيات الرمز." >&2
+          NS=$(npx wrangler kv namespace list)
+          # المطابقة على البادئة الفاصلة لا على "KV" وحدها: عنوان مساحة
+          # الدخول الموحّد ينتهي بـ "KV" أيضاً، فـ endswith("KV") يلتقط
+          # الاثنتين ويعطي أوّلَهما للاثنتين — فيتشاركان مساحةً واحدة بصمت.
+          KV_ID=$(echo "$NS" | jq -r '.[] | select(.title|endswith("-KV")) | .id' | head -1)
+          AUTH_KV_ID=$(echo "$NS" | jq -r '.[] | select(.title|endswith("-AUTH_KV")) | .id' | head -1)
+          if [ -z "$D1_ID" ] || [ -z "$KV_ID" ] || [ -z "$AUTH_KV_ID" ]; then
+            echo "تعذّر الحصول على معرّفات D1/KV/AUTH_KV — تحقّق من صلاحيات الرمز." >&2
+            echo "$NS" >&2
+            exit 1
+          fi
+          if [ "$KV_ID" = "$AUTH_KV_ID" ]; then
+            echo "::error::مساحة الدخول الموحّد هي نفسها مساحة حدّ المعدّل — يجب فصلهما" >&2
             exit 1
           fi
           sed -i "s/REPLACE_WITH_D1_ID/$D1_ID/" wrangler.toml
           sed -i "s/REPLACE_WITH_KV_ID/$KV_ID/" wrangler.toml
-          echo "D1=$D1_ID  KV=$KV_ID"
+          sed -i "s/REPLACE_WITH_AUTH_KV_ID/$AUTH_KV_ID/" wrangler.toml
+          echo "D1=$D1_ID  KV=$KV_ID  AUTH_KV=$AUTH_KV_ID"
 
-      # إعداد الدخول الموحّد يأتي من إعدادات المستودع لا من الشيفرة: المعرّف
-      # والنطاق متغيّران عامّان، والسرّ سرّ. والخطوة تتوقّف قبل النشر إن نقص
-      # أحدها — فنشرٌ بقيمة نائبة يسقط كل طلب بـ 500، لأن الوسيط يحمي كل مسار.
-      - name: حقن إعداد الدخول الموحّد
-        env:
-          PLATFORM_ID: ${{ vars.PLATFORM_ID }}
-          AUTH_ISSUER: ${{ vars.AUTH_ISSUER }}
+      # المعرّف والمُصدِر قيمتان عاديتان في `[vars]` بـ wrangler.toml ولا
+      # يُحقنان: ليسا سرّين، ومكانُهما الملفُّ حيث يقرؤهما المراجع. وهذه
+      # الخطوة تتحقّق منهما ولا تكتبهما — نشرٌ بقيمة نائبة يسقط كل طلب
+      # بـ 500 لأن الوسيط يحمي كل مسار.
+      - name: التحقق من إعداد الدخول الموحّد
         run: |
           set -euo pipefail
-          if [ -z "${PLATFORM_ID:-}" ] || [ -z "${AUTH_ISSUER:-}" ]; then
-            echo "::error::اضبط PLATFORM_ID و AUTH_ISSUER في GitHub › Settings › Secrets and variables › Actions › Variables" >&2
+          # المعرّف حسّاس لحالة الأحرف: `naf-legal` يرفض كل رمز صحيح، صامتاً.
+          if ! grep -q '^PLATFORM_ID = "NAF-legal"$' wrangler.toml; then
+            echo "::error::PLATFORM_ID يجب أن يكون NAF-legal بحالة أحرفه — وهو نفسه aud في الرمز" >&2
+            grep -n '^PLATFORM_ID' wrangler.toml >&2 || true
             exit 1
           fi
-          case "$AUTH_ISSUER" in
-            https://*) ;;
-            *) echo "::error::AUTH_ISSUER يجب أن يبدأ بـ https://" >&2; exit 1 ;;
-          esac
-          sed -i "s|REPLACE_WITH_PLATFORM_ID|$PLATFORM_ID|" wrangler.toml
-          sed -i "s|REPLACE_WITH_AUTH_ISSUER|$AUTH_ISSUER|" wrangler.toml
+          if ! grep -qE '^AUTH_ISSUER = "https://[^"]+"$' wrangler.toml; then
+            echo "::error::AUTH_ISSUER مفقود أو لا يبدأ بـ https://" >&2
+            grep -n '^AUTH_ISSUER' wrangler.toml >&2 || true
+            exit 1
+          fi
+          # مساحة الدخول الموحّد مربوطة: بدونها يرمي الإعداد عند أول طلب.
+          if ! grep -q 'binding = "AUTH_KV"' wrangler.toml; then
+            echo "::error::مساحة AUTH_KV غير مربوطة في wrangler.toml" >&2
+            exit 1
+          fi
           # مسحة أخيرة: لا تبقى قيمة نائبة واحدة في ملف يُنشر.
           if grep -q "REPLACE_WITH_" wrangler.toml; then
             echo "::error::بقيت قيمة نائبة في wrangler.toml" >&2
