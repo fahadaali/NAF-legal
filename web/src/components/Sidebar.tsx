@@ -183,8 +183,11 @@ export default function Sidebar(props: Props) {
                 </button>
               </>
             )}
+            {/* «تسجيل الخروج» — المصطلح المسجَّل في `naf-terms.md` §١٠.
+                و«خروج» ممنوعة صراحةً في §١: هي مرادفٌ مرفوض لـ«إغلاق»،
+                فيستوي في زرّين اثنين إغلاقُ نافذةٍ وإنهاءُ جلسة. */}
             <button className="link-btn" onClick={props.onLogout}>
-              خروج
+              تسجيل الخروج
             </button>
           </div>
           <NotificationBell />
