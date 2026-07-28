@@ -23,6 +23,7 @@ import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
 import { runTrackingScan, runNewsDigest, runDeadlineReminders } from './cron';
 import { ssoMiddleware } from './lib/sso';
+import { requireWriter } from './lib/auth';
 import type { Env, Variables } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -36,6 +37,10 @@ app.route('/auth', ssoRoutes);
 // الدخول الموحّد — يحمي كل ما بعده. وأي مسار جديد محمي افتراضياً ما لم
 // يُضَف صراحةً إلى القائمة العامة في `lib/sso.ts`.
 app.use('*', ssoMiddleware);
+
+// القارئ يقرأ ولا يكتب — بعد الوسيط لأنه يقرأ الدور الذي يحقنه، وقبل كل
+// مسار لأن الحكم بالطريقة لا بالمسار. تفصيله في `lib/auth.ts`.
+app.use('*', requireWriter);
 
 // حدّ معدّل بسيط عبر KV على مسارات الـ API (§12)
 app.use('/api/*', async (c, next) => {

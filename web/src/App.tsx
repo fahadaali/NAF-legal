@@ -121,6 +121,7 @@ export default function App() {
               setActiveConv(id);
               refreshConversations();
             }}
+            readOnly={user?.role === 'viewer'}
           />
         )}
         {view === 'admin' && <Admin />}

@@ -108,9 +108,14 @@ export default function Sidebar(props: Props) {
         </div>
       </div>
 
-      <button className="new-chat-btn" onClick={props.onNewChat}>
-        <span>＋</span> محادثة جديدة
-      </button>
+      {/* «مستخدم (اطّلاع)» يقرأ ولا ينشئ. والزرّ يُخفى ولا يُعطَّل: زرٌّ
+          معطَّل بلا سبب ظاهر يُقرأ عطلاً في المنصة، والخادم يردّ الإنشاء
+          بـ٤٠٣ على أي حال. */}
+      {props.user.role !== 'viewer' && (
+        <button className="new-chat-btn" onClick={props.onNewChat}>
+          <span>＋</span> محادثة جديدة
+        </button>
+      )}
 
       <div className="search-box">
         <input placeholder="بحث دلالي في محادثاتك…" value={search} onChange={(e) => setSearch(e.target.value)} />
