@@ -18,7 +18,7 @@ run_worker_first = true
 [[d1_databases]]
 binding = "DB"
 database_name = "naf_legal"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "9c4b9f7e-9d64-4b2d-b309-64a791b92bbc"
 migrations_dir = "migrations"
 
 # ── تخزين الملفات R2 ──
