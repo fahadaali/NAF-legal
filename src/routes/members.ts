@@ -70,13 +70,39 @@ app.patch('/:id/role', async (c) => {
     return c.json({ error: 'لا يمكنك تغيير صلاحيتك بنفسك' }, 400);
   }
 
+  const row = await c.env.DB.prepare('SELECT email FROM members WHERE user_id = ?')
+    .bind(id)
+    .first<{ email: string | null }>();
+  if (!row) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
+
   const res = await c.env.DB.prepare('UPDATE members SET role = ? WHERE user_id = ?')
     .bind(role, id)
     .run();
   if (!res.meta.changes) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
 
   await audit(c, 'member.role_change', id, { role });
-  return c.json({ ok: true });
+
+  /* تبليغ المركز بالصلاحية — عرضاً لا حكماً.
+
+     مسؤول النظام يمنح وصولاً إلى هذه المنصة ولا تقول له أي شاشة ماذا صار
+     يرى الممنوح. فيُبلَّغ بما قُرّر هنا ليعرضه في صفّ الوصول. والقرار يبقى
+     هنا: المركز لا يقرأ هذه القيمة في أي قرار دخول.
+
+     وبلا `state`: المنح لم يتغيّر، وكتابته مع كل ترقية تمحو سحباً صادراً
+     من المركز.
+
+     والفشل لا يُرفع: الترقية نافذة محلياً فور كتابتها — الوسيط يقرأ الدور
+     في كل طلب — والناقص عرضُها في اللوحة. */
+  const email = (row.email ?? '').trim();
+  if (!email) return c.json({ ok: true, reported: false });
+
+  try {
+    await reportAccessChange(c.env, ssoConfig(c.env), { email, role });
+  } catch {
+    return c.json({ ok: true, reported: false });
+  }
+
+  return c.json({ ok: true, reported: true });
 });
 
 app.patch('/:id/active', async (c) => {
@@ -100,9 +126,10 @@ app.patch('/:id/active', async (c) => {
 
   // البريد يُقرأ قبل الكتابة: المركز يطابق صفّ الوصول بالبريد لا بالمعرّف
   // المركزي، فبدونه لا تبليغ. والقراءة قبل التحديث تغني عن استعلام ثانٍ.
-  const row = await c.env.DB.prepare('SELECT email FROM members WHERE user_id = ?')
+  // والصلاحية معه: تُرسَل في التبليغ نفسه ليعرضها المركز مع الحالة.
+  const row = await c.env.DB.prepare('SELECT email, role FROM members WHERE user_id = ?')
     .bind(id)
-    .first<{ email: string | null }>();
+    .first<{ email: string | null; role: string }>();
   if (!row) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
 
   const res = await c.env.DB.prepare('UPDATE members SET is_active = ? WHERE user_id = ?')
@@ -132,6 +159,9 @@ app.patch('/:id/active', async (c) => {
       // السبب لحالة السحب وحدها: المركز يعرضه للعضو حرماناً، ولا معنى له
       // مع المنح — و`reportAccessChange` تُسقط الفارغ من الجسم أصلاً.
       reason: body.is_active ? undefined : reason,
+      // والصلاحية مع الحالة: السحب لا يمحوها في المركز — يُبقيها `COALESCE`
+      // هناك — فيبقى المسؤول يرى ما كان يملكه المسحوب حين يحتاج معرفته.
+      role: row.role,
     });
   } catch {
     // لا يُرفَع الاستثناء إلى المستخدم: نصّه قد يحمل تفصيلاً تقنياً.

@@ -14,6 +14,8 @@ interface Props {
   onInitialConsumed?: () => void;
   onStartConversation?: (conversationId: string, message: string) => void;
   onConversationChange: (id: string) => void;
+  /** «مستخدم (اطّلاع)» يقرأ المحادثات ولا يكتب فيها. */
+  readOnly?: boolean;
 }
 
 interface UiMessage extends Message {
@@ -25,7 +27,7 @@ interface UiMessage extends Message {
   missingRegulations?: string[];
 }
 
-export default function ChatView({ conversationId, initialMessage, onInitialConsumed, onStartConversation, onConversationChange }: Props) {
+export default function ChatView({ conversationId, initialMessage, onInitialConsumed, onStartConversation, onConversationChange, readOnly = false }: Props) {
   const [convType, setConvType] = useState<string | null>(null);
   const [configs, setConfigs] = useState<ConsultConfig[]>([]);
   const [intake, setIntake] = useState<ConsultConfig | null>(null);
@@ -431,6 +433,20 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         </div>
       </div>
 
+      {/* «مستخدم (اطّلاع)» يقرأ المحادثة ولا يكتب فيها.
+
+          والصندوق يُخفى ولا يُعطَّل: صندوقُ كتابةٍ معطَّل يدعو إلى الكتابة
+          ثم يمنعها، وأزرارُه العشرة تبقى معروضة بلا عمل. وسطرٌ واحد يقول
+          الحدّ أصدقُ منه — والنصّ مسجَّل في `naf-terms.md` §١٠. */}
+      {readOnly ? (
+        <div className="composer">
+          <div className="composer-inner">
+            <div className="composer-hint" role="status">
+              هذه العملية تتطلب صلاحية تحرير
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="composer">
         <div className="composer-inner">
           {attachments.length > 0 && (
@@ -511,6 +527,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           </div>
         </div>
       </div>
+      )}
 
       {clausePicker && (
         <ClauseLibrary
