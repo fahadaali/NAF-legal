@@ -111,10 +111,17 @@ function centerAccess(body) {
   }
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!email) { failures.push('access:invalid_body'); return new Response('{}', { status: 400 }); }
-  if (!['granted', 'revoked'].includes(body.state)) {
+
+  // الحالة اختيارية مذ صار الدخول يبلّغ الصلاحية وحدها بلا حالة، لكنّ
+  // أحدهما لازم: بلاغٌ بلا حالة ولا دور لا يحمل شيئاً يُكتب.
+  const hasState = body.state !== undefined && body.state !== null;
+  if (hasState && !['granted', 'revoked'].includes(body.state)) {
     failures.push('access:invalid_state'); return new Response('{}', { status: 400 });
   }
-  accessRows.push({ email, state: body.state, reason: body.reason ?? null });
+  const role = typeof body.role === 'string' && body.role.trim() ? body.role.trim() : null;
+  if (!hasState && !role) { failures.push('access:invalid_body'); return new Response('{}', { status: 400 }); }
+
+  accessRows.push({ email, state: hasState ? body.state : null, role, reason: body.reason ?? null });
   return Response.json({ ok: true });
 }
 
@@ -404,14 +411,29 @@ let sessionCookie;
   failures.length = 0;
   await reportAccessChange(env, config, { email: 'F@NafLaw.sa', state: 'revoked', reason: 'انتهى التعاقد' });
   assert.deepEqual(failures, [], 'المركز رفض التبليغ');
-  assert.deepEqual(accessRows.at(-1), { email: 'f@naflaw.sa', state: 'revoked', reason: 'انتهى التعاقد' });
+  assert.deepEqual(accessRows.at(-1), {
+    email: 'f@naflaw.sa', state: 'revoked', role: null, reason: 'انتهى التعاقد',
+  });
 
   // وإعادة التفعيل تُبلَّغ كذلك، وإلا بقي صفّ الوصول `revoked` في المركز
   // فيُردّ عضوٌ تراه هذه المنصة نشطاً.
   await reportAccessChange(env, config, { email: 'f@naflaw.sa', state: 'granted' });
   assert.deepEqual(failures, []);
-  assert.deepEqual(accessRows.at(-1), { email: 'f@naflaw.sa', state: 'granted', reason: null });
+  assert.deepEqual(accessRows.at(-1), {
+    email: 'f@naflaw.sa', state: 'granted', role: null, reason: null,
+  });
   ok('التبليغ العكسي يُقبل في الاتجاهين ويكتب صفّ الوصول');
+}
+
+// ── التبليغ بالصلاحية وحدها: ما يرسله الدخول، بلا حالة ──
+{
+  failures.length = 0;
+  await reportAccessChange(env, config, { email: 'f@naflaw.sa', role: 'editor' });
+  assert.deepEqual(failures, [], 'المركز رفض بلاغ الصلاحية');
+  assert.deepEqual(accessRows.at(-1), {
+    email: 'f@naflaw.sa', state: null, role: 'editor', reason: null,
+  });
+  ok('الدخول يبلّغ المركز بالصلاحية بلا حالة');
 }
 
 // ── ١٦: وجهة عدائية تُنقّى ──
@@ -476,4 +498,8 @@ let sessionCookie;
   ok('وسيط المنصة لا يُعيد بناء التفريق — ويحقن الهوية المحلية');
 }
 
-console.log(`\n${pass}/17 فحصاً مرّت.`);
+/* العدد يُتحقَّق منه لا يُطبع وحده: فحصٌ يسقط من الملف بحذفٍ أو بخطأ في
+   دمج يبقى العدّاد معه أقلّ، وسطرٌ يقول «١٦/١٧» يُقرأ نجاحاً بلمحة عين. */
+const EXPECTED = 18;
+assert.equal(pass, EXPECTED, `عدد الفحوص ${pass} لا ${EXPECTED} — فحصٌ سقط أو أُضيف بلا تحديث العدد`);
+console.log(`\n${pass}/${EXPECTED} فحصاً مرّت.`);

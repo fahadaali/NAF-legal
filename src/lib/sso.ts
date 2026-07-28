@@ -107,7 +107,8 @@ export async function linkExistingMember(claims: Claims, env: Env): Promise<void
 
     await env.DB.prepare(
       `INSERT INTO members (user_id, display_name, email, role, is_active, created_at, local_user_id)
-       VALUES (?, ?, ?, ?, 1, ?, ?)`
+       VALUES (?, ?, ?, ?, 1, ?, ?)
+       ON CONFLICT(user_id) DO NOTHING`
     )
       .bind(
         claims.sub,
@@ -139,7 +140,8 @@ export async function linkExistingMember(claims: Claims, env: Env): Promise<void
 
   await env.DB.prepare(
     `INSERT INTO members (user_id, display_name, email, role, is_active, created_at, local_user_id)
-     VALUES (?, ?, ?, ?, 1, ?, ?)`
+     VALUES (?, ?, ?, ?, 1, ?, ?)
+     ON CONFLICT(user_id) DO NOTHING`
   )
     .bind(
       claims.sub,

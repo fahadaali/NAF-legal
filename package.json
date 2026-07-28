@@ -22,6 +22,6 @@
   },
   "dependencies": {
     "hono": "^4.6.3",
-    "naf-auth": "github:fahadaali/naf-auth#v3.1.1"
+    "naf-auth": "github:fahadaali/naf-auth#v3.1.2"
   }
 }
