@@ -5,7 +5,7 @@
 // الجلسة كلها داخل `handleCallback` ولا يُنسخ منها شيء.
 
 import { Hono } from 'hono';
-import { clearCookie, handleCallback, readCookie } from 'naf-auth';
+import { handleCallback, handleLogout } from 'naf-auth';
 import { ssoConfig } from '../lib/sso';
 import type { Env, Variables } from '../types';
 
@@ -14,21 +14,23 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.get('/callback', (c) => handleCallback(c.req.raw, c.env, ssoConfig(c.env)));
 
 /**
- * الخروج. تنقّلُ متصفحٍ لا نداءُ `fetch`، لأن إسقاط الكوكي يصاحبه تحويل.
+ * الخروج — في الحزمة، ووجهته المركز.
  *
- * والجلسة تُحذف من `KV` لا يُكتفى بإسقاط الكوكي: الكوكي المُسقَط يبقى صالحاً
- * عند من نسخه، والحذف يُبطله عند الجميع. ثم يعود الطلب التالي إلى المركز
- * كأي طلب بلا جلسة.
+ * كان هنا تحويلٌ إلى `‎/` بعد حذف الجلسة ومسح الكوكي. والحذف والمسح يقعان
+ * فعلاً، ولا أثر يراه المستخدم: الجذر محميّ، فيحوّله الوسيط إلى
+ * `‎/go/NAF-legal`، وجلسة المركز لم تُمسّ فتُصدر رمزاً جديداً — فيعود
+ * الخارجُ إلى شاشته قبل أن يقرأ شيئاً.
+ *
+ * و`handleLogout` وجهته `‎{issuer}/`، خارج السياج.
+ *
+ * ويقبل التنقّل ونداء `fetch` معاً، وشكل الردّ يتبع طبيعة الطلب: ٣٠٢ للأوّل
+ * لأن المتصفّح يتبعها، و`{ ok, next }` للثاني لأن `fetch` لا يتبع تحويلةً
+ * إلى أصل آخر بلا `CORS`.
+ *
+ * و`GET` باقٍ بجانب `POST` لأن الواجهة تنتقل إليه بالمتصفّح. وهو مسجَّل
+ * قبل الوسيط، فيعمل لمن انتهت جلسته أصلاً — وحمايتُه كانت تحوّل الخارجَ
+ * إلى المركز ليدخل قبل أن يُسمح له بالخروج.
  */
-app.get('/logout', async (c) => {
-  const config = ssoConfig(c.env);
-  const sid = readCookie(c.req.raw, config.cookieName);
-  if (sid) await config.kv(c.env).delete(`sess:${sid}`);
-
-  return new Response(null, {
-    status: 302,
-    headers: { location: '/', 'set-cookie': clearCookie(config.cookieName) },
-  });
-});
+app.on(['GET', 'POST'], '/logout', (c) => handleLogout(c.req.raw, c.env, ssoConfig(c.env)));
 
 export default app;
