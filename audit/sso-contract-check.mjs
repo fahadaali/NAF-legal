@@ -13,11 +13,16 @@
 // التشغيل:  npm run check:sso
 
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { authenticate, handleCallback, reportAccessChange } from 'naf-auth';
+import {
+  authenticate,
+  handleBackchannelLogout,
+  handleCallback,
+  reportAccessChange,
+} from 'naf-auth';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -140,6 +145,20 @@ const kv = {
   async get(k, t) { const v = kvStore.get(k); return v === undefined ? null : (t === 'json' ? JSON.parse(v) : v); },
   async put(k, v, o) { kvStore.set(k, v); kvStore.set(`__ttl:${k}`, o?.expirationTtl); },
   async delete(k) { kvStore.delete(k); },
+  /* `list` بصفحاتٍ صغيرة عمداً: KV الحقيقي يردّ صفحة محدودة ومعها مؤشّر،
+     ومن قرأ الصفحة الأولى وحدها ظنّ أنه استوفى. */
+  async list({ prefix = '', cursor, limit = 2 } = {}) {
+    const all = [...kvStore.keys()].filter((k) => k.startsWith(prefix)).sort();
+    const start = cursor ? Number(cursor) : 0;
+    const slice = all.slice(start, start + limit);
+    const end = start + slice.length;
+    const complete = end >= all.length;
+    return {
+      keys: slice.map((name) => ({ name })),
+      list_complete: complete,
+      cursor: complete ? undefined : String(end),
+    };
+  },
 };
 
 /* قاعدة في الذاكرة — جدولان لأن هذه المنصة تربط بالبريد ولا تستبدل الهوية:
@@ -498,8 +517,102 @@ let sessionCookie;
   ok('وسيط المنصة لا يُعيد بناء التفريق — ويحقن الهوية المحلية');
 }
 
+// ── إشعار الخروج الخلفي: الخروج من المركز يُنهي الجلسة هنا ──
+{
+  const now = Math.floor(Date.now() / 1000);
+
+  // جلسة قائمة، بدليلها كما يكتبه مسار الاستقبال.
+  const sid = 'sid-backchannel';
+  await kv.put(
+    `sess:${sid}`,
+    JSON.stringify({
+      sub: 'user-1',
+      token: await signToken({ sub: 'user-1', iss: ISSUER, aud: PLATFORM, iat: now, exp: now + 900 }),
+      exp: now + 900,
+    }),
+  );
+  await kv.put(`usr:user-1:${sid}`, '1');
+
+  /* الرمز يُوقَّع هنا كما يوقّعه المركز حرفياً — و`purpose` مكتوبة نصّاً لا
+     مستوردة: تغييرها في أحد الطرفين دون الآخر يُبطل كل إشعار بلا رسالة
+     تدلّ عليه، وهذا السطر هو ما يمسك ذلك. */
+  const logoutToken = await signToken({
+    sub: 'user-1',
+    iss: ISSUER,
+    aud: PLATFORM,
+    purpose: 'backchannel-logout',
+    iat: now,
+    exp: now + 60,
+  });
+
+  const res = await handleBackchannelLogout(
+    new Request(`${ORIGIN}/auth/backchannel-logout`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ logoutToken }),
+    }),
+    env,
+    config,
+  );
+  assert.equal(res.status, 200, 'المركز رُدّ إشعارُه');
+
+  /* والعدد لا يُقارَن برقم ثابت: الفحوص قبله فتحت لهذا العضو جلساتٍ عدّة
+     بدورات دخول كاملة، وإنهاؤها كلها هو المطلوب لا عيباً في العدّ — من خرج
+     من المركز أراد إغلاق كل بابٍ فتحه، لا آخرَه وحده. فيُفحص أثرُه: لم
+     يبقَ له مفتاح جلسة ولا دليل. */
+  const { ended } = await res.json();
+  assert.ok(ended >= 1, `لم يُنهَ شيء (${ended})`);
+  const leftovers = [...kvStore.keys()].filter((k) => k.startsWith('usr:user-1:'));
+  assert.deepEqual(leftovers, [], 'بقي دليلُ جلسةٍ بعد الإشعار');
+  assert.equal(kvStore.has(`sess:${sid}`), false, 'بقيت الجلسة بعد الإشعار');
+
+  // وبعده لا تفتح الجلسة شيئاً: يُردّ صاحبها إلى المركز.
+  const after = await authenticate(R('/', `naf_sid=${sid}`), env, config);
+  assert.equal(after.user, undefined, 'الجلسة بقيت تفتح بعد الخروج من المركز');
+  assert.equal(after.response.status, 302);
+
+  // ورمز الدخول لا يصلح إشعاراً — وهو يصل إلى مسار عامّ لا حراسة عليه.
+  const asSession = await handleBackchannelLogout(
+    new Request(`${ORIGIN}/auth/backchannel-logout`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        logoutToken: await signToken({
+          sub: 'user-1', iss: ISSUER, aud: PLATFORM, iat: now, exp: now + 900,
+        }),
+      }),
+    }),
+    env,
+    config,
+  );
+  assert.equal(asSession.status, 401, 'رمز جلسة قُبل إشعارَ خروج');
+
+  ok('إشعار الخروج الخلفي يُنهي الجلسة، ورمز الدخول لا يصلح إشعاراً');
+}
+
+// ── والمسار يبلغه المركز: مسجَّل قبل الوسيط كالخروج ──
+{
+  /* في هذه المنصة لا يُفتح المسار بقائمة `PUBLIC_PATHS` بل بترتيب التسجيل:
+     `app.route('/auth', ssoRoutes)` يسبق `app.use('*', ssoMiddleware)`،
+     فما في `ssoRoutes` لا يبلغه الحارس أصلاً — وهكذا الخروجُ نفسه.
+
+     فيُفحص التسجيل لا القائمة: فحصٌ يسأل `isPublicPath` هنا يخضرّ لو نُقل
+     المسار إلى ما بعد الوسيط، والمركز عندئذ يأخذ تحويلةً إلى باب الدخول
+     مكان أن يُنهي الجلسة — ولا أحد يعلم. */
+  const routes = await readFile(path.join(ROOT, 'src', 'routes', 'ssoCallback.ts'), 'utf8');
+  assert.match(routes, /app\.post\(\s*'\/backchannel-logout'/, 'المسار غير مسجَّل في ssoRoutes');
+
+  const index = await readFile(path.join(ROOT, 'src', 'index.ts'), 'utf8');
+  const mounted = index.indexOf("app.route('/auth', ssoRoutes)");
+  const guarded = index.indexOf("app.use('*', ssoMiddleware)");
+  assert.ok(mounted !== -1 && guarded !== -1, 'تعذّر قراءة ترتيب التركيب');
+  assert.ok(mounted < guarded, 'مسارات /auth صارت بعد الوسيط — فيُحرَس ما لا جلسة له');
+
+  ok('مسار الإشعار يبلغه المركز — مسجَّل قبل الوسيط كالخروج');
+}
+
 /* العدد يُتحقَّق منه لا يُطبع وحده: فحصٌ يسقط من الملف بحذفٍ أو بخطأ في
    دمج يبقى العدّاد معه أقلّ، وسطرٌ يقول «١٦/١٧» يُقرأ نجاحاً بلمحة عين. */
-const EXPECTED = 18;
+const EXPECTED = 20;
 assert.equal(pass, EXPECTED, `عدد الفحوص ${pass} لا ${EXPECTED} — فحصٌ سقط أو أُضيف بلا تحديث العدد`);
 console.log(`\n${pass}/${EXPECTED} فحصاً مرّت.`);

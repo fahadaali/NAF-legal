@@ -5,7 +5,7 @@
 // الجلسة كلها داخل `handleCallback` ولا يُنسخ منها شيء.
 
 import { Hono } from 'hono';
-import { handleCallback, handleLogout } from 'naf-auth';
+import { handleBackchannelLogout, handleCallback, handleLogout } from 'naf-auth';
 import { ssoConfig } from '../lib/sso';
 import type { Env, Variables } from '../types';
 
@@ -32,5 +32,20 @@ app.get('/callback', (c) => handleCallback(c.req.raw, c.env, ssoConfig(c.env)));
  * إلى المركز ليدخل قبل أن يُسمح له بالخروج.
  */
 app.on(['GET', 'POST'], '/logout', (c) => handleLogout(c.req.raw, c.env, ssoConfig(c.env)));
+
+/**
+ * إشعار الخروج الخلفي — المركز يُنهي جلسات عضوٍ هنا.
+ *
+ * الخروج من هذه المنصة محليّ، أمّا الخروج من المركز فهو الباب نفسه: يُنهي
+ * جلسات صاحبه في المنصات الخمس. وبلا هذا المسار تبقى جلسته هنا حيّة حتى
+ * ينتهي رمزها، فيفتح رابط المنصة بعد خروجه من المركز فيدخل.
+ *
+ * وهو قبل الوسيط كالخروج، ولسببٍ أقوى: المنادي هو المركز خادماً لخادم، لا
+ * متصفّح له جلسة هنا. وحراستُه توقيعُ المركز نفسه — تتحقّق منه الحزمة
+ * بمفتاح `JWKS` الذي تعرفه أصلاً.
+ */
+app.post('/backchannel-logout', (c) =>
+  handleBackchannelLogout(c.req.raw, c.env, ssoConfig(c.env)),
+);
 
 export default app;
