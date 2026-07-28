@@ -8,7 +8,7 @@
 
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
-import { reportAccessChange } from '../lib/handoff';
+import { reportAccessChange } from 'naf-auth';
 import { ssoConfig } from '../lib/sso';
 import type { Env, Variables, PlatformRole } from '../types';
 

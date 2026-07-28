@@ -4,27 +4,18 @@
 // Cloudflare Pages Functions حيث يُكتشف الوسيط بالاسم، وهذه المنصة Worker
 // على Hono، فالتركيب صريح لا ضمني.
 //
-// والمصادقة نفسها لا تُقرأ من `authenticate` في الحزمة، لسببين مكتوبين في
-// `lib/handoff.ts` بتفصيلهما: صيغةُ الحزمة على السلك تخالف عقد المركز،
-// و`authenticate` لا تتحقّق من الرمز إلا عند الاستقبال. والعقد يشترط فحص
-// التوقيع و`exp` **في كل طلب محمي**. فما يمسّ المركز من `handoff.ts`، وما
-// يمسّ قاعدة الأعضاء وحدها (`createConfig` و `getMember` و `upsertMember`)
-// يبقى من الحزمة بلا نسخ.
+// والمصادقة كلُّها من `naf-auth@v2.0.0`: هي التي تبادل وتتحقّق وتفتح
+// الجلسة وتبلّغ المركز، وفيها صار التحقق من الرمز في كل طلب محمي. وما كان
+// مكتوباً محلياً في `lib/handoff.ts` — حين كانت الحزمة تخالف عقد المركز —
+// أُسقط كلُّه، فلا نظامان لشيء واحد.
+//
+// ولم يبقَ هنا إلا ما يخصّ هذه المنصة وحدها ولا مكان له في حزمة مشتركة:
+// ربطُ العضو بسجلّه المحلي، وحقنُ المعرّف المحلي، ونصُّ الرفض للـ API.
 
-import {
-  clearCookie,
-  createConfig,
-  getMember,
-  newSessionId,
-  readCookie,
-  sessionCookie,
-  upsertMember,
-  verifyToken,
-} from 'naf-auth';
+import { authenticate, createConfig, handleCallback } from 'naf-auth';
 import type { AuthConfig, Claims } from 'naf-auth';
 import type { Context, Next } from 'hono';
 import { uuid } from './crypto';
-import { deniedRedirect, handleCallback, startLogin } from './handoff';
 import type { Env, Variables, PlatformRole } from '../types';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -175,54 +166,36 @@ export function ssoConfig(env: Env): AuthConfig {
     publicPrefixes: PUBLIC_PREFIXES,
     defaultRole: DEFAULT_ROLE,
     onClaims: (claims) => linkExistingMember(claims, env),
+
+    // رمز السبب وحده إلى السجلّ. المستخدم يرى رمزاً ثابتاً على `/denied`
+    // ولا يرى شيئاً من هذا؛ وبلا هذا الخطّاف يصير كلُّ فشلٍ `auth_failed`
+    // بلا أثر يُقرأ. ولا يُسجَّل نصُّ الخطأ ولا أثرُه: قد يحمل ما أعاده
+    // المركز، والسرُّ مُرسَلٌ في الطلب نفسه.
+    onError: (code) => console.error(`sso: ${code}`),
   });
-}
-
-/** المسار عامّ: مساواة تامة أو بادئة مُعلنة. لا أنماط ولا اجتهاد. */
-function isPublic(pathname: string, config: AuthConfig): boolean {
-  if (config.publicPaths.includes(pathname)) return true;
-  return config.publicPrefixes.some((prefix) => pathname.startsWith(prefix));
-}
-
-/**
- * ردُّ الطلب غير المصادَق.
- *
- * تنقّلُ متصفح يعود إلى المركز، ونداءُ `fetch` يعود 401. والتحويل خطأ في
- * الثاني: `fetch` يتبع الـ 302 إلى نطاق المركز فيسقط على سياسة المصدر
- * وتظهر رسالة شبكة لا معنى لها. والـ 401 يجعل الواجهة تعيد تحميل الصفحة،
- * فيمرّ التنقّل على هذا الوسيط نفسه ويُحوَّل كما ينبغي.
- *
- * والكوكي يُسقَط مع الردّ متى وُجد: الجلسة التي أوصلتنا إلى هنا لم تعد
- * صالحة، وبقاء معرّفها في المتصفح يعيد قراءةً خائبة من KV عند كل طلب.
- */
-function unauthenticated(c: Ctx, config: AuthConfig, staleCookie: boolean): Response {
-  const res = c.req.path.startsWith('/api/')
-    ? c.json({ error: 'انتهت جلسة دخولك. سجّل الدخول من جديد' }, 401)
-    : startLogin(c.req.raw, config);
-
-  if (staleCookie) res.headers.append('set-cookie', clearCookie(config.cookieName));
-  return res;
 }
 
 /**
  * نصوص الرفض للـ API.
  *
- * صفحة `/denied` تترجم رمز السبب إلى مصطلحه المسجَّل، وهي وجهةُ المتصفح.
- * أمّا `fetch` فلا يقرأ صفحة: تحويلُه إلى `/denied` يعيد إليه HTML حيث
- * ينتظر JSON، فيفشل التحليل وتظهر رسالة عطل بدل سبب الرفض. فالنصّ نفسه
- * — من `Denied.tsx` حرفاً بحرف، ومصدرهما واحد — يُعاد هنا في جسم JSON.
+ * الحزمة تردّ على غير المصادَق بـ 401 لنداء الـ API وبتحويلٍ للمتصفح — وهذا
+ * ما يلزم. أمّا الرفض بعد التعرّف (عضوٌ غير موجود أو مسحوبُ الوصول) فتردّ
+ * فيه بتحويلٍ إلى `/denied` في الحالتين. وذلك صحيح للمتصفح وحده: `fetch`
+ * يتبع التحويل — والوجهة من المصدر نفسه فلا تمنعه سياسة — فيعود بـ HTML
+ * حيث تنتظر الواجهةُ JSON، فيفشل التحليل وتظهر «خطأ في الاتصال» بدل سبب
+ * الرفض. فيُترجَم الرمز هنا إلى جسم JSON بالنصّ المسجَّل نفسه الذي تعرضه
+ * `Denied.tsx` حرفاً بحرف.
  */
 const API_DENIAL: Record<string, string> = {
   not_member: 'لا تملك صلاحية الوصول لهذه المنصة',
   inactive: 'عضويتك في هذه المنصة معطّلة. راجع مسؤول المنصة.',
 };
 
-/** الرفض: صفحةٌ للمتصفح، وجسمُ JSON بالرمز 403 لنداء الـ API. */
-function denied(c: Ctx, config: AuthConfig, reason: string): Response {
-  if (c.req.path.startsWith('/api/')) {
-    return c.json({ error: API_DENIAL[reason] ?? 'لا تملك صلاحية الوصول لهذه المنصة' }, 403);
-  }
-  return deniedRedirect(config, reason);
+/** رمز السبب من ترويسة `Location` التي كتبتها الحزمة: `/denied?r=…`. */
+function denialReason(res: Response): string | null {
+  const location = res.headers.get('location');
+  if (!location || !location.startsWith('/denied')) return null;
+  return new URL(location, 'http://x').searchParams.get('r');
 }
 
 /**
@@ -234,116 +207,58 @@ function denied(c: Ctx, config: AuthConfig, reason: string): Response {
  * تُقدَّم `index.html` من الأصول قبل أن يعمل Worker أصلاً، فتُحمَّل قشرة
  * الواجهة لزائرٍ بلا جلسة ولا يمرّ بهذا الحارس.
  *
- * وثلاثة قرارات في الترتيب:
+ * والقرار كلُّه في `authenticate`: هي تقرأ الجلسة، وتتحقّق من التوقيع
+ * و`exp` **في كل طلب** لا عند الاستقبال وحده، وتقرأ العضو، وتردّ تحويلاً
+ * أو رفضاً أو مستخدماً. وزيادتان محليّتان لا غير:
  *
- * ١) **التحقق من الرمز في كل طلب محمي، لا عند الاستقبال وحده.** الرمز
- *    مخزَّن في الجلسة، ويُفحص توقيعُه و`exp` هنا في كل مرة. وهذا ما يجعل
- *    الإيقافَ المركزي يسري خلال ربع ساعة: عمرُ الرمز خمس عشرة دقيقة، فإذا
- *    انقضى عاد الطلب إلى المركز فأصدر رمزاً جديداً — أو رفض. ولولا هذا
- *    الفحص لبقي الموقوف مركزياً داخلاً حتى تنتهي جلسته المحلية.
+ * ١) ترجمةُ الرفض إلى JSON لنداء الـ API — أعلاه.
  *
- * ٢) انقضاءُ الرمز يحذف الجلسة ثم يعيد إلى المركز. والعودة شفّافة لمن
- *    جلستُه في المركز قائمة: تحويلتان بلا مطالبة بكلمة مرور.
- *
- * ٣) الهوية المحقونة هي المعرّف المحلي لا `sub`. كل جداول المنصة تعلّق على
+ * ٢) الهوية المحقونة هي المعرّف المحلي لا `sub`. كل جداول المنصة تعلّق على
  *    `users(id)`، فحقنُ `sub` يقطع كل مستخدم مُرحَّل عن محادثاته وملفاته.
  *    و`members.local_user_id` هو الجسر، وهو مضمون الوجود لأن `onClaims`
  *    يهيّئه لكل عضو بلا استثناء.
  */
 export async function ssoMiddleware(c: Ctx, next: Next) {
   const config = ssoConfig(c.env);
+  const result = await authenticate(c.req.raw, c.env, config);
 
-  if (isPublic(c.req.path, config)) {
-    await next();
-    return;
+  if (result.response) {
+    // (١)
+    if (c.req.path.startsWith('/api/') && result.response.status === 302) {
+      const reason = denialReason(result.response);
+      if (reason) return c.json({ error: API_DENIAL[reason] ?? API_DENIAL.not_member }, 403);
+    }
+    return result.response;
   }
 
-  const sid = readCookie(c.req.raw, config.cookieName);
-  if (!sid) return unauthenticated(c, config, false);
+  if (result.user) {
+    // (٢)
+    const row = await c.env.DB.prepare(
+      'SELECT local_user_id, email, display_name FROM members WHERE user_id = ?'
+    )
+      .bind(result.user.id)
+      .first<{ local_user_id: string | null; email: string | null; display_name: string | null }>();
 
-  const kv = config.kv(c.env) as KVNamespace;
-  const session = await kv.get<{ sub?: string; token?: string }>(`sess:${sid}`, 'json');
-  if (!session?.sub || !session.token) return unauthenticated(c, config, true);
-
-  // (١) الفحص الكامل في كل طلب محمي.
-  try {
-    await verifyToken(session.token, c.env, config);
-  } catch {
-    // (٢) الجلسة تُحذف لا يُكتفى بإسقاط الكوكي: المُسقَط يبقى صالحاً عند
-    // من نسخه، والحذف يُبطله عند الجميع.
-    await kv.delete(`sess:${sid}`);
-    return unauthenticated(c, config, true);
+    c.set('user', {
+      id: row?.local_user_id ?? result.user.id,
+      email: row?.email ?? '',
+      role: result.user.role as PlatformRole,
+      name: row?.display_name ?? undefined,
+      memberId: result.user.id,
+      perms: result.user.perms,
+    });
   }
-
-  const member = await getMember(c.env, config, session.sub);
-  if (!member) return denied(c, config, config.reasons.notMember);
-  if (!member.isActive) return denied(c, config, config.reasons.inactive);
-
-  // (٣) الجسر إلى الهوية المحلية.
-  const row = await c.env.DB.prepare(
-    'SELECT local_user_id, email, display_name FROM members WHERE user_id = ?'
-  )
-    .bind(member.id)
-    .first<{ local_user_id: string | null; email: string | null; display_name: string | null }>();
-
-  c.set('user', {
-    id: row?.local_user_id ?? member.id,
-    email: row?.email ?? '',
-    role: member.role as PlatformRole,
-    name: row?.display_name ?? undefined,
-    memberId: member.id,
-    perms: member.perms,
-  });
 
   await next();
 }
 
 /**
- * الاستقبال — من التحقق إلى الجلسة.
+ * الاستقبال.
  *
- * `handleCallback` تتحقّق ولا تكتب شيئاً؛ وهنا يُدرَج العضو وتُفتح الجلسة.
- * وفصلُهما مقصود: ما يمسّ المركز في ملف، وما يمسّ قاعدة هذه المنصة في آخر.
- *
- * والخطأ يُبتلع إلى رمز سبب ثابت: نصّه قد يحمل تفصيلاً تقنياً أو ما أعاده
- * المركز، ولا يُعرض شيء من ذلك للمستخدم.
+ * المبادلة والتحقق والإدراج وفتح الجلسة وتنقيةُ وجهة العودة — كلّها داخل
+ * `handleCallback`، ولا يُنسخ منها شيء. وربطُ العضو بسجلّه المحلي يجري في
+ * `onClaims` بين التحقق والإدراج.
  */
-export async function ssoCallback(c: Ctx): Promise<Response> {
-  const config = ssoConfig(c.env);
-
-  try {
-    const outcome = await handleCallback(c.req.raw, c.env, config);
-    if (outcome.response) return outcome.response;
-
-    const { claims, token, next: destination } = outcome.verified!;
-
-    // نقطة التعليق: يُطابَق العضو بسجلّه المحلي قبل أن يُنشأ له سجلّ ثانٍ.
-    await linkExistingMember(claims, c.env);
-
-    const member = await upsertMember(c.env, config, claims);
-
-    // الموقوف محلياً لا تُفتح له جلسة ولو أذن المركز: المركز يقول من الزائر
-    // وإن له حقّ الدخول، وما بعد الباب تقرّره هذه المنصة.
-    if (!member || !member.isActive) {
-      return deniedRedirect(config, config.reasons.inactive);
-    }
-
-    const sid = newSessionId();
-    const kv = config.kv(c.env) as KVNamespace;
-    await kv.put(
-      `sess:${sid}`,
-      JSON.stringify({ sub: claims.sub, token, createdAt: Math.floor(Date.now() / 1000) }),
-      { expirationTtl: config.sessionTtlSeconds }
-    );
-
-    return new Response(null, {
-      status: 302,
-      headers: {
-        location: destination,
-        'cache-control': 'no-store',
-        'set-cookie': sessionCookie(config.cookieName, sid, config.sessionTtlSeconds),
-      },
-    });
-  } catch {
-    return deniedRedirect(config, config.reasons.authFailed);
-  }
+export function ssoCallback(c: Ctx): Promise<Response> {
+  return handleCallback(c.req.raw, c.env, ssoConfig(c.env));
 }
