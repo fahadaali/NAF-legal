@@ -98,6 +98,13 @@ app.patch('/:id/active', async (c) => {
     return c.json({ error: 'اكتب سبب السحب — يُعرض للعضو في شبكته' }, 400);
   }
 
+  // البريد يُقرأ قبل الكتابة: المركز يطابق صفّ الوصول بالبريد لا بالمعرّف
+  // المركزي، فبدونه لا تبليغ. والقراءة قبل التحديث تغني عن استعلام ثانٍ.
+  const row = await c.env.DB.prepare('SELECT email FROM members WHERE user_id = ?')
+    .bind(id)
+    .first<{ email: string | null }>();
+  if (!row) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
+
   const res = await c.env.DB.prepare('UPDATE members SET is_active = ? WHERE user_id = ?')
     .bind(body.is_active ? 1 : 0, id)
     .run();
@@ -105,26 +112,33 @@ app.patch('/:id/active', async (c) => {
 
   await audit(c, body.is_active ? 'member.grant' : 'member.revoke', id, { reason });
 
-  // السحب يسري محلياً فور كتابته: الوسيط يقرأ `is_active` في كل طلب،
+  // التغيير يسري محلياً فور كتابته: الوسيط يقرأ `is_active` في كل طلب،
   // فالعضو ممنوع من هذه المنصة سواء بلغ التبليغُ المركزَ أم لم يبلغ.
   // ولذلك يُكتب أولاً ثم يُبلَّغ — والعكس يترك ثغرة بين النداء والكتابة.
-  if (!body.is_active) {
-    try {
-      await reportAccessChange(c.env, ssoConfig(c.env), {
-        userId: id,
-        status: 'revoked',
-        reason,
-      });
-    } catch {
-      // لا يُرفَع الاستثناء إلى المستخدم: نصّه قد يحمل تفصيلاً تقنياً.
-      // والسحب قائم، والناقص إظهارُ سببه في شبكة المركز وحده.
-      return c.json({ ok: true, reported: false });
-    }
+  //
+  // والحالتان تُبلَّغان لا السحبُ وحده. `functions/api/internal/access.js`
+  // يقبل `granted` و `revoked` ولا ثالث لهما — قرأتُه من مصدره. وترك
+  // إعادة التفعيل بلا تبليغ يُبقي صفّ الوصول `revoked` في المركز، فيردّ
+  // `‎/go/:id` عضواً تراه هذه المنصة نشطاً: بابٌ مغلق بلا سبب ظاهر.
+  //
+  // وعضوٌ بلا بريد لا يُبلَّغ عنه — لا يُخمَّن له بريد ولا يُرسَل فارغاً.
+  const email = (row.email ?? '').trim();
+  if (!email) return c.json({ ok: true, reported: false });
+
+  try {
+    await reportAccessChange(c.env, ssoConfig(c.env), {
+      email,
+      state: body.is_active ? 'granted' : 'revoked',
+      // السبب لحالة السحب وحدها: المركز يعرضه للعضو حرماناً، ولا معنى له
+      // مع المنح — و`reportAccessChange` تُسقط الفارغ من الجسم أصلاً.
+      reason: body.is_active ? undefined : reason,
+    });
+  } catch {
+    // لا يُرفَع الاستثناء إلى المستخدم: نصّه قد يحمل تفصيلاً تقنياً.
+    // والتغيير قائم محلياً، والناقص موافقةُ المركز عليه.
+    return c.json({ ok: true, reported: false });
   }
 
-  // إعادةُ التفعيل لا تُبلَّغ: مفردات `status` لدى المركز غير موثّقة إلا
-  // لحالة السحب، وإرسال قيمة مخمَّنة أسوأ من عدم الإرسال. الأثر موصوف في
-  // `audit/sso-report.md` تحت ما يحتاج قراراً.
   return c.json({ ok: true, reported: true });
 });
 

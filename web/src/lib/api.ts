@@ -121,20 +121,73 @@ export interface Attachment {
   created_at: number;
 }
 
+/* ============================================================
+   شكل الردّ يتبع طبيعة الطلب — والفرعان كلاهما لازم.
+
+   منذ `naf-auth@v3.0.0` يفرّق الوسيط بين تصفّحٍ ونداءٍ برمجي بطبيعة الطلب،
+   فنداء `fetch` بلا جلسة يأخذ 401 ومعه `login`، والعضو الموقوف يأخذ 403
+   ومعه `denied`. وبدون قراءة الفرعين هنا:
+
+     انتهاء الرمز  → خطأ شبكة مبهم (الرمز يعيش ربع ساعة، فهذا يقع كثيراً)
+     إيقاف العضو   → شاشة خاوية بلا سبب
+
+   ولا يُكتفى بإعادة تحميل الصفحة عند 401: التحميل يعيد الطلب على الوسيط
+   تنقّلَ متصفحٍ فيحوّل — لكنه يفقد ما كان القارئ يفعله، ويدور بلا نهاية إن
+   كان سبب الردّ رفضاً لا انتهاء جلسة.
+   ============================================================ */
+
+/**
+ * وجهة العودة تُصحَّح من موضع المتصفّح.
+ *
+ * الوسيط يبني `next` من مسار الطلب — وهو مسار برمجي (`/api/auth/me` مثلاً).
+ * فالعودة بعده تضع القارئ أمام ردّ JSON خام. والمتصفّح وحده يعرف موضعه
+ * الحقيقي، فمنه تُؤخذ الوجهة.
+ *
+ * ومسار الرفض يُستثنى: وضعُه وجهةً يعيد القارئ إلى الرفض بعد الدخول، فتدور
+ * الحلقة ولا تُقرأ الرسالة أصلاً.
+ */
+function withCurrentNext(login: string): string {
+  try {
+    const url = new URL(login, window.location.origin);
+    if (window.location.pathname === '/denied') url.searchParams.delete('next');
+    else url.searchParams.set('next', window.location.pathname + window.location.search);
+    return url.toString();
+  } catch {
+    return login;
+  }
+}
+
+/**
+ * يقرأ فرعَي المنع. يعيد `true` إن بدأ تحويل — وعندها لا يُكمل النداء ولا
+ * يُظهر خطأً: الصفحة على وشك أن تُغادر، ورسالةُ خطأ تومض قبلها ضجيج.
+ */
+function handleAuthRedirect(res: Response, data: unknown): boolean {
+  const body = (data ?? {}) as { login?: string; denied?: string };
+
+  if (res.status === 401 && body.login) {
+    window.location.href = withCurrentNext(body.login);
+    return true;
+  }
+  if (res.status === 403 && body.denied) {
+    window.location.href = body.denied;
+    return true;
+  }
+  return false;
+}
+
+/** وعدٌ لا يُحلّ: التحويل جارٍ، فلا نتيجة بعده ولا خطأ. */
+function pending<T>(): Promise<T> {
+  return new Promise<T>(() => {});
+}
+
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...opts,
     headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
     credentials: 'same-origin',
   });
-  // الجلسة المنتهية: الوسيط يردّ 401 على نداءات الـ API بدل تحويلٍ لا يستطيع
-  // `fetch` اتّباعه عبر النطاقات. وإعادة التحميل تُمرّر الطلب على الوسيط
-  // نفسه تنقّلَ متصفحٍ، فيحوّل إلى المركز — ولا تجدّد الجلسة نفسها.
-  if (res.status === 401) {
-    location.reload();
-    throw new Error('انتهت جلسة دخولك. سجّل الدخول من جديد');
-  }
   const data = await res.json().catch(() => ({}));
+  if (handleAuthRedirect(res, data)) return pending<T>();
   if (!res.ok) throw new Error((data as any).error ?? 'خطأ في الاتصال');
   return data as T;
 }
@@ -185,8 +238,9 @@ export const api = {
     const fd = new FormData();
     fd.append('file', file);
     const res = await fetch(`/api/files/upload/${conversationId}`, { method: 'POST', body: fd, credentials: 'same-origin' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? 'فشل الرفع');
+    const data = await res.json().catch(() => ({}));
+    if (handleAuthRedirect(res, data)) return pending<any>();
+    if (!res.ok) throw new Error((data as any).error ?? 'فشل الرفع');
     return data;
   },
   exportUrl: (messageId: string, format: 'docx' | 'txt') => `/api/files/export/${messageId}?format=${format}`,
@@ -302,8 +356,9 @@ export const api = {
   deadlines: (payload: any) => req<{ result: string }>('/tools/deadlines', { method: 'POST', body: JSON.stringify(payload) }),
   transcribe: async (blob: Blob) => {
     const res = await fetch('/api/tools/transcribe', { method: 'POST', body: blob, credentials: 'same-origin' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? 'فشل التفريغ');
+    const data = await res.json().catch(() => ({}));
+    if (handleAuthRedirect(res, data)) return pending<{ text: string }>();
+    if (!res.ok) throw new Error((data as any).error ?? 'فشل التفريغ');
     return data as { text: string };
   },
 };
@@ -351,6 +406,9 @@ export async function streamChat(
 
   if (!res.ok || !res.body) {
     const err = await res.json().catch(() => ({ error: 'خطأ في الاتصال' }));
+    // الجلسة تنتهي أثناء محادثة مفتوحة أكثر مما تنتهي بين نداءين: البثّ هو
+    // أطول ما يبقى مفتوحاً. فيُقرأ فرعا المنع هنا كما يُقرآن في `req`.
+    if (handleAuthRedirect(res, err)) return;
     handlers.onError?.((err as any).error ?? 'خطأ في التوليد');
     return;
   }

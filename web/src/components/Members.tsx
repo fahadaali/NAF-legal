@@ -137,7 +137,13 @@ export default function Members() {
     setBusy(m.user_id);
     try {
       const r = await api.setMemberActive(m.user_id, !m.is_active, reason);
-      if (r.reported === false) {
+      // النصّ المسجَّل في naf-terms.md §«شاشة أعضاء المنصة» للسحب وحده،
+      // و`m.is_active` هي الحال قبل التبديل — فصدقُها هنا يعني أننا نسحب.
+      //
+      // وإعادة التفعيل صارت تُبلَّغ كذلك (انظر `routes/members.ts`)، ولا نصّ
+      // مسجَّل لتعذّر تبليغها بعد. فلا يُعرض نصّ السحب في غير موضعه ولا
+      // يُؤلَّف نصّ محلي — والمصطلح يُسجَّل في السجلّ أولاً.
+      if (r.reported === false && m.is_active) {
         setError('سُحب الوصول في هذه المنصة، ولم يبلغ السحبُ المركزَ. أعد المحاولة');
       }
       load();

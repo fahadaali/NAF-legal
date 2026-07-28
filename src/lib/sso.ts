@@ -162,36 +162,61 @@ export function ssoConfig(env: Env): AuthConfig {
     publicPrefixes: PUBLIC_PREFIXES,
     defaultRole: DEFAULT_ROLE,
     onClaims: (claims) => linkExistingMember(claims, env),
+
+    /**
+     * حالة ردّ المركز تُسجَّل مع رمز الخطأ لا الرمز وحده.
+     *
+     * الرمز وحده يجعل كل فشل `auth_failed` بلا سبب، والفرق بين تشخيص في
+     * دقيقة وآخر في ساعة هو هذا السطر. والحالة تفرّق ما لا يفرّقه الرمز:
+     *
+     *   secret_missing              السرّ غير مضبوط
+     *   exchange_failed — … (401)   السرّ خاطئ أو `platformId` لا يطابق
+     *   exchange_failed — … (400)   رمز عبور مستهلَك — لا تُحدَّث صفحة الاستقبال
+     *   exchange_failed — … (403)   لا صفّ `granted` في `platform_access`
+     *   bad_issuer / bad_audience   `AUTH_ISSUER` أو `PLATFORM_ID` لا يطابق حرفياً
+     *   callback_failed — no such table   الهجرة لم تُطبَّق
+     *
+     * ورسالة الخطأ لا تُلحق إن كانت نسخةً من الرمز: تكرارُه ضجيج لا خبر.
+     * والسرّ لا يمرّ بهذه الدالة — `exchangeCode` لا تُدخله في رسالة خطأ.
+     */
+    onError: (code, err) => {
+      const message = err instanceof Error ? err.message : '';
+      const status = message && message !== code ? ` — ${message}` : '';
+      console.error(`naf-auth: ${code}${status}`);
+    },
   });
 }
 
 /**
  * الوسيط.
  *
- * يقرأ نتيجة `authenticate` ويحقن المستخدم في السياق. وزيادتان على غلاف
- * Hono الجاهز في الحزمة، كلتاهما من منطق هذه المنصة لا من منطق المصادقة:
+ * يقرأ نتيجة `authenticate` ويحقن المستخدم في السياق. وزيادةٌ واحدة على
+ * غلاف Hono الجاهز في الحزمة، وهي من منطق هذه المنصة لا من منطق المصادقة:
  *
- * ١) الهوية المحقونة هي المعرّف المحلي لا `sub`. كل جداول المنصة تعلّق على
- *    `users(id)`، فحقنُ `sub` يقطع كل مستخدم مُرحَّل عن محادثاته وملفاته.
- *    و`members.local_user_id` هو الجسر، وهو مضمون الوجود لأن `onClaims`
- *    يهيّئه لكل عضو بلا استثناء.
+ * الهوية المحقونة هي المعرّف المحلي لا `sub`. كل جداول المنصة تعلّق على
+ * `users(id)`، فحقنُ `sub` يقطع كل مستخدم مُرحَّل عن محادثاته وملفاته.
+ * و`members.local_user_id` هو الجسر، وهو مضمون الوجود لأن `onClaims`
+ * يهيّئه لكل عضو بلا استثناء.
  *
- * ٢) طلب API غير مصادَق يعود 401 لا تحويلاً. التحويل صحيح لتنقّل المتصفح،
- *    أمّا `fetch` فيتبع الـ 302 إلى نطاق المركز فيسقط على سياسة المصدر
- *    وتظهر للمستخدم رسالة شبكة لا معنى لها. والـ 401 يجعل الواجهة تعيد
- *    تحميل الصفحة، فيمرّ الطلب على هذا الوسيط نفسه ويُحوَّل كما ينبغي —
- *    فالنتيجة واحدة: الجلسة المنتهية تعود إلى المركز ولا تجدّد نفسها.
+ * وما كان زيادةً ثانية أُسقط: كان هذا الوسيط يحوّل ردّ الحزمة إلى 401 حين
+ * يبدأ المسار بـ `/api/`. ومنذ `v3.0.0` تفرّق الحزمة بين تصفّحٍ ونداءٍ
+ * برمجي **بطبيعة الطلب** (`Sec-Fetch-Mode` ثم `Accept`، والبادئة آخر ما
+ * يُسأل) — فالتفريق بالبادئة صار خطأً لا تكراراً:
+ *
+ *   `/api/files/export/…` و `/api/cases/:id/export` و `/api/kb/…/file`
+ *   روابط **تنزيل يفتحها المستخدم بنفسه**، وهي تنقّلٌ لا نداء `fetch`.
+ *   فبالبادئة كان التنقّل إليها يأخذ 401 بجسم JSON، فيقرأ المستخدم نصّاً
+ *   خاماً مكان أن يعود إلى الدخول.
+ *
+ * والحزمة تعطي الآن ما يناسب كلاً منهما: 302 للتنقّل، و401 ومعه `login`
+ * لنداء `fetch`، و403 ومعه `denied` للعضو الموقوف — والفرعان يُقرآن في
+ * `web/src/lib/api.ts`.
  */
 export async function ssoMiddleware(c: Ctx, next: Next) {
   const config = ssoConfig(c.env);
   const result = await authenticate(c.req.raw, c.env, config);
 
-  if (result.response) {
-    if (c.req.path.startsWith('/api/') && result.response.status === 302) {
-      return c.json({ error: 'انتهت جلسة دخولك. سجّل الدخول من جديد' }, 401);
-    }
-    return result.response;
-  }
+  if (result.response) return result.response;
 
   if (result.user) {
     const row = await c.env.DB.prepare(
