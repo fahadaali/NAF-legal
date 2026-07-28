@@ -57,16 +57,13 @@ id = "REPLACE_WITH_KV_ID"
 # `wrangler.toml` ويجعل ما فيه هو الحقيقة، فربطٌ يُضاف من `Settings ← Bindings`
 # يمحوه أوّل نشر. وهو عنوان مساحة لا مفتاح وصول، فلا سرّ فيه.
 #
-# أنشئها من اللوحة (`Storage & Databases ← KV ← Create a namespace`) باسم
-# `naf-legal-AUTH_KV`، أو:  npx wrangler kv namespace create AUTH_KV
-# ثم ضع المعرّف (٣٢ محرفاً ست عشرياً) مكان القيمة أدناه — أو شغّل
-# `scripts/setup-cloudflare.sh` فيملأها.
+# المساحة قائمة باسم `NAF-legal-AUTH_KV` ومعرّفها أدناه.
 #
 # ولا تستعمل `--update-config`: يضيف كتلة ثانية بجانب هذه فيصير ربطان
 # باسم واحد والنشر يفشل.
 [[kv_namespaces]]
 binding = "AUTH_KV"
-id = "REPLACE_WITH_AUTH_KV_ID"
+id = "e206bee958fd4fbba92f266757dc04db"
 
 # ملاحظة: أُزيل Queues لدعم الخطة المجانية؛ يُنفَّذ التضمين مباشرةً عبر
 # ctx.waitUntil بعد رفع وثيقة قاعدة المعرفة.

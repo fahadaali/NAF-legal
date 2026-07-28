@@ -59,14 +59,20 @@ fi
 # مستقلّة عن المساحة أعلاه: الحزمة تكتب فيها `sess:` و `jwks:` وحدها، فلا
 # يُسقط مسحُ إحداهما الأخرى. والمعرّف يُلتزَم في `wrangler.toml` لا في اللوحة —
 # النشر من Workers Builds يقرأ الملف ويمحو ما يُضاف من `Settings ← Bindings`.
-say "إنشاء مساحة KV للدخول الموحّد (AUTH_KV)"
-AUTH_KV_OUT=$(npx wrangler kv namespace create AUTH_KV 2>&1 || true)
-echo "$AUTH_KV_OUT"
-AUTH_KV_ID=$(echo "$AUTH_KV_OUT" | grep -oE 'id ?= ?"?[0-9a-f]{32}"?' | extract_id || true)
-if [ -z "${AUTH_KV_ID:-}" ]; then
-  echo "لم أستطع قراءة AUTH_KV id تلقائيًا. نفّذ: npx wrangler kv namespace list ثم ضعه يدويًا في $TOML"
+# والمساحة قد تكون مثبَّتة في الملف أصلاً. فلا تُنشأ ثانية: مساحتان بالاسم
+# نفسه تتركان جلسات المستخدمين في واحدة والقراءة من الأخرى.
+if grep -q "REPLACE_WITH_AUTH_KV_ID" "$TOML"; then
+  say "إنشاء مساحة KV للدخول الموحّد (AUTH_KV)"
+  AUTH_KV_OUT=$(npx wrangler kv namespace create AUTH_KV 2>&1 || true)
+  echo "$AUTH_KV_OUT"
+  AUTH_KV_ID=$(echo "$AUTH_KV_OUT" | grep -oE 'id ?= ?"?[0-9a-f]{32}"?' | extract_id || true)
+  if [ -z "${AUTH_KV_ID:-}" ]; then
+    echo "لم أستطع قراءة AUTH_KV id تلقائيًا. نفّذ: npx wrangler kv namespace list ثم ضعه يدويًا في $TOML"
+  else
+    sed -i.bak "s/REPLACE_WITH_AUTH_KV_ID/$AUTH_KV_ID/" "$TOML" && ok "AUTH_KV id = $AUTH_KV_ID"
+  fi
 else
-  sed -i.bak "s/REPLACE_WITH_AUTH_KV_ID/$AUTH_KV_ID/" "$TOML" && ok "AUTH_KV id = $AUTH_KV_ID"
+  ok "AUTH_KV مثبَّتة في $TOML — لم تُنشأ ثانية"
 fi
 
 # ── Queue ──
