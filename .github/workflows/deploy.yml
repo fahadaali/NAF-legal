@@ -46,12 +46,21 @@ jobs:
       - name: بناء الواجهة
         run: npm run build:web
 
+      # الإنشاء لحساب جديد وحده. متى كانت المعرّفات مثبَّتة في `wrangler.toml`
+      # فالموارد قائمة، وإعادة `kv namespace create` تُنشئ مساحة جديدة بالاسم
+      # نفسه في كل نشر — فتتكاثر المساحات ويصير التقاط إحداها بـ`head -1`
+      # قرعةً: جلسات المستخدمين في واحدة والقراءة من أخرى.
       - name: تجهيز موارد Cloudflare (idempotent)
         run: |
           set +e
-          npx wrangler d1 create naf_legal
-          npx wrangler r2 bucket create naf-legal-files
-          npx wrangler kv namespace create KV
+          if grep -q "REPLACE_WITH_" wrangler.toml; then
+            npx wrangler d1 create naf_legal
+            npx wrangler r2 bucket create naf-legal-files
+            npx wrangler kv namespace create KV
+            npx wrangler kv namespace create AUTH_KV
+          else
+            echo "المعرّفات مثبَّتة في wrangler.toml — لا إنشاء ولا تكاثر."
+          fi
           # فهارس Vectorize اختيارية (تتطلّب صلاحية Vectorize في الرمز):
           npx wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
           npx wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
@@ -60,15 +69,23 @@ jobs:
       - name: حقن المعرّفات في wrangler.toml
         run: |
           set -euo pipefail
+          if ! grep -q "REPLACE_WITH_D1_ID\|REPLACE_WITH_KV_ID\|REPLACE_WITH_AUTH_KV_ID" wrangler.toml; then
+            echo "المعرّفات مثبَّتة — لا حقن."
+            exit 0
+          fi
           D1_ID=$(npx wrangler d1 list --json | jq -r '.[] | select(.name=="naf_legal") | .uuid' | head -1)
-          KV_ID=$(npx wrangler kv namespace list | jq -r '.[] | select(.title|endswith("KV")) | .id' | head -1)
-          if [ -z "$D1_ID" ] || [ -z "$KV_ID" ]; then
-            echo "تعذّر الحصول على معرّفات D1/KV — تحقّق من صلاحيات الرمز." >&2
+          # المطابقة بالاسم كاملاً لا بلاحقته: `endswith("KV")` يطابق `AUTH_KV`
+          # أيضاً، فيأخذ حدُّ المعدّل مساحةَ المصادقة أو العكس.
+          KV_ID=$(npx wrangler kv namespace list | jq -r '.[] | select(.title=="naf-legal-KV") | .id' | head -1)
+          AUTH_KV_ID=$(npx wrangler kv namespace list | jq -r '.[] | select(.title=="naf-legal-AUTH_KV") | .id' | head -1)
+          if [ -z "$D1_ID" ] || [ -z "$KV_ID" ] || [ -z "$AUTH_KV_ID" ]; then
+            echo "تعذّر الحصول على معرّفات D1/KV/AUTH_KV — تحقّق من صلاحيات الرمز." >&2
             exit 1
           fi
           sed -i "s/REPLACE_WITH_D1_ID/$D1_ID/" wrangler.toml
           sed -i "s/REPLACE_WITH_KV_ID/$KV_ID/" wrangler.toml
-          echo "D1=$D1_ID  KV=$KV_ID"
+          sed -i "s/REPLACE_WITH_AUTH_KV_ID/$AUTH_KV_ID/" wrangler.toml
+          echo "D1=$D1_ID  KV=$KV_ID  AUTH_KV=$AUTH_KV_ID"
 
       # إعداد الدخول الموحّد يأتي من إعدادات المستودع لا من الشيفرة: المعرّف
       # والنطاق متغيّران عامّان، والسرّ سرّ. والخطوة تتوقّف قبل النشر إن نقص
@@ -79,34 +96,50 @@ jobs:
           AUTH_ISSUER: ${{ vars.AUTH_ISSUER }}
         run: |
           set -euo pipefail
-          if [ -z "${PLATFORM_ID:-}" ] || [ -z "${AUTH_ISSUER:-}" ]; then
-            echo "::error::اضبط PLATFORM_ID و AUTH_ISSUER في GitHub › Settings › Secrets and variables › Actions › Variables" >&2
-            exit 1
+          # القيمتان قد تكونا مثبَّتتين في الملف — وهو الأصحّ: تُراجَعان مع
+          # الكود ولا سرّ فيهما. فمتغيّرا المستودع احتياطٌ لهما لا شرطٌ عليهما.
+          if grep -q "REPLACE_WITH_PLATFORM_ID\|REPLACE_WITH_AUTH_ISSUER" wrangler.toml; then
+            if [ -z "${PLATFORM_ID:-}" ] || [ -z "${AUTH_ISSUER:-}" ]; then
+              echo "::error::اضبط PLATFORM_ID و AUTH_ISSUER في GitHub › Settings › Secrets and variables › Actions › Variables — أو ثبّتهما في wrangler.toml" >&2
+              exit 1
+            fi
+            case "$AUTH_ISSUER" in
+              https://*) ;;
+              *) echo "::error::AUTH_ISSUER يجب أن يبدأ بـ https://" >&2; exit 1 ;;
+            esac
+            sed -i "s|REPLACE_WITH_PLATFORM_ID|$PLATFORM_ID|" wrangler.toml
+            sed -i "s|REPLACE_WITH_AUTH_ISSUER|$AUTH_ISSUER|" wrangler.toml
           fi
-          case "$AUTH_ISSUER" in
-            https://*) ;;
-            *) echo "::error::AUTH_ISSUER يجب أن يبدأ بـ https://" >&2; exit 1 ;;
-          esac
-          sed -i "s|REPLACE_WITH_PLATFORM_ID|$PLATFORM_ID|" wrangler.toml
-          sed -i "s|REPLACE_WITH_AUTH_ISSUER|$AUTH_ISSUER|" wrangler.toml
           # مسحة أخيرة: لا تبقى قيمة نائبة واحدة في ملف يُنشر.
           if grep -q "REPLACE_WITH_" wrangler.toml; then
             echo "::error::بقيت قيمة نائبة في wrangler.toml" >&2
             grep -n "REPLACE_WITH_" wrangler.toml >&2
             exit 1
           fi
+          # والمعرّف يُطبع للمراجعة: حرفٌ بحالة أخرى يجعل كل رمز يُرفض صامتاً.
+          grep -E '^(PLATFORM_ID|AUTH_ISSUER) *=' wrangler.toml
 
       - name: ضبط سرّ المنصة لدى المركز
         env:
           AUTH_CLIENT_SECRET: ${{ secrets.AUTH_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          if [ -z "${AUTH_CLIENT_SECRET:-}" ]; then
-            echo "::error::اضبط AUTH_CLIENT_SECRET في أسرار المستودع — بدونه تفشل مبادلة رمز العبور" >&2
-            exit 1
+          if [ -n "${AUTH_CLIENT_SECRET:-}" ]; then
+            # عبر المدخل القياسي: لا يظهر في سطر أمر ولا في سجلّ التشغيل.
+            printf '%s' "$AUTH_CLIENT_SECRET" | npx wrangler secret put AUTH_CLIENT_SECRET
+            echo "السرّ حُدّث من أسرار المستودع."
+          else
+            # وضعُه من لوحة Cloudflare مباشرةً صحيح — بل هو الأضيق مساراً: لا
+            # يمرّ بـ GitHub أصلاً. لكن لا يُفترَض وجوده، فيُتحقَّق منه:
+            # غيابُه لا يُسقط النشر، وإنما يُسقط كل دخول بـ`secret_missing`
+            # بعد أن يصير كل شيء أخضر — وهو أسوأ وقت لاكتشافه.
+            if npx wrangler secret list | grep -q "AUTH_CLIENT_SECRET"; then
+              echo "السرّ مضبوط في Cloudflare — لم يُلمس."
+            else
+              echo "::error::AUTH_CLIENT_SECRET غير مضبوط لا في أسرار المستودع ولا في Cloudflare. بدونه تفشل كل مبادلة بـ secret_missing" >&2
+              exit 1
+            fi
           fi
-          # عبر المدخل القياسي: لا يظهر في سطر أمر ولا في سجلّ التشغيل.
-          printf '%s' "$AUTH_CLIENT_SECRET" | npx wrangler secret put AUTH_CLIENT_SECRET
 
       - name: تطبيق ترحيلات قاعدة البيانات
         run: npx wrangler d1 migrations apply naf_legal --remote
