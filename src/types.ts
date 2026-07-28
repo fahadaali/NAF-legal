@@ -9,6 +9,9 @@ export interface Env {
   CONV_VECTORIZE?: VectorizeIndex;
   AI: Ai;
   KV: KVNamespace;
+  // مساحة الدخول الموحّد — مستقلّة عن `KV` أعلاه. تكتب فيها الحزمة
+  // `sess:` و `jwks:` وحدها، فلا تزاحم مفاتيح حدّ المعدّل (`rl:`).
+  AUTH_KV: KVNamespace;
   ASSETS: Fetcher;
   // vars
   APP_NAME: string;
@@ -17,12 +20,11 @@ export interface Env {
   EMBEDDING_MODEL: string;
   DATA_REGION: string;
   // ── الدخول الموحّد ──
-  // وهذه وحدها ما يتغيّر بين منصة وأخرى. `AUTH_KV_BINDING` يوجّه الحزمة إلى
-  // مساحة KV القائمة بدل إنشاء ثانية، ومفاتيحها (`sess:` و `jwks:` و `st:`)
-  // لا تزاحم مفاتيح حدّ المعدّل (`rl:`).
+  // وهذان وحدهما ما يتغيّر بين منصة وأخرى. `PLATFORM_ID` هو `aud` في الرمز
+  // والمقارنة حرفية ولا تُطبَّع، و`AUTH_ISSUER` هو `iss` وكذلك — فحرف واحد
+  // بحالة أخرى أو شرطة أخيرة زائدة تجعل كل رمز صحيح يُرفض، والرفض صامت.
   PLATFORM_ID: string;
   AUTH_ISSUER: string;
-  AUTH_KV_BINDING?: string;
   // secrets
   ANTHROPIC_API_KEY: string;
   JWT_SECRET: string;

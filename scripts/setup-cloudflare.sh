@@ -55,12 +55,29 @@ else
   sed -i.bak "s/REPLACE_WITH_KV_ID/$KV_ID/" "$TOML" && ok "KV id = $KV_ID"
 fi
 
+# ── مساحة KV للدخول الموحّد ──
+# مستقلّة عن المساحة أعلاه: الحزمة تكتب فيها `sess:` و `jwks:` وحدها، فلا
+# يُسقط مسحُ إحداهما الأخرى. والمعرّف يُلتزَم في `wrangler.toml` لا في اللوحة —
+# النشر من Workers Builds يقرأ الملف ويمحو ما يُضاف من `Settings ← Bindings`.
+say "إنشاء مساحة KV للدخول الموحّد (AUTH_KV)"
+AUTH_KV_OUT=$(npx wrangler kv namespace create AUTH_KV 2>&1 || true)
+echo "$AUTH_KV_OUT"
+AUTH_KV_ID=$(echo "$AUTH_KV_OUT" | grep -oE 'id ?= ?"?[0-9a-f]{32}"?' | extract_id || true)
+if [ -z "${AUTH_KV_ID:-}" ]; then
+  echo "لم أستطع قراءة AUTH_KV id تلقائيًا. نفّذ: npx wrangler kv namespace list ثم ضعه يدويًا في $TOML"
+else
+  sed -i.bak "s/REPLACE_WITH_AUTH_KV_ID/$AUTH_KV_ID/" "$TOML" && ok "AUTH_KV id = $AUTH_KV_ID"
+fi
+
 # ── Queue ──
 # ── الأسرار ──
 say "الأسرار المطلوبة (تُدخَل مرّة واحدة)"
 echo "شغّل الأوامر التالية وأدخِل القيم عند الطلب:"
 echo "  npx wrangler secret put ANTHROPIC_API_KEY"
 echo "  npx wrangler secret put JWT_SECRET   # سلسلة عشوائية طويلة، مثل: openssl rand -hex 32"
+# سرّ هذه المنصة لدى المركز. يعرضه naf-id مرة واحدة عند الإنشاء — فإن فُقد
+# فدوّره من لوحة الإدارة. ولا يُكتب في ملف ولا يُمرَّر في وسيط سطر أوامر.
+echo "  npx wrangler secret put AUTH_CLIENT_SECRET   # من naf-id ← لوحة الإدارة ← المنصات"
 
 # ── الترحيلات على السحابة ──
 say "تطبيق ترحيلات قاعدة البيانات على السحابة"
