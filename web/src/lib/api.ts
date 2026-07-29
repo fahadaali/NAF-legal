@@ -205,8 +205,17 @@ export const api = {
   // والتحويلة تقصد المركز لا جذر هذه المنصة. والجذر كان يعيد الخارجَ إلى
   // شاشته في الحال: هو محميّ، فيحوّله الوسيط إلى المركز، وجلسة المركز لم
   // تُمسّ فتُصدر رمزاً جديداً. فيقرأ المستخدم أن الزرّ لا يعمل.
+  //
+  // و`POST` بنموذجٍ لا `location.href`: رابطٌ يُخرج صاحبَه بمجرّد فتحه تكفي
+  // صورةٌ في صفحةٍ أجنبية لتشغيله — `<img src="…/auth/logout">` يُخرج قارئَها
+  // من المنصة بلا علمه. والتنقّل يبقى تنقّلاً، فالردّ ٣٠٢ يتّبعه المتصفح كما
+  // كان. وهو ما تفعله `naf-marketing` و`NAF-Accountant` أصلاً.
   logout: async () => {
-    location.href = '/auth/logout';
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/auth/logout';
+    document.body.appendChild(form);
+    form.submit();
   },
 
   // الأعضاء والصلاحيات — لمدير المنصة
