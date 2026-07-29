@@ -61,6 +61,10 @@
   position: sticky;
   top: 0;
   height: 100dvh;
+  /* الشريط يملأ الارتفاع كلَّه، فطرفاه يقعان تحت النتوء وتحت شريط
+     الإيماءات معاً حين تُفتح الصفحة تطبيقاً. */
+  padding-block-start: env(safe-area-inset-top);
+  padding-block-end: env(safe-area-inset-bottom);
 }
 
 .naf-sidebar-header {
@@ -158,8 +162,15 @@
   flex-direction: column;
 }
 
+/* الترويسة ملاصقةٌ لأعلى الشاشة، وشريط الحالة شفّاف في تطبيق الشاشة
+   الرئيسية — فتمتدّ الصفحة تحته. الحشو العلويّ من الجهاز، والارتفاع يزيد
+   بمقداره فلا يُضغط المحتوى بدل أن يُزاح.
+
+   و`env()` تساوي صفراً خارج التطبيق المضاف، فالسطران لا يفعلان شيئاً في
+   المتصفّح العادي ولا على سطح المكتب. */
 .naf-header {
-  height: var(--shell-header);
+  height: calc(var(--shell-header) + env(safe-area-inset-top));
+  padding-block-start: env(safe-area-inset-top);
   flex-shrink: 0;
   display: flex;
   align-items: center;
