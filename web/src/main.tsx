@@ -5,6 +5,7 @@ import App from './App';
 import './naf/naf-font.css';
 import './naf/naf-theme.css';
 import './naf/naf-app-shell.css';
+import './naf/naf-safe-area.css';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(

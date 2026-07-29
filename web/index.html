@@ -2,9 +2,28 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      `viewport-fit=cover` لازم مع شريط الحالة الشفّاف أدناه: بدونه يترك
+      النظام شريطاً بلون الخلفية أعلى الشاشة بدل أن تمتدّ الصفحة تحت النتوء.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1c2433" />
     <link rel="icon" type="image/svg+xml" href="/brand/naf-mark-dark.svg" />
+    
+    <!--
+      تطبيق الشاشة الرئيسية — الوثيقة في docs/naf-pwa.md.
+
+      الوسمان معاً لا أحدهما: أندرويد يقرأ المانيفست ويتجاهل وسوم apple،
+      وآيفون لا يقرأ أيقونات المانيفست إطلاقاً ولا يقرأ إلا `apple-touch-icon`.
+      ومانيفستٌ كامل الأيقونات بلا ذلك الوسم يعطي آيفون لقطةً من الصفحة مكان
+      الأيقونة — وهي تتغيّر بتغيّر الصفحة التي أُضيف منها.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="مستشار ناف" />
+
     <title>مستشار ناف — منصة الاستشارات القانونية الذكية</title>
     <script>
       // ضبط المظهر مبكرًا لتفادي الوميض.
