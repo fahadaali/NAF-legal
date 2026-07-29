@@ -19,8 +19,9 @@ export default function AccountMenu({
   onLogout: () => void;
 }) {
   return (
+    // الاسم يُمرَّر كما هو ولو كان فارغاً — البديل في المكوّن المسجَّل
     <NafAccountMenu
-      name={user.name ?? 'مستخدم'}
+      name={user.name}
       email={user.email}
       role={ROLE_LABELS[user.role]}
       appearance={<ThemeToggle choice={theme} onChange={onThemeChange} />}

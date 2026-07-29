@@ -30,6 +30,8 @@ const TERMS = {
   account: "الحساب",
   signOut: "تسجيل الخروج",
   appearance: "المظهر",
+  /** حسابٌ بلا اسم مسجَّل. لا البريد مكانه — naf-terms.md §١٠. */
+  noName: "مستخدم",
 }
 
 /* ── حالة الدرج ── */
@@ -238,8 +240,14 @@ export interface AccountMenuItem {
 }
 
 export interface AccountMenuProps {
-  /** الاسم المعروض. الأحرف الأولى منه تبني البديل عن الصورة. */
-  name: string
+  /**
+   * اسم صاحب الحساب كما هو مسجَّل في المركز — لا بريده ولا درجته.
+   *
+   * يُمرَّر كما هو ولو كان فارغاً: البديل هنا لا في المنصة، وإلا اختار
+   * كلٌّ بديله. وقع فعلاً — منصتان وضعتا البريد مكان الاسم الغائب،
+   * والبريد معرّف دخول لا يُخاطَب به أحد (naf-terms.md §١٠).
+   */
+  name?: string | null
   email?: string
   /** درجة الصلاحية كما هي مسجّلة في naf-terms.md — لا تُصاغ هنا. */
   role?: string
@@ -276,6 +284,9 @@ export function AccountMenu({
   const wrapRef = React.useRef<HTMLDivElement>(null)
   const triggerRef = React.useRef<HTMLButtonElement>(null)
 
+  // البديل يُحسم هنا مرّة واحدة للمنصات الخمس
+  const shown = name?.trim() || TERMS.noName
+
   // النقر خارج القائمة يغلقها، وEsc يغلقها ويعيد التركيز إلى زرّها —
   // وإلا ضاع التركيز في أوّل الصفحة بعد الإغلاق بلوحة المفاتيح.
   React.useEffect(() => {
@@ -308,19 +319,26 @@ export function AccountMenu({
         onClick={() => setOpen((v) => !v)}
       >
         <span className="naf-avatar" aria-hidden="true">
-          {initial(name)}
+          {initial(shown)}
         </span>
+        {/* الاسم وحده في الترويسة — لا الدور ولا البريد.
+            كانت الخمس تعرض ثلاثة أشياء مختلفة في هذا الموضع: اثنتان
+            الاسمَ ودرجتَه، واثنتان البريد، وواحدة البريد ودرجته. فمن
+            يفتح منصتين يرى نفسه شخصين. والدرجة والبريد لم يُحذفا —
+            انتقلا إلى صدر القائمة، حيث يُطلبان عن قصد. */}
         <span className="naf-account-text">
-          <span className="naf-account-name">{name}</span>
-          {role ? <span className="naf-account-role">{role}</span> : null}
+          <span className="naf-account-name">{shown}</span>
         </span>
         <ChevronDown size={16} className="naf-account-chevron" aria-hidden="true" />
       </button>
 
       {open ? (
         <div className="naf-account-menu" role="menu">
+          {/* صدر القائمة يحمل الهوية كاملة: الاسم ثم الدرجة ثم البريد.
+              هنا موضعها لا في الترويسة — يُقرأ عند طلبه. */}
           <div className="naf-account-menu-header">
-            <div className="naf-account-name">{name}</div>
+            <div className="naf-account-name">{shown}</div>
+            {role ? <div className="naf-account-role">{role}</div> : null}
             {/* البريد يخلط لاتينياً بعربية الواجهة، فيُعزل اتجاهه */}
             {email ? (
               <bdi className="naf-account-menu-email">{email}</bdi>
