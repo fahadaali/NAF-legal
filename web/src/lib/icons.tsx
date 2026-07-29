@@ -53,6 +53,7 @@ import {
   Share2,
   ShieldCheck,
   ShieldX,
+  SlidersHorizontal,
   SpellCheck,
   Square,
   Stamp,
@@ -131,6 +132,7 @@ export const Icon = {
   support: LifeBuoy,       // الدعم — قرار معتمد من المالك، بانتظار تسجيله في naf-icons.md
   notifications: Bell,     // الإشعارات
   menu: Menu,              // القائمة
+  adminPanel: SlidersHorizontal, // لوحة الإدارة — وليست Settings (إعدادات) ولا LayoutDashboard (لوحة التحكم)
   next: ArrowLeft,         // التالي
   light: Sun,              // المظهر: الوضع الفاتح
   dark: Moon,              // المظهر: الوضع الداكن

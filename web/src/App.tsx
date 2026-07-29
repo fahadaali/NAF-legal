@@ -11,6 +11,8 @@ import CaseFile from './components/CaseFile';
 import Support from './components/Support';
 import Denied from './components/Denied';
 import Members from './components/Members';
+import AccountMenu from './components/AccountMenu';
+import NotificationBell from './components/NotificationBell';
 import { useTheme } from './lib/theme';
 import { Icon, ICON_MD, ICON_LG } from './lib/icons';
 
@@ -96,16 +98,66 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell">
-      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+    <div className="naf-shell naf-shell--fixed">
+      <div
+        className={`naf-backdrop ${sidebarOpen ? 'is-open' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+        aria-hidden="true"
+      />
 
-      <div className="main">
-        {/* مفتاح الشريط الجانبي — يظهر على الشاشات الصغيرة وحدها، حيث يكون
-            الشريط خارج الشاشة. يبقى في كل الشاشات لا في المحادثة فقط. */}
-        <button className="sidebar-toggle" onClick={() => setSidebarOpen((o) => !o)} title="القائمة">
-          <Icon.menu size={ICON_MD} aria-hidden />
-        </button>
+      {/* الشريط أوّلَ الهيكل: جهة البداية هي اليمين في RTL. كان آخره فوقع
+          يساراً وحده بين المنصات الخمس. */}
+      <Sidebar
+        user={user}
+        open={sidebarOpen}
+        activeConv={activeConv}
+        view={view}
+        refreshKey={refreshKey}
+        onSelectConv={(id) => {
+          setActiveConv(id);
+          openView('chat');
+        }}
+        onNewChat={() => {
+          setActiveConv(null);
+          openView('chat');
+        }}
+        onOpenAdmin={() => openView('admin')}
+        onOpenMembers={() => openView('members')}
+        onOpenTools={() => openView('tools')}
+        onOpenDeadlines={() => openView('deadlines')}
+        onOpenCase={() => openView('case')}
+        onOpenSupport={() => openView('support')}
+      />
 
+      <div className="naf-main">
+        {/* الترويسة الموحّدة — زرّ القائمة دون نقطة الانكسار، والإشعارات
+            وقائمة الحساب في نهايتها. تسجيل الخروج داخل القائمة لا زرّاً
+            في أسفل الشريط كما كان. */}
+        <header className="naf-header">
+          <div className="naf-header-start">
+            <button
+              type="button"
+              className="naf-icon-btn naf-menu-btn"
+              aria-label="القائمة"
+              aria-expanded={sidebarOpen}
+              aria-controls="naf-sidebar"
+              onClick={() => setSidebarOpen((o) => !o)}
+            >
+              <Icon.menu size={ICON_MD} aria-hidden />
+            </button>
+          </div>
+          <div className="naf-header-end">
+            <NotificationBell />
+            <AccountMenu
+              user={user}
+              theme={theme}
+              onThemeChange={setTheme}
+              onLogout={handleLogout}
+            />
+          </div>
+        </header>
+
+        <main className="naf-content naf-content--flush">
         {view === 'chat' && (
           <ChatView
             key={activeConv ?? 'new'}
@@ -132,35 +184,12 @@ export default function App() {
           <CaseFile onOpenConversation={(id) => { setActiveConv(id); openView('chat'); }} />
         )}
         {view === 'support' && <Support />}
+        </main>
+
         <div className="disclaimer-bar">
           كل مخرجات المنصّة مسوّدات مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.
         </div>
       </div>
-
-      <Sidebar
-        user={user}
-        open={sidebarOpen}
-        activeConv={activeConv}
-        view={view}
-        refreshKey={refreshKey}
-        onSelectConv={(id) => {
-          setActiveConv(id);
-          openView('chat');
-        }}
-        onNewChat={() => {
-          setActiveConv(null);
-          openView('chat');
-        }}
-        onOpenAdmin={() => openView('admin')}
-        onOpenMembers={() => openView('members')}
-        onOpenTools={() => openView('tools')}
-        onOpenDeadlines={() => openView('deadlines')}
-        onOpenCase={() => openView('case')}
-        onOpenSupport={() => openView('support')}
-        onLogout={handleLogout}
-        theme={theme}
-        onThemeChange={setTheme}
-      />
     </div>
   );
 }

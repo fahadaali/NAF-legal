@@ -1,0 +1,539 @@
+/* ============================================================
+   هيكل ناف الموحّد — شريط جانبي وترويسة وحاضن محتوى.
+
+   لماذا CSS لا Tailwind وحدها: المنصات الخمس ليست على تقنية واحدة.
+   الاستبانات والمحاسب على Tailwind، والتسويق ومستشار ناف يكتبان CSS
+   خاماً، ومولّد التقارير صفحات HTML ثابتة بلا بناء أصلاً. فلو كُتب
+   الهيكل أصنافَ Tailwind لَما استهلكه إلا اثنان، وأعاد الثلاثة كتابته
+   بأيديهم — وهو الانحراف نفسه الذي وقع أوّل مرّة: شريط جانبي بعرض 260
+   في التسويق و264 في المحاسب و300 في مستشار ناف، وثلاث نقاط انكسار
+   مختلفة، وأربع صور لزرّ الخروج.
+
+   فالهيكل ملفٌّ واحد تستورده المنصات الخمس كما هو، والمكوّن
+   `app-shell.tsx` يُصدر هذه الأصناف نفسها لمن يكتب React. لا نسختان.
+
+   كل القيم رموز من naf-theme.css. والخصائص كلها منطقية الاتجاه
+   (inline-start / inline-end) فالهيكل يعمل في RTL وLTR بلا فرع.
+   ============================================================ */
+
+/* نقطة الانكسار الوحيدة: 900 بكسل.
+
+   مكتوبة رقماً هنا لأن @media لا تقرأ var() — لا متصفّح يحلّ خاصية
+   مخصّصة داخل استعلام وسائط، وهذا قيد اللغة لا اختيار. فتُكتب مرّة
+   واحدة في هذا الملف المسجَّل، ولا تُكرَّر في منصة. المنصة التي تحتاج
+   الانكسار في شيفرتها تسأل `matchMedia('(width < 900px)')` أو تستهلك
+   `.naf-only-mobile` و`.naf-only-desktop` أدناه.
+
+   والرقم 900 لا 768: الشريط 280 بكسل، وعند 768 يبقى للمحتوى 488 —
+   وهو أضيق من أن يحمل جدولاً أو نموذجاً من عمودين. */
+
+.naf-shell {
+  display: flex;
+  min-height: 100dvh;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* هيكل بارتفاع الشاشة لا بارتفاع محتواه — للمنصات التي تدير شاشاتها
+   تمريرها بنفسها (`naf-content--flush`). بدونه تمتدّ الصفحة بطول
+   المحادثة ويظهر شريط تمرير للصفحة كلّها فوق شريط تمرير اللوح. */
+.naf-shell--fixed {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* ── الشريط الجانبي ── */
+
+.naf-sidebar {
+  width: var(--shell-sidebar);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--sidebar);
+  color: var(--sidebar-foreground);
+  border-inline-end: 1px solid var(--sidebar-border);
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+}
+
+.naf-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--sidebar-border);
+  min-height: var(--shell-header);
+}
+
+.naf-sidebar-brand-name {
+  font-size: var(--text-base);
+  font-weight: 700;
+  line-height: var(--text-base--line-height);
+}
+
+.naf-sidebar-brand-sub {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  /* على سطح --sidebar لا --card: الرمز المخصّص للسطح هو ما يقيس تباينه. */
+  color: color-mix(in oklab, var(--sidebar-foreground) 70%, transparent);
+}
+
+.naf-sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.naf-nav-section {
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 600;
+  color: color-mix(in oklab, var(--sidebar-foreground) 70%, transparent);
+}
+
+.naf-nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: 600;
+  color: var(--sidebar-foreground);
+  text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: start;
+  width: 100%;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.naf-nav-link:hover {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.naf-nav-link.is-active {
+  background: var(--sidebar-primary);
+  color: var(--sidebar-primary-foreground);
+}
+
+/* الأيقونة لا تنكمش حين يطول النصّ */
+.naf-nav-link > svg {
+  flex-shrink: 0;
+}
+
+.naf-sidebar-footer {
+  padding: var(--space-4);
+  border-top: 1px solid var(--sidebar-border);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  color: color-mix(in oklab, var(--sidebar-foreground) 70%, transparent);
+}
+
+/* ── المنطقة الرئيسية ── */
+
+/* min-width: 0 لازمة لا زينة: عنصر flex عرضه الأدنى محتواه، فجدولٌ
+   عريض داخله يدفع الهيكل كلّه فيتجاوز عرض الشاشة بدل أن يتمرّر. */
+.naf-main {
+  flex: 1;
+  min-width: 0;
+  /* min-height: 0 للسبب نفسه في المحور الرأسي — يحتاجها الابن الذي
+     يمرّر نفسه (`naf-content--flush`) ولا تضرّ غيره. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.naf-header {
+  height: var(--shell-header);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-inline: var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 85%, transparent);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.naf-header-start,
+.naf-header-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* ── فتات المسار ── */
+
+.naf-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+}
+
+/* القصّ على كل فتاتة مع min-width: 0 على الحاضن: مسارٌ طويل يُقصَّر
+   بدل أن يدفع الترويسة فتتجاوز الشاشة عند 375 بكسل. */
+.naf-crumb {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  text-decoration: none;
+}
+
+.naf-crumb:hover {
+  color: var(--foreground);
+}
+
+.naf-crumb.is-current {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.naf-crumb-sep {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+/* ── الأزرار الأيقونية في الترويسة ── */
+
+.naf-icon-btn {
+  width: var(--space-9);
+  height: var(--space-9);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  border: none;
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.naf-icon-btn:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* زرّ القائمة — لا وجود له فوق نقطة الانكسار */
+.naf-menu-btn {
+  display: none;
+}
+
+/* ── قائمة الحساب ── */
+
+.naf-account-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.naf-account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-lg);
+  border: none;
+  background: none;
+  color: var(--foreground);
+  cursor: pointer;
+  max-width: 100%;
+  transition: background-color 0.12s;
+}
+
+.naf-account:hover {
+  background: var(--accent);
+}
+
+.naf-avatar {
+  width: var(--space-9);
+  height: var(--space-9);
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  /* نصّ على خلفية soft يأخذ الرمز strong لا الأساسي — §٦ */
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+/* الاسم والدرجة يختفيان دون نقطة الانكسار: الأحرف الأولى تكفي
+   للتعرّف، والترويسة على 375 بكسل لا تتّسع لسطرين ونصّ. */
+.naf-account-text {
+  display: none;
+  min-width: 0;
+  text-align: start;
+}
+
+.naf-account-name {
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.naf-account-role {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.naf-account-chevron {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  transition: transform 0.15s;
+}
+
+.naf-account[aria-expanded='true'] .naf-account-chevron {
+  transform: rotate(180deg);
+}
+
+.naf-account-menu {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + var(--space-2));
+  /* العرض من المحتوى لا رقماً مكتوباً — وسقفُه أضيق الشاشة دائماً */
+  width: max-content;
+  max-width: min(var(--page-narrow), calc(100vw - var(--space-6)));
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-2);
+  z-index: 30;
+}
+
+.naf-account-menu-header {
+  padding: var(--space-2) var(--space-3);
+}
+
+.naf-account-menu-email {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.naf-account-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: var(--space-2) 0;
+  border: none;
+}
+
+.naf-account-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: none;
+  background: none;
+  color: var(--foreground);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: 500;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.naf-account-menu-item:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.naf-account-menu-item > svg {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+/* الخروج إجراء مغادرة لا هدم: يأخذ لون النصّ العادي، وتمييزه باللون
+   المدمّر يجعله يُقرأ حذفاً. §٦ — اللون للحالة لا للتشديد. */
+
+/* مجموعة المظهر داخل القائمة تُعرض صفّاً واحداً */
+.naf-account-menu-appearance {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ── المحتوى ── */
+
+.naf-content {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-6) var(--space-4);
+}
+
+/* شاشة تدير تمريرها بنفسها — محادثة أو محرّر أو لوح.
+
+   الحشو والتمرير من الحاضن يكسرانها: لوحُ المحادثة يملأ الارتفاع
+   ويمرّر رسائله وحده، فحشوٌ حوله يزيح حقل الكتابة عن أسفل الشاشة،
+   وتمريرٌ ثانٍ فوق تمريره يعطي شريطَي تمرير متداخلين.
+
+   min-height: 0 لازمة: عنصر flex ارتفاعه الأدنى محتواه، فبدونها
+   يمتدّ اللوح بطول رسائله بدل أن يمرّرها داخل حدوده. */
+.naf-content--flush {
+  padding: 0;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* حاضن الصفحة — الدرجة تُختار بصنف لا برقم يُكتب في الشاشة */
+.naf-page {
+  width: 100%;
+  margin-inline: auto;
+  max-width: var(--page-default);
+}
+
+.naf-page--narrow { max-width: var(--page-narrow); }
+.naf-page--wide { max-width: var(--page-wide); }
+.naf-page--full { max-width: none; }
+
+/* ── الحجاب والدرج ── */
+
+.naf-backdrop {
+  display: none;
+}
+
+/* ── إظهار وإخفاء حسب المقاس ── */
+
+.naf-only-mobile { display: none; }
+
+/* ── التركيز ──
+   حلقة ظاهرة على كل عنصر تفاعلي في الهيكل. §٤ تجعلها إلزامية،
+   ووضعها هنا يعني أن منصةً لا تنساها. */
+
+.naf-nav-link:focus-visible,
+.naf-icon-btn:focus-visible,
+.naf-account:focus-visible,
+.naf-account-menu-item:focus-visible,
+.naf-crumb:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   دون 900 بكسل: الشريط يصير درجاً
+   ============================================================ */
+
+@media (width < 900px) {
+  /* الشريط يخرج عن مجرى الصفحة فيأخذ المحتوى العرض كلّه.
+
+     الإزاحة محور فيزيائي لا يقلبه dir، فالجهة تُحسم صراحةً لكل اتجاه:
+     الشريط في جهة البداية، وهي اليمين في RTL فيخرج يميناً (موجب)،
+     واليسار في LTR فيخرج يساراً (سالب). */
+  .naf-sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    inset-inline-start: 0;
+    z-index: 40;
+    height: 100dvh;
+    transform: translateX(100%);
+    transition: transform 0.25s ease-out;
+  }
+
+  [dir='ltr'] .naf-sidebar {
+    transform: translateX(-100%);
+  }
+
+  .naf-sidebar.is-open,
+  [dir='ltr'] .naf-sidebar.is-open {
+    transform: translateX(0);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .naf-menu-btn {
+    display: grid;
+  }
+
+  .naf-backdrop.is-open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: var(--overlay);
+  }
+
+  .naf-only-mobile { display: revert; }
+  .naf-only-desktop { display: none; }
+
+  .naf-content {
+    padding: var(--space-4) var(--space-3);
+  }
+}
+
+@media (width >= 900px) {
+  /* فوق نقطة الانكسار: الشريط ثابت فلا درج ولا حجاب، والحساب يقول اسمه */
+  .naf-account-text {
+    display: block;
+  }
+}
+
+/* ============================================================
+   قلب الأيقونات في الاتجاه — الكتلتان من naf-icons.md «قواعد القلب».
+
+   موضعها هنا لأن الهيكل نفسه يعرض `LogOut` في قائمة الحساب و`ChevronLeft`
+   فاصلاً لفتات المسار، في المنصات الخمس. والقاعدة كانت مكتوبة في الخريطة
+   ومطبَّقة في منصة واحدة من خمس — فكان سهم الخروج يشير إلى الخارج في
+   التسويق وإلى الداخل في الأربع الباقية. الملف المسجَّل يطبّقها مرّة
+   واحدة على الجميع.
+   ============================================================ */
+
+/* (أ) اسم واحد لا نظير له — الرسم لاتيني، فيُقلب في RTL */
+[dir='rtl'] .lucide-send,
+[dir='rtl'] .lucide-log-out,
+[dir='rtl'] .lucide-log-in,
+[dir='rtl'] .lucide-external-link,
+[dir='rtl'] .lucide-reply { transform: scaleX(-1); }
+
+/* (ب) اتجاه مزدوج — الاسم مختار بمظهره في RTL، فيُقلب في LTR */
+[dir='ltr'] .lucide-arrow-left,
+[dir='ltr'] .lucide-arrow-right,
+[dir='ltr'] .lucide-chevron-left,
+[dir='ltr'] .lucide-chevron-right { transform: scaleX(-1); }
+
+/* شيفرون قائمة الحساب رأسيّ — لا يُقلب، ودورانه عند الفتح يبقى دورانه.
+   القاعدة أعلاه لا تمسّه (`ChevronDown` ليست في الكتلتين)، وهذا توكيد. */
+
+/* الحركة تتبع تفضيل القارئ */
+@media (prefers-reduced-motion: reduce) {
+  .naf-sidebar,
+  .naf-account-chevron,
+  .naf-nav-link,
+  .naf-icon-btn,
+  .naf-account,
+  .naf-account-menu-item {
+    transition: none;
+  }
+}

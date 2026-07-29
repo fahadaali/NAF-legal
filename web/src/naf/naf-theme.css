@@ -242,6 +242,20 @@
   --space-6: calc(var(--spacing) * 6);   /* 24 */
   --space-7: calc(var(--spacing) * 7);   /* 28 */
   --space-9: calc(var(--spacing) * 9);   /* 36 */
+
+  /* [جديد] مقاسات الهيكل — عرض الشريط الجانبي وارتفاع الترويسة وحدود
+     عرض المحتوى. كانت كل منصة تكتبها بيدها، فصار الشريط 260 و264 و300
+     في ثلاث منصات، والترويسة 60 هنا و«ما تراكم» هناك. القيم رموز الآن
+     فالهيكل واحد بقياس واحد.
+
+     وحدّ عرض المحتوى ثلاث درجات لا رقم واحد: شاشةُ نموذجٍ واحد تُقرأ
+     أضيق من جدول، وسطرٌ طويل بلا حدّ يُتعب العين (§٥ «مقاس محدود
+     للنصّ الطويل»). فالدرجة تُختار بصنف مسجَّل لا برقم يُكتب في الشاشة. */
+  --shell-sidebar: 17.5rem;  /* 280 */
+  --shell-header: 3.75rem;   /* 60  */
+  --page-narrow: 36rem;      /* 576  — شاشة مهمّة واحدة: نموذج، تسجيل دخول */
+  --page-default: 75rem;     /* 1200 — الافتراضي: أغلب الشاشات */
+  --page-wide: 87.5rem;      /* 1400 — الجداول العريضة ولوحات التحليلات */
 }
 
 .dark {
@@ -404,6 +418,13 @@
   --spacing-6: var(--space-6);
   --spacing-7: var(--space-7);
   --spacing-9: var(--space-9);
+
+  /* [جديد] مقاسات الهيكل */
+  --spacing-shell-sidebar: var(--shell-sidebar);
+  --spacing-shell-header: var(--shell-header);
+  --container-page-narrow: var(--page-narrow);
+  --container-page-default: var(--page-default);
+  --container-page-wide: var(--page-wide);
 
   --color-border: var(--border);
   --color-input: var(--input);

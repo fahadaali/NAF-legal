@@ -24,11 +24,11 @@ a { color: var(--primary); }
 ::selection { background: var(--primary-soft); }
 
 /* ── تخطيط عام ── */
-.app-shell { display: flex; height: 100vh; overflow: hidden; position: relative; }
-
-/* مفتاح الشريط الجانبي وحجابه: لا وجود لهما إلا حين يخرج الشريط عن الشاشة
-   (انظر استعلام الشاشات الصغيرة في آخر الملف). */
-.sidebar-toggle, .sidebar-backdrop { display: none; }
+/* الهيكل — الشريط والترويسة والحجاب والدرج — من `naf-app-shell.css`
+   في السجلّ، لا هنا. كانت هنا نسخةٌ محلّية بعرض 300 ونقطة انكسار 760،
+   بينما التسويق على 260 و900 والمحاسب على 264 و768: ثلاثة هياكل لمعنى
+   واحد. حُذف التعريف ولم يُترك جنب المسجَّل — مصدرا حقيقة في مستودع
+   واحد أسوأ من غياب النظام (CLAUDE.md §١). */
 
 /* ── الشعار ── */
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -43,14 +43,9 @@ a { color: var(--primary); }
 }
 .brand-sub { font-size: 0.875rem; color: var(--muted-foreground); }
 
-/* ── الشريط الجانبي ── */
-.sidebar {
-  width: 300px; min-width: 300px; height: 100%;
-  background: var(--sidebar);
-  border-inline-start: 1px solid var(--border);
-  display: flex; flex-direction: column;
-}
-.sidebar-header { padding: 16px 16px; border-bottom: 1px solid var(--border); }
+/* ── محتوى الشريط الجانبي ──
+   الشريط نفسه (.naf-sidebar) وترويسته من السجلّ. ما دونه خاصٌّ
+   بالمحادثة: زرّ محادثة جديدة والبحث والقضايا وقائمة المحادثات. */
 
 .new-chat-btn {
   margin: 16px 16px 8px; padding: 12px 16px; border: none; border-radius: var(--radius-lg);
@@ -166,7 +161,7 @@ a { color: var(--primary); }
 .theme-toggle.floating { position: fixed; top: 18px; inset-inline-start: 18px; z-index: 50; }
 
 /* ── المنطقة الرئيسية ── */
-.main { flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+/* .main كانت هنا — صارت .naf-main في السجلّ. */
 
 /* ── شاشة اختيار النوع ── */
 .picker { flex: 1; overflow-y: auto; padding: 48px 24px; position: relative; }
@@ -564,28 +559,12 @@ a { color: var(--primary); }
   background: var(--card); border-top: 1px solid var(--border);
 }
 
-/* ── استجابة الشاشات الصغيرة ── */
-@media (max-width: 760px) {
-  /* الإزاحة محور فيزيائي لا يقلبه dir — الجهة تُحسم صراحةً لكل اتجاه.
-     في RTL الشريط على اليمين فيختفي يميناً، وفي LTR على اليسار. */
-  .sidebar { position: absolute; z-index: 20; height: 100%; transform: translateX(100%); transition: transform 0.25s ease-out; }
-  [dir='ltr'] .sidebar { transform: translateX(-100%); }
-  .sidebar.open { transform: translateX(0); box-shadow: var(--shadow-xl); }
+/* ── استجابة الشاشات الصغيرة ──
+   الدرج والحجاب وزرّ القائمة من السجلّ، وعلى نقطة انكسار واحدة (900)
+   تشترك فيها المنصات الخمس. ما بقي هنا شبكاتُ هذه المنصة وحدها. */
+@media (width < 900px) {
   .cards { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr; }
-
-  /* يجلس في صدر المنطقة الرئيسية لا فوقها، فلا يغطّي عنوان الشاشة */
-  .sidebar-toggle {
-    display: inline-flex; align-items: center; justify-content: center;
-    align-self: flex-start; flex-shrink: 0;
-    width: 40px; height: 40px; margin: 8px 12px 0;
-    border: 1px solid var(--border); border-radius: var(--radius-lg);
-    background: var(--card); color: var(--foreground);
-  }
-  .sidebar-backdrop {
-    display: block; position: absolute; inset: 0; z-index: 15;
-    background: color-mix(in oklab, var(--foreground) 45%, transparent);
-  }
 }
 
 /* ── الأيقونات ── */

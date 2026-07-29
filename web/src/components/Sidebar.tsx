@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react';
-import { api, Conversation, Folder, ROLE_LABELS, User } from '../lib/api';
+import { api, Conversation, Folder, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
-import NotificationBell from './NotificationBell';
-import { ConsultationIcon, Icon, ICON_SM, ICON_MD } from '../lib/icons';
+import { ConsultationIcon, Icon, ICON_SM } from '../lib/icons';
 import NafMark from './NafMark';
-import ThemeToggle from './ThemeToggle';
-import type { ThemeChoice } from '../lib/theme';
 
 interface Props {
   user: User;
@@ -21,9 +18,6 @@ interface Props {
   onOpenDeadlines: () => void;
   onOpenCase: () => void;
   onOpenSupport: () => void;
-  onLogout: () => void;
-  theme: ThemeChoice;
-  onThemeChange: (c: ThemeChoice) => void;
 }
 
 export default function Sidebar(props: Props) {
@@ -94,17 +88,13 @@ export default function Sidebar(props: Props) {
     load();
   };
 
-  const initials = (props.user.name ?? props.user.email).slice(0, 1).toUpperCase();
-
   return (
-    <aside className={`sidebar ${props.open ? 'open' : ''}`}>
-      <div className="sidebar-header">
-        <div className="brand">
-          <NafMark />
-          <div>
-            <div className="brand-name">مستشار ناف</div>
-            <div className="brand-sub">الاستشارات القانونية الذكية</div>
-          </div>
+    <aside id="naf-sidebar" className={`naf-sidebar ${props.open ? 'is-open' : ''}`}>
+      <div className="naf-sidebar-header">
+        <NafMark />
+        <div>
+          <div className="naf-sidebar-brand-name">مستشار ناف</div>
+          <div className="naf-sidebar-brand-sub">الاستشارات القانونية الذكية</div>
         </div>
       </div>
 
@@ -126,6 +116,21 @@ export default function Sidebar(props: Props) {
       <button className="tools-link" onClick={props.onOpenDeadlines}><Icon.appointment size={ICON_SM} aria-hidden /> المواعيد النظامية</button>
       <button className="tools-link" onClick={props.onOpenCase}><Icon.matter size={ICON_SM} aria-hidden /> ملف القضية</button>
       <button className="tools-link" onClick={props.onOpenSupport}><Icon.support size={ICON_SM} aria-hidden /> الدعم</button>
+
+      {/* شاشتا الإدارة تنقّلٌ لا أوامرُ حساب، فموضعهما الشريط مع بقية
+          الوجهات — كانتا في أسفل الشريط مع الخروج والمظهر، فيبحث عنهما
+          المسؤول حيث لا تكونان. والقائمة في الترويسة للهوية والمظهر
+          والخروج وحدها، في المنصات الخمس. */}
+      {props.user.role === 'admin' && (
+        <>
+          <button className="tools-link" onClick={props.onOpenAdmin}>
+            <Icon.adminPanel size={ICON_SM} aria-hidden /> لوحة الإدارة
+          </button>
+          <button className="tools-link" onClick={props.onOpenMembers}>
+            <Icon.permissions size={ICON_SM} aria-hidden /> المستخدمون والصلاحيات
+          </button>
+        </>
+      )}
 
       <div className="folder-bar">
         <button className={`folder-chip ${!activeFolder ? 'active' : ''}`} onClick={() => setActiveFolder(null)}>
@@ -166,39 +171,9 @@ export default function Sidebar(props: Props) {
         ))}
       </div>
 
-      <div className="sidebar-footer">
-        <div className="user-chip">
-          <div className="user-avatar">{initials}</div>
-          <div>
-            <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{props.user.name ?? 'مستخدم'}</div>
-            <div style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>
-              {ROLE_LABELS[props.user.role]}
-            </div>
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
-            {props.user.role === 'admin' && (
-              <>
-                <button className="link-btn" onClick={props.onOpenAdmin}>
-                  لوحة الإدارة
-                </button>
-                <button className="link-btn" onClick={props.onOpenMembers}>
-                  المستخدمون والصلاحيات
-                </button>
-              </>
-            )}
-            {/* «تسجيل الخروج» — المصطلح المسجَّل في `naf-terms.md` §١٠.
-                و«خروج» ممنوعة صراحةً في §١: هي مرادفٌ مرفوض لـ«إغلاق»،
-                فيستوي في زرّين اثنين إغلاقُ نافذةٍ وإنهاءُ جلسة. */}
-            <button className="link-btn" onClick={props.onLogout}>
-              تسجيل الخروج
-            </button>
-          </div>
-          <NotificationBell />
-          <ThemeToggle choice={props.theme} onChange={props.onThemeChange} />
-        </div>
-      </div>
+      {/* الهوية والمظهر والإشعارات وتسجيل الخروج انتقلت إلى قائمة الحساب
+          في الترويسة — الموضع نفسه في المنصات الخمس. وكانت هنا في أسفل
+          الشريط، فيختفي الخروج كلّه حين ينزلق الشريط خارج الشاشة. */}
     </aside>
   );
 }
