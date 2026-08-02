@@ -31,9 +31,9 @@ import { bindCookieName } from 'naf-auth/middleware';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const ISSUER = 'https://naf-id.pages.dev';
+const ISSUER = 'https://app.naflaw.sa';
 const PLATFORM = 'NAF-legal';            // بحالة أحرفه — والمقارنة حرفية
-const ORIGIN = 'https://naf-legal.naflaw-sa.workers.dev';
+const ORIGIN = 'https://advisor.naflaw.sa';
 const SECRET = 'the-platform-secret';
 const ALGO = { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' };
 
