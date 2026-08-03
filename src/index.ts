@@ -21,7 +21,8 @@ import notificationRoutes from './routes/notifications';
 import clauseRoutes from './routes/clauses';
 import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
-import { runTrackingScan, runNewsDigest, runDeadlineReminders } from './cron';
+import legalRoutes from './routes/legal';
+import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
 import type { Env, Variables } from './types';
@@ -99,6 +100,7 @@ app.route('/api/notifications', notificationRoutes);
 app.route('/api/clauses', clauseRoutes);
 app.route('/api/cases', caseRoutes);
 app.route('/api/regulation-requests', regulationRequestRoutes);
+app.route('/api/legal', legalRoutes);
 app.route('/api/members', memberRoutes);
 
 // أي مسار /api غير معروف
@@ -120,6 +122,8 @@ export default {
 
   // Cron لتتبّع الأنظمة — §7
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(Promise.all([runTrackingScan(env), runNewsDigest(env), runDeadlineReminders(env)]).then(() => {}));
+    ctx.waitUntil(
+      Promise.all([runTrackingScan(env), runNewsDigest(env), runDeadlineReminders(env), runLegalEmbedding(env)]).then(() => {})
+    );
   },
 };

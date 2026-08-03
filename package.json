@@ -13,6 +13,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply naf_legal --remote",
     "typecheck": "tsc --noEmit",
     "check:sso": "node audit/sso-contract-check.mjs",
+    "check:legal": "node audit/legal-contract-check.mjs",
+    "import:legal": "node scripts/import-legal.mjs",
     "seed": "wrangler d1 execute naf_legal --local --file=./migrations/0002_seed.sql",
     "icons": "node scripts/build-app-icons.mjs web/public/brand/naf-mark.svg web/src/naf/naf-theme.css web/public/icons"
   },

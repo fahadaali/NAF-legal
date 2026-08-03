@@ -35,11 +35,14 @@
 src/                     # خلفية Cloudflare Worker
   index.ts               # نقطة الدخول: التوجيه، الأمان، Cron، Queue
   types.ts               # أنواع البيئة (bindings)
-  routes/                # auth · conversations · chat · files · kb · admin
-  lib/                   # crypto · auth · claude · planner · rag · prompts · docx · extract
-  ingest.ts              # مستهلك Queue: التقسيم والتضمين إلى Vectorize
-  cron.ts                # تتبّع الأنظمة عبر بحث مقيّد بالمصادر الرسمية
+  routes/                # auth · conversations · chat · files · kb · legal · admin
+  lib/                   # crypto · auth · claude · planner · rag · legal · arabic · prompts · docx · extract
+  ingest.ts              # التقسيم والتضمين للوثائق المرفوعة
+  cron.ts                # تتبّع الأنظمة + تصريف تضمين المقاطع المستوردة
 migrations/              # مخطط D1 (§9) + بذور الأنظمة الأولية
+audit/                   # فحوص العقود: الدخول الموحّد · استيراد المحتوى النظامي
+docs/legal-import.md     # عقد استيراد المحتوى النظامي
+scripts/import-legal.mjs # استيراد ملف JSONL على دفعات
 web/                     # واجهة React + Vite (RTL)
   src/components/        # Auth · Sidebar · ChatView · Admin
   src/lib/               # api · consultations · markdown
@@ -154,6 +157,32 @@ npm run deploy
 - **ترويسات أمان:** عبر `secureHeaders` من Hono.
 - **إخلاء مسؤولية ثابت:** في واجهة كل محادثة وفي تذييل كل مخرَج Word.
 - **PDPL:** التشفير في النقل والتخزين مُفعَّل افتراضيًا على Cloudflare؛ لتوطين البيانات راجِع القيود الاختصاصية لـ D1/R2. الأسرار عبر `wrangler secret` لا في المستودع.
+
+---
+
+## استيراد المحتوى النظامي
+
+مصدران يغذّيان قاعدة المعرفة:
+
+**١) وثائق تُرفَع** (PDF/Word/نص) فيستخرج منها النصّ ويقطّعه المُستوعِب — لأن لا أحد قطّعها قبلنا.
+
+**٢) مقاطع تُستورَد** بعقد `JSONL`: سطر مستقل لكل مادة، مقطوعةً سلفاً بحدودها الصحيحة. **والتقطيع التلقائي معطَّل في هذا المسار** — إعادة تقطيعها تقصّ في منتصف المواد بلا وعي بحدودها.
+
+```bash
+npm run import:legal -- --file laws.jsonl --url https://advisor.naflaw.sa --cookie "naf_session=…"
+npm run check:legal   # فحص العقد على الكود نفسه
+```
+
+أربعة التزامات يقوم عليها العقد:
+
+| | |
+|---|---|
+| **الاستيراد** | سطر = مقطع · UTF-8 بلا BOM · **استبدال (`upsert`) على `id` لا إضافة** |
+| **الفهرسة** | `embed_text` وحده يصير متجهاً · `text` وحده يُعرض ويُستشهد به |
+| **البحث** | دلاليّ + لفظيّ مدموجان · تطبيع عربي (الهمزات، التاء المربوطة، الألف المقصورة، التشكيل، التطويل) |
+| **التصفية** | السريان (`status` · `is_repealed`) **في طبقة الاسترجاع لا في الواجهة** — فلا يتجاوزها تقرير ولا أتمتة ولا واجهة برمجية |
+
+التفصيل والحقول والمسارات في **[`docs/legal-import.md`](docs/legal-import.md)**.
 
 ---
 
