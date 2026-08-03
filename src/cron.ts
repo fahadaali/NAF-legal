@@ -3,6 +3,7 @@
 import { callClaude, webSearchTool, TRACKING_DOMAINS } from './lib/claude';
 import { notify } from './lib/notify';
 import { dualDate } from './lib/hijri';
+import { embedPending } from './lib/legal';
 import type { Env } from './types';
 
 // ── تنبيهات المواعيد النظامية: تُذكِّر قبل 7 و3 و1 يوم ومتأخّرة ──
@@ -229,4 +230,20 @@ async function checkRegulation(env: Env, title: string): Promise<{ changed: bool
     } catch {}
   }
   return { changed: false, summary: 'تعذّر تحليل نتيجة الفحص' };
+}
+
+// ── تصريف تضمين المقاطع النظامية المستوردة ──
+//
+// الاستيراد يكتب إلى D1 ثم يضمّن ما يسعه في الطلب نفسه، وما زاد يبقى
+// معلَّقاً. هذه المهمة تُكمل الباقي: ملفٌّ كبير يُستورَد في ثوانٍ ويكتمل
+// تضمينه في الليلة نفسها، والبحث اللفظي يعمل عليه من لحظة الاستيراد.
+// وتبتلع خطأها: المهام الأربع تُشغَّل معاً، فرميُ واحدةٍ يُسقط البقية —
+// وجدولٌ لم تُطبَّق هجرته يوقف تنبيهات المواعيد وتتبّع الأنظمة معه.
+export async function runLegalEmbedding(env: Env): Promise<{ embedded: number; remaining: number }> {
+  try {
+    const { embedded, remaining } = await embedPending(env, 1000);
+    return { embedded, remaining };
+  } catch {
+    return { embedded: 0, remaining: 0 };
+  }
 }
