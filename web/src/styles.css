@@ -613,3 +613,5 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 /* «معطّل» مسجَّل بـ muted-foreground لا destructive: عضويةٌ موقوفة
    ليست عطلاً في النظام، واللون يقول ذلك قبل النصّ. */
 .denied-icon.muted { color: var(--muted-foreground); }
+/* خيار الاستيراد: مربّع اختيارٍ بسطره، فوق منطقة اختيار الملفات. */
+.import-option { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); font-size: 0.875rem; color: var(--muted-foreground); }

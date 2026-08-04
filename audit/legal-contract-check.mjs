@@ -273,8 +273,47 @@ await check('١ · تقرير الرفض يجمع الأسباب ويعدّها 
   assert.equal(groups[1].code, 'bad_status');
 });
 
+await check('١ · ألفاظ الحالة العربية تُقابَل بالمسجَّلة، ولا حالة رابعة', () => {
+  const rows = [
+    ['ساري', 'active'], ['سارٍ', 'active'], ['سارية', 'active'], ['نافذ', 'active'],
+    ['مُعدَّل', 'amended'], ['ملغى', 'repealed'], ['منسوخة', 'repealed'],
+  ];
+  for (const [given, expected] of rows) {
+    const p = lib.parseJsonl(line({ id: `s:${given}`, text: 'ن', embed_text: 'س', status: given }));
+    assert.deepEqual(p.errors, [], `«${given}» رُفضت`);
+    assert.equal(p.rows[0].status, expected, `«${given}» لم تُقابَل بـ${expected}`);
+    assert.equal(p.rows[0].is_repealed, expected === 'repealed' ? 1 : 0);
+  }
+});
+
+await check('١ · `embed_text` يُبنى بطلبٍ صريح وحده، ويُعَدّ ولا يقع صامتاً', () => {
+  const row = line({ id: 'b:1', law_name: 'نظام العمل', article_no: '74', text: 'نصّ المادة كما ورد' });
+
+  const strict = lib.parseJsonl(row);
+  assert.equal(strict.rows.length, 0, 'بُني بلا طلب');
+  assert.equal(strict.errors[0].code, 'missing_embed_text');
+
+  const built = lib.parseJsonl(row, { buildEmbedText: true });
+  assert.deepEqual(built.errors, []);
+  assert.equal(built.builtEmbedText, 1, 'البناء لم يُعَدّ');
+  // نصُّ التضمين مركَّب من اسم النظام ورقم المادة والنصّ — لا `text` مجرَّداً.
+  assert.equal(built.rows[0].embed_text, 'نظام العمل — المادة 74\nنصّ المادة كما ورد');
+  assert.equal(built.rows[0].text, 'نصّ المادة كما ورد', 'النصّ المعروض تغيّر');
+  assert.equal(built.rows[0].law_title, 'نظام العمل', '`law_name` لم يُقرأ');
+});
+
+await check('١ · مرادفات الحقول: law_name · date_gregorian · date_hijri', () => {
+  const p = lib.parseJsonl(
+    line({ id: 'a:1', law_name: 'نظام', date_gregorian: '2005-09-27', date_hijri: '1426/08/23هـ', text: 'ن', embed_text: 'س' })
+  );
+  assert.deepEqual(p.errors, []);
+  assert.equal(p.rows[0].law_title, 'نظام');
+  assert.equal(p.rows[0].issue_date, '2005-09-27');
+  assert.equal(p.rows[0].issue_date_hijri, '1426/08/23هـ');
+});
+
 await check('١ · حالة سريان غير معروفة تُرفض', () => {
-  const bad = lib.parseJsonl('{"id":"a","text":"ن","embed_text":"س","status":"draft"}');
+  const bad = lib.parseJsonl('{"id":"a","text":"ن","embed_text":"س","status":"مسودة"}');
   assert.equal(bad.rows.length, 0);
   assert.match(bad.errors[0].error, /status/);
 });
