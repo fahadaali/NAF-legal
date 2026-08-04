@@ -312,6 +312,34 @@ await check('١ · مرادفات الحقول: law_name · date_gregorian · da
   assert.equal(p.rows[0].issue_date_hijri, '1426/08/23هـ');
 });
 
+await check('١ · التواريخ تُقرأ كما تُكتب وتُوحَّد، والهجريُّ في حقل الميلادي يُحفظ هجرياً', () => {
+  const cases = [
+    ['2005-09-27', '2005-09-27'],
+    ['2005/9/27', '2005-09-27'],
+    ['27/09/2005', '2005-09-27'],
+    ['27-09-2005', '2005-09-27'],
+    ['2005-09-27T00:00:00Z', '2005-09-27'],
+    ['٢٠٠٥-٠٩-٢٧', '2005-09-27'],
+  ];
+  for (const [given, expected] of cases) {
+    const p = lib.parseJsonl(line({ id: `d:${given}`, text: 'ن', embed_text: 'س', date_gregorian: given }));
+    assert.deepEqual(p.errors, [], `«${given}» رُفض`);
+    assert.equal(p.rows[0].issue_date, expected, `«${given}» لم يُوحَّد`);
+  }
+
+  // هجريٌّ في حقلٍ ميلاديّ: قيمةٌ صحيحة أُسيء وضعها — تُحفظ ولا تُرمى،
+  // ولا تُكتب ميلادياً فيصير تاريخ الأداة كاذباً.
+  const h = lib.parseJsonl(line({ id: 'd:h', text: 'ن', embed_text: 'س', date_gregorian: '1426/08/23' }));
+  assert.deepEqual(h.errors, []);
+  assert.equal(h.rows[0].issue_date, null);
+  assert.equal(h.rows[0].issue_date_hijri, '1426/08/23');
+
+  // وما لا يُقرأ يبقى مرفوضاً برمزه — التساهل ليس قبولَ كل شيء.
+  const bad = lib.parseJsonl(line({ id: 'd:x', text: 'ن', embed_text: 'س', date_gregorian: 'الخميس' }));
+  assert.equal(bad.rows.length, 0);
+  assert.equal(bad.errors[0].code, 'bad_date:issue_date');
+});
+
 await check('١ · حالة سريان غير معروفة تُرفض', () => {
   const bad = lib.parseJsonl('{"id":"a","text":"ن","embed_text":"س","status":"مسودة"}');
   assert.equal(bad.rows.length, 0);

@@ -322,8 +322,16 @@ export const api = {
    * لا يرمي عند الرفض: تقرير الدفعة المرفوضة هو المطلوب عرضُه — أرقام
    * الأسطر وأسبابها — ورميُ رسالةٍ واحدة يضيّعه.
    */
-  importLegal: async (lines: string[], filename: string, buildEmbedText = false): Promise<LegalImportReport> => {
-    const query = new URLSearchParams({ filename, ...(buildEmbedText ? { build_embed_text: '1' } : {}) });
+  importLegal: async (
+    lines: string[],
+    filename: string,
+    opts: { buildEmbed?: boolean; partial?: boolean } = {}
+  ): Promise<LegalImportReport> => {
+    const query = new URLSearchParams({
+      filename,
+      ...(opts.buildEmbed ? { build_embed_text: '1' } : {}),
+      ...(opts.partial ? { partial: '1' } : {}),
+    });
     const res = await fetch(`/api/legal/import?${query}`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-ndjson' },

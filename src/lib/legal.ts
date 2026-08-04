@@ -329,7 +329,6 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string, opts: Impor
 
 const MAX_ID_LEN = 200;
 const MAX_TEXT_LEN = 200_000;
-const GREGORIAN_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** يتحقّق من سطر واحد ويحسب حقوله المشتقّة. يرمي رسالةً عربية عند الخطأ. */
 export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedChunk {
@@ -385,10 +384,11 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
   const docType = str(o.doc_type) || null;
   const instrumentNo = str(o.instrument_no) || null;
 
-  const issueDate = date(o.issue_date ?? o.issue_date_g ?? o.date_gregorian, 'issue_date');
-  const effectiveFrom = date(o.effective_from, 'effective_from');
-  const effectiveTo = date(o.effective_to, 'effective_to');
-  const issueDateHijri = str(o.issue_date_hijri) || str(o.issue_date_h) || str(o.date_hijri) || null;
+  const issue = parseDate(o.issue_date ?? o.issue_date_g ?? o.date_gregorian, 'issue_date');
+  const effectiveFrom = parseDate(o.effective_from, 'effective_from').gregorian;
+  const effectiveTo = parseDate(o.effective_to, 'effective_to').gregorian;
+  // الهجريّ الصريح أولاً، ثم ما تبيّن أنه هجريّ في حقل الميلادي.
+  const issueDateHijri = str(o.issue_date_hijri) || str(o.issue_date_h) || str(o.date_hijri) || issue.hijri || null;
 
   const known = new Set([
     'id', 'law_id', 'parent_law_id', 'doc_type', 'article_no', 'status', 'is_repealed',
@@ -416,7 +416,7 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     is_repealed: isRepealed,
     law_title: lawTitle,
     instrument_no: instrumentNo,
-    issue_date: issueDate,
+    issue_date: issue.gregorian,
     issue_date_hijri: issueDateHijri,
     effective_from: effectiveFrom,
     effective_to: effectiveTo,
@@ -445,16 +445,70 @@ function truthy(v: unknown): boolean {
   return false;
 }
 
-function date(v: unknown, field: string): string | null {
-  const s = str(v);
-  if (!s) return null;
-  if (!GREGORIAN_DATE.test(s)) {
+/**
+ * سنةٌ دونها هجرية.
+ *
+ * لا نظام سعودي صدر قبل الألف والخمسمئة ميلادية، والسنة الهجرية اليوم دون
+ * الخمسمئة والألف. فرقمٌ في هذا المدى في حقلٍ ميلاديّ خطأُ تعبئةٍ لا تاريخٌ
+ * ميلاديّ — والرفض لأجله يُسقط ملفاً كاملاً على خانةٍ واحدة.
+ */
+const HIJRI_YEAR_CEILING = 1500;
+
+/** تاريخٌ مقروءاً: ميلاديّ مطبَّع، أو هجريّ إن تبيّن أنه كذلك. */
+interface ParsedDate {
+  gregorian: string | null;
+  hijri: string | null;
+}
+
+const DATE_PARTS = /^(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{1,4})$/;
+
+/**
+ * يقرأ تاريخاً كما يكتبه الناس، ويردّه بالصيغة الواحدة.
+ *
+ * الملفات تأتي من مصادر شتّى: `2005-09-27` و`2005/9/27` و`27/09/2005`
+ * و`2005-09-27T00:00:00Z` و`٢٠٠٥-٠٩-٢٧`. وكلُّها تاريخٌ واحد، ورفضُ ملفٍ
+ * لأجل شرطةٍ مكان مائلة إتعابٌ بلا مقابل: الصيغة تُقرأ ثم تُوحَّد.
+ *
+ * وما التبس ترتيبه (`03/04/2005`) يُقرأ يوماً فشهراً — العرف المحلي.
+ */
+function parseDate(v: unknown, field: string): ParsedDate {
+  const raw = normalizeArabic(str(v));
+  if (!raw) return { gregorian: null, hijri: null };
+
+  // `2005-09-27T00:00:00Z` وما شابهه: التاريخ أوّله، والوقت لا يعني شيئاً هنا.
+  const s = raw.split(/[T\s]/)[0];
+
+  const m = DATE_PARTS.exec(s);
+  if (!m) {
     throw new ChunkError(
       `bad_date:${field}`,
-      `\`${field}\` يجب أن يكون ميلادياً بصيغة YYYY-MM-DD (التاريخ الهجري في \`issue_date_hijri\`)`
+      `\`${field}\` تاريخٌ غير مقروء: ${raw} — المقبول YYYY-MM-DD أو DD/MM/YYYY`
     );
   }
-  return s;
+
+  const [, first, middle, last] = m;
+  let year: number;
+  let month: number;
+  let day: number;
+  if (first.length === 4) {
+    [year, month, day] = [Number(first), Number(middle), Number(last)];
+  } else if (last.length === 4) {
+    [day, month, year] = [Number(first), Number(middle), Number(last)];
+  } else {
+    throw new ChunkError(`bad_date:${field}`, `\`${field}\` سنةٌ غير واضحة: ${raw} — اكتبها بأربعة أرقام`);
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new ChunkError(`bad_date:${field}`, `\`${field}\` يومٌ أو شهرٌ خارج المدى: ${raw}`);
+  }
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (year < HIJRI_YEAR_CEILING) {
+    // هجريٌّ في حقلٍ ميلاديّ. يُحفظ هجرياً ولا يُرمى: قيمةٌ صحيحة أُسيء
+    // وضعها، وإسقاطها يُفقد تاريخ الأداة النظامية كلَّه.
+    return { gregorian: null, hijri: `${year}/${pad(month)}/${pad(day)}` };
+  }
+  return { gregorian: `${year}-${pad(month)}-${pad(day)}`, hijri: null };
 }
 
 /** أسماء حقول السطر كما وردت — مقصوصةً، فهي للتشخيص لا للتخزين. */
