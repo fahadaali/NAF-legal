@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { api, ConsultConfig, FieldDef, FieldType, RegulationRequest } from '../lib/api';
+import { api, ConsultConfig, DocTemplate, FieldDef, FieldType, RegulationRequest } from '../lib/api';
+import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import { LegalImport } from './LegalImport';
 import { LegalLaws } from './LegalLaws';
@@ -796,11 +797,35 @@ function SettingsTab() {
     try {
       const fd = new FormData();
       fd.append('file', f);
+      /* المتجهة تُرفع ومعها نقطيّتها: Word لا يعرض SVG وحده — امتداده يوجب
+         بديلاً نقطياً — ولا مُحرّك رسم في Worker. والمتصفّح هنا يملكه. */
+      if (f.type.includes('svg')) fd.append('raster', await rasterizeSvg(f), 'letterhead.png');
       const res = await fetch('/api/admin/letterhead', { method: 'POST', body: fd, credentials: 'same-origin' });
       if (!res.ok) throw new Error((await res.json()).error);
-      alert('تم رفع رأسية الشركة. ستظهر في مخرجات Word.');
+      alert('تم رفع رأسية الشركة. ستظهر في مخرجات Word و PDF.');
       api.settings().then((r) => setSettings(r.settings));
     } catch (e: any) { alert(e.message ?? 'فشل الرفع'); } finally { setUploading(false); }
+  };
+
+  // يفتح صفحة طباعة بالقالب الحالي — تُراجَع الهوامش قبل تصدير مسودّة حقيقية
+  const previewTemplate = async () => {
+    let template = PRINT_TEMPLATE_FALLBACK;
+    let letterheadUrl: string | undefined;
+    try {
+      const r = await api.docTemplate();
+      template = r.template;
+      if (r.letterhead) letterheadUrl = await fetchLetterhead(api.letterheadUrl());
+    } catch {}
+    // فقرات مكرّرة تتجاوز الصفحة الواحدة: صفحة المتابعة هي موضع الخطأ عادةً
+    const sample = Array.from({ length: 14 }, () => `<p>${DISCLAIMER_TEXT}</p>`);
+    sample.splice(5, 0, '<h2>قالب المستند</h2>');
+    printDocument({
+      title: firmName || 'معاينة',
+      html: sample.join('\n'),
+      template,
+      letterheadUrl,
+      disclaimer: DISCLAIMER_TEXT,
+    });
   };
 
   return (
@@ -811,14 +836,28 @@ function SettingsTab() {
       </div>
       <button className="btn-sm primary" onClick={saveFirm}>حفظ</button>
 
-      <div className="section-title">رأسية الشركة لقوالب Word (صورة A4)</div>
+      <div className="section-title">رأسية الشركة لقوالب Word و PDF (صورة A4)</div>
       <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
-        ارفع صورة رأسية (PNG/JPEG) لتظهر أعلى كل مستند Word مُصدَّر.
-        {settings.letterhead_mime ? ' رأسية مرفوعة حاليًا.' : ' لا توجد رأسية بعد.'}
+        ارفع صورة رأسية بمقاس A4 (SVG أو PNG أو JPEG) لتُطبع خلف النص في كل صفحة من مستندات Word و PDF.
+        {settings.letterhead_mime
+          ? settings.letterhead_mime.includes('svg')
+            ? ' رأسية متجهة مرفوعة حاليًا.'
+            : ' رأسية مرفوعة حاليًا.'
+          : ' لا توجد رأسية بعد.'}
       </p>
-      <input ref={lhInput} type="file" hidden accept="image/png,image/jpeg" onChange={(e) => { uploadLetterhead(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={lhInput} type="file" hidden accept="image/svg+xml,image/png,image/jpeg" onChange={(e) => { uploadLetterhead(e.target.files?.[0]); e.target.value = ''; }} />
       <button className="btn-sm primary" onClick={() => lhInput.current?.click()} disabled={uploading}>
         {uploading ? <><span className="spinner" /> جارٍ الرفع…</> : <><Icon.upload size={ICON_SM} aria-hidden /> رفع صورة الرأسية</>}
+      </button>
+
+      <DocTemplateFields />
+
+      <div className="section-title">معاينة قالب المستند</div>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
+        يفتح صفحة طباعة بنصّ نموذجي بالقالب الحالي ورأسيته — تُراجَع فيها الهوامش قبل تصدير مسودّة حقيقية.
+      </p>
+      <button className="btn-sm" onClick={previewTemplate}>
+        <Icon.download size={ICON_SM} aria-hidden /> معاينة
       </button>
 
       <div className="section-title">بوّابة الاعتماد قبل التصدير</div>
@@ -848,6 +887,143 @@ function SettingsTab() {
       </p>
       <ClaudeCheck />
     </div>
+  );
+}
+
+/** نصّ إخلاء المسؤولية — نفسه في الشاشة وفي كل مستند مُصدَّر. */
+const DISCLAIMER_TEXT = 'هذا المحتوى مسودّة مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.';
+
+/** مقاس A4 عند ١٥٠ نقطة/بوصة — يكفي طباعةً ولا يُثقل المستند. */
+const A4_RASTER = { width: 1240, height: 1754 };
+
+/**
+ * يرسم SVG على لوحة بمقاس A4 ويعيدها PNG.
+ *
+ * ولا تُمرَّر رسالةُ الخطأ إلى الشاشة: الرفع فشل، والتفصيل في السجلّ — ونصّ
+ * الشاشة مسجَّل سلفاً في مسار الرفع.
+ */
+async function rasterizeSvg(file: File): Promise<Blob> {
+  let source = await file.text();
+  // ملفٌ بلا مقاس صريح يعطيه المتصفّح عرضاً صفرياً فلا يُرسم منه شيء
+  if (!/<svg[^>]*\swidth=/.test(source)) {
+    source = source.replace(/<svg\b/, `<svg width="${A4_RASTER.width}" height="${A4_RASTER.height}"`);
+  }
+  const url = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error());
+      img.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = A4_RASTER.width;
+    canvas.height = A4_RASTER.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error();
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error();
+    return blob;
+  } catch (e: any) {
+    console.error('svg rasterize failed:', e?.message ?? e);
+    throw new Error();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * حقول قالب المستند — يقرأها تصدير Word وطباعة PDF معاً.
+ *
+ * والهوامش هي نطاق الكتابة: ما يُترك للرأسية أعلى الورقة وللذيل أسفلها. وهي
+ * تختلف باختلاف الرأسية المرفوعة، فلا تُجمَّد في الكود.
+ */
+function DocTemplateFields() {
+  const [t, setT] = useState<DocTemplate | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.docTemplate().then((r) => setT(r.template)).catch(() => setT(PRINT_TEMPLATE_FALLBACK));
+  }, []);
+
+  if (!t) return null;
+  const set = (patch: Partial<DocTemplate>) => setT({ ...t, ...patch });
+  const nnum = (v: string, fallback: number) => (v.trim() === '' ? fallback : Number(v));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.saveSettings({
+        doc_font_family: t.fontFamily,
+        doc_heading_pt: String(t.headingPt),
+        doc_body_pt: String(t.bodyPt),
+        doc_margin_top_mm: String(t.marginTopMm),
+        doc_margin_bottom_mm: String(t.marginBottomMm),
+        doc_margin_side_mm: String(t.marginSideMm),
+      });
+      // الخادم يضبط القيم داخل حدودها، فتُقرأ ثانيةً لا يُفترض قبولها كما أُرسلت
+      const r = await api.docTemplate();
+      setT(r.template);
+      alert('تم الحفظ.');
+    } catch (e: any) {
+      alert(e.message ?? 'فشل الحفظ');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="section-title">قالب المستند: الخط ونطاق الكتابة</div>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
+        تسري على مستندات Word وصفحات الطباعة معًا. ونطاق الكتابة هو ما يُترك للرأسية أعلى الورقة وللذيل أسفلها.
+      </p>
+
+      <div className="field">
+        <label>نوع الخط</label>
+        <input
+          value={t.fontFamily}
+          onChange={(e) => set({ fontFamily: e.target.value })}
+          placeholder="IBM Plex Sans Arabic"
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div className="field" style={{ flex: '1 1 140px' }}>
+          <label>حجم العناوين (نقطة)</label>
+          <input type="number" min={8} max={48} step={1} value={t.headingPt}
+            onChange={(e) => set({ headingPt: nnum(e.target.value, t.headingPt) })} />
+        </div>
+        <div className="field" style={{ flex: '1 1 140px' }}>
+          <label>حجم المتن (نقطة)</label>
+          <input type="number" min={8} max={24} step={1} value={t.bodyPt}
+            onChange={(e) => set({ bodyPt: nnum(e.target.value, t.bodyPt) })} />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div className="field" style={{ flex: '1 1 120px' }}>
+          <label>هامش أعلى (ملّيمتر)</label>
+          <input type="number" min={0} max={120} step={1} value={t.marginTopMm}
+            onChange={(e) => set({ marginTopMm: nnum(e.target.value, t.marginTopMm) })} />
+        </div>
+        <div className="field" style={{ flex: '1 1 120px' }}>
+          <label>هامش أسفل (ملّيمتر)</label>
+          <input type="number" min={0} max={120} step={1} value={t.marginBottomMm}
+            onChange={(e) => set({ marginBottomMm: nnum(e.target.value, t.marginBottomMm) })} />
+        </div>
+        <div className="field" style={{ flex: '1 1 120px' }}>
+          <label>هامش الجانبين (ملّيمتر)</label>
+          <input type="number" min={0} max={80} step={1} value={t.marginSideMm}
+            onChange={(e) => set({ marginSideMm: nnum(e.target.value, t.marginSideMm) })} />
+        </div>
+      </div>
+
+      <button className="btn-sm primary" onClick={save} disabled={saving}>
+        {saving ? <><span className="spinner" /> جارٍ الحفظ…</> : 'حفظ'}
+      </button>
+    </>
   );
 }
 

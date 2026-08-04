@@ -3,6 +3,7 @@ import { Hono, type Context } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { zip } from '../lib/zip';
 import { buildDocx } from '../lib/docx';
+import { loadDocTemplate, loadLetterhead } from '../lib/docTemplate';
 import { CONSULTATION_LABELS } from '../lib/prompts';
 import type { Env, Variables } from '../types';
 
@@ -96,13 +97,15 @@ app.get('/:folderId/export', async (c) => {
   ].join('\n');
   files['ملخص-القضية.txt'] = summary;
 
-  // المسوّدات كملفات Word
+  // المسوّدات كملفات Word — بالقالب والرأسية نفسهما، فحزمة القضية لا تخرج
+  // بمستنداتٍ عارية بينما التصدير المفرد يخرج بالرأسية
+  const [template, letterhead] = await Promise.all([loadDocTemplate(c.env), loadLetterhead(c.env)]);
   let i = 1;
   for (const d of data.drafts as any[]) {
     const label = CONSULTATION_LABELS[d.consultation_type ?? ''] ?? 'مسودّة';
     const name = `مسودات/${String(i).padStart(2, '0')}-${safe(label)}${d.approved_at ? '-معتمدة' : ''}.docx`;
     try {
-      files[name] = buildDocx(`${label} — ${d.conv_title ?? ''}`, String(d.content ?? ''));
+      files[name] = buildDocx(`${label} — ${d.conv_title ?? ''}`, String(d.content ?? ''), { template, letterhead });
     } catch {
       files[name.replace('.docx', '.txt')] = String(d.content ?? '');
     }

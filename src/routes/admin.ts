@@ -5,6 +5,13 @@ import { runTrackingScan, runNewsDigest } from '../cron';
 import { ingestDocument } from '../ingest';
 import { getAllEffectiveConfigs, getEffectiveConfig, defaultConfig } from '../lib/consultationConfig';
 import { callClaude } from '../lib/claude';
+import {
+  DOC_TEMPLATE_KEYS,
+  LETTERHEAD_KEY,
+  LETTERHEAD_RASTER_KEY,
+  isSvgMime,
+  normalizeDocTemplate,
+} from '../lib/docTemplate';
 import { uuid, hashPassword } from '../lib/crypto';
 import { notify } from '../lib/notify';
 import type { Env, Variables } from '../types';
@@ -215,6 +222,9 @@ app.get('/settings', async (c) => {
 
 app.post('/settings', async (c) => {
   const body = await c.req.json().catch(() => ({}));
+  /* قيم قالب المستند تُضبط عند الكتابة لا عند القراءة وحدها: حقلٌ يُحفظ
+     «كبير» ويعود «كبير» في الشاشة بينما المستند يخرج بالافتراضي يُقرأ عطلاً. */
+  clampDocTemplateFields(body);
   for (const [key, value] of Object.entries(body)) {
     await c.env.DB.prepare(
       'INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
@@ -226,20 +236,41 @@ app.post('/settings', async (c) => {
   return c.json({ ok: true });
 });
 
-// رفع صورة رأسية الشركة (A4) لاستخدامها في قوالب Word
+/**
+ * رفع صورة رأسية الشركة (A4) لقالبَي Word والطباعة.
+ *
+ * والمتجهة (SVG) تُرفع معها نقطيّتها في الحقل `raster`: Word لا يعرض متجهةً
+ * وحدها — امتداد `svgBlip` يوجب بديلاً نقطياً — ولا رَسْمَ متجهات في Worker.
+ * فالمتصفّح يرسمها عند الرفع، وهو الموضع الوحيد الذي يملك مُحرّك رسم.
+ */
 app.post('/letterhead', async (c) => {
   const form = await c.req.formData();
   const file = form.get('file');
   if (!(file instanceof File)) return c.json({ error: 'لم تُرفَق صورة' }, 400);
   if (!file.type.startsWith('image/')) return c.json({ error: 'يجب أن تكون صورة' }, 415);
-  const r2Key = 'settings/letterhead';
-  await c.env.R2.put(r2Key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } });
+
+  const isSvg = isSvgMime(file.type);
+  const raster = form.get('raster');
+  if (isSvg && !(raster instanceof File)) {
+    return c.json({ error: 'تعذّر تجهيز نسخة الرأسية لقوالب Word. أعد المحاولة أو ارفعها بصيغة PNG.' }, 400);
+  }
+
+  await c.env.R2.put(LETTERHEAD_KEY, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } });
+  if (isSvg && raster instanceof File) {
+    await c.env.R2.put(LETTERHEAD_RASTER_KEY, await raster.arrayBuffer(), {
+      httpMetadata: { contentType: 'image/png' },
+    });
+  } else {
+    // رفعٌ نقطيّ بعد متجهٍ سابق: النقطية المشتقّة تصير رأسيةً غير التي رُفعت
+    await c.env.R2.delete(LETTERHEAD_RASTER_KEY).catch(() => {});
+  }
+
   await c.env.DB.prepare(
     'INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
   )
     .bind('letterhead_mime', file.type, Date.now())
     .run();
-  await audit(c, 'settings.letterhead', r2Key, { mime: file.type });
+  await audit(c, 'settings.letterhead', LETTERHEAD_KEY, { mime: file.type, vector: isSvg });
   return c.json({ ok: true, mime: file.type });
 });
 
@@ -364,6 +395,24 @@ async function ingestFromUrl(env: Env, docId: string, url: string) {
   } catch {
     await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'error' WHERE id = ?").bind(docId).run();
   }
+}
+
+/** يضبط حقول قالب المستند المُرسَلة داخل الحدود، ويترك ما عداها كما هو. */
+function clampDocTemplateFields(body: Record<string, unknown>): void {
+  const present = DOC_TEMPLATE_KEYS.filter((k) => k in body);
+  if (!present.length) return;
+  const raw: Record<string, string> = {};
+  for (const k of present) raw[k] = String(body[k] ?? '');
+  const t = normalizeDocTemplate(raw);
+  const clamped: Record<(typeof DOC_TEMPLATE_KEYS)[number], string | number> = {
+    doc_font_family: t.fontFamily,
+    doc_heading_pt: t.headingPt,
+    doc_body_pt: t.bodyPt,
+    doc_margin_top_mm: t.marginTopMm,
+    doc_margin_bottom_mm: t.marginBottomMm,
+    doc_margin_side_mm: t.marginSideMm,
+  };
+  for (const k of present) body[k] = clamped[k];
 }
 
 export default app;

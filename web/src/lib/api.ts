@@ -113,6 +113,21 @@ export interface Message {
   created_at: number;
 }
 
+/**
+ * قالب المستند — الخط والأحجام ونطاق الكتابة.
+ *
+ * مصدرٌ واحد لقالبَي Word والطباعة معاً: ما يُصدَّر وما يُطبع مستندٌ واحد.
+ * والقيم تُضبط داخل حدودها في الخادم، فما يصل هنا صالحٌ للاستعمال كما هو.
+ */
+export interface DocTemplate {
+  fontFamily: string;
+  headingPt: number;
+  bodyPt: number;
+  marginTopMm: number;
+  marginBottomMm: number;
+  marginSideMm: number;
+}
+
 export interface Attachment {
   id: string;
   filename: string;
@@ -413,6 +428,10 @@ export const api = {
     return data;
   },
   exportUrl: (messageId: string, format: 'docx' | 'txt') => `/api/files/export/${messageId}?format=${format}`,
+  /** قالب المستند وهل رُفعت رأسية — تقرأهما نافذة الطباعة قبل أن تبني الصفحة. */
+  docTemplate: () => req<{ template: DocTemplate; letterhead: boolean }>('/files/doc-template'),
+  /** صورة الرأسية كما رُفعت — متجهةً إن كانت متجهة. */
+  letterheadUrl: () => '/api/files/letterhead',
 
   // الإدارة
   kbDocuments: () => req<{ documents: any[] }>('/kb/documents'),

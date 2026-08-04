@@ -4,6 +4,7 @@ import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { extractText } from '../lib/extract';
 import { buildDocx, annotateDates } from '../lib/docx';
+import { loadDocTemplate, loadLetterhead, LETTERHEAD_KEY } from '../lib/docTemplate';
 import { toHijri } from '../lib/hijri';
 import type { Env, Variables } from '../types';
 
@@ -104,21 +105,11 @@ app.get('/export/:messageId', async (c) => {
     });
   }
 
-  // رأسية الشركة إن رُفعت (§2 قوالب)
-  let letterhead;
-  try {
-    const lhMime = await c.env.DB.prepare("SELECT value FROM app_settings WHERE key = 'letterhead_mime'").first<{ value: string }>();
-    if (lhMime?.value) {
-      const obj = await c.env.R2.get('settings/letterhead');
-      if (obj) {
-        const ext = lhMime.value.includes('jp') ? 'jpeg' : 'png';
-        letterhead = { bytes: new Uint8Array(await obj.arrayBuffer()), ext: ext as 'png' | 'jpeg' };
-      }
-    }
-  } catch {}
+  // قالب المستند ورأسية الشركة — المصدر نفسه الذي تقرأه الطباعة (§2 قوالب)
+  const [template, letterhead] = await Promise.all([loadDocTemplate(c.env), loadLetterhead(c.env)]);
 
   // يُلحق المكافئ الهجري بالتواريخ الميلادية في المخرَج النهائي
-  const docx = buildDocx(title, annotateDates(msg.content, toHijri), letterhead);
+  const docx = buildDocx(title, annotateDates(msg.content, toHijri), { template, letterhead });
   const r2Key = `exports/${user.id}/${messageId}.docx`;
   await c.env.R2.put(r2Key, docx, {
     httpMetadata: { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
@@ -132,6 +123,38 @@ app.get('/export/:messageId', async (c) => {
       'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'content-disposition': `attachment; filename="naf-${messageId}.docx"`,
     },
+  });
+});
+
+/**
+ * قالب المستند لقالب الطباعة في المتصفّح.
+ *
+ * الطباعة تجري في نافذة القارئ لا في الخادم، فتحتاج القيم نفسها التي يبني
+ * بها Word مستنده — وإلا خرج المستندان بخطّين وهامشين.
+ */
+app.get('/doc-template', async (c) => {
+  const template = await loadDocTemplate(c.env);
+  const lh = await c.env.DB.prepare("SELECT value FROM app_settings WHERE key = 'letterhead_mime'")
+    .first<{ value: string }>()
+    .catch(() => null);
+  return c.json({ template, letterhead: !!lh?.value });
+});
+
+/**
+ * صورة الرأسية كما رُفعت — المتجهة متجهةً لا نقطيّتها.
+ *
+ * نافذة الطباعة من أصل المنصة نفسه، فتحمّلها بكوكي الجلسة. ولا تُخزَّن في
+ * الوسيط: تتغيّر من لوحة الإدارة، ونسخةٌ محفوظة تُبقي رأسيةً بُدِّلت.
+ */
+app.get('/letterhead', async (c) => {
+  const row = await c.env.DB.prepare("SELECT value FROM app_settings WHERE key = 'letterhead_mime'")
+    .first<{ value: string }>()
+    .catch(() => null);
+  if (!row?.value) return c.json({ error: 'لا توجد رأسية' }, 404);
+  const obj = await c.env.R2.get(LETTERHEAD_KEY);
+  if (!obj) return c.json({ error: 'لا توجد رأسية' }, 404);
+  return new Response(obj.body, {
+    headers: { 'content-type': row.value, 'cache-control': 'no-store' },
   });
 });
 

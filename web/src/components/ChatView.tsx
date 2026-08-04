@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, Message, Attachment, Folder, ConsultConfig, streamChat } from '../lib/api';
 import { CONSULTATIONS, labelFor } from '../lib/consultations';
 import { renderMarkdown } from '../lib/markdown';
+import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
 import IntakeModal from './IntakeModal';
 import DraftEditor from './DraftEditor';
 import ClauseLibrary from './ClauseLibrary';
@@ -303,17 +304,26 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     }
   };
 
-  // تصدير PDF عبر طباعة المتصفّح (يدعم العربية أصلًا) (§4)
-  const exportPdf = (m: UiMessage) => {
-    const w = window.open('', '_blank');
-    if (!w) return;
-    w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>مستشار ناف</title>
-      <style>body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.9;padding:40px;max-width:800px;margin:auto}
-      h1,h2,h3{color:#0f766e}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:6px}
-      .disc{margin-top:40px;font-size:12px;color:#888;border-top:1px solid #ddd;padding-top:10px}</style></head>
-      <body>${renderMarkdown(m.content)}<div class="disc">هذا المحتوى مسودّة مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.</div>
-      <script>window.onload=()=>window.print()</script></body></html>`);
-    w.document.close();
+  /* تصدير PDF عبر طباعة المتصفّح (يدعم العربية أصلًا) (§4).
+     القالب في `lib/print.ts`: الخط والأحجام ونطاق الكتابة والرأسية من
+     إعدادات المنصة نفسها التي يقرأها تصدير Word. */
+  const exportPdf = async (m: UiMessage) => {
+    let template = PRINT_TEMPLATE_FALLBACK;
+    let letterheadUrl: string | undefined;
+    try {
+      const r = await api.docTemplate();
+      template = r.template;
+      if (r.letterhead) letterheadUrl = await fetchLetterhead(api.letterheadUrl());
+    } catch {
+      // إعدادٌ لم يُجلب لا يمنع طباعة مسودّة — تخرج بقالب المنصة الافتراضي.
+    }
+    printDocument({
+      title: convTitle || labelFor(convType),
+      html: renderMarkdown(m.content),
+      template,
+      letterheadUrl,
+      disclaimer: 'هذا المحتوى مسودّة مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.',
+    });
   };
 
   // مشاركة المسودّة مع محامٍ للمراجعة (§3)
