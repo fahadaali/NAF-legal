@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ConsultConfig, FieldDef, FieldType, RegulationRequest } from '../lib/api';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import { LegalImport } from './LegalImport';
+import { LegalLaws } from './LegalLaws';
 import ClauseLibrary from './ClauseLibrary';
 import { RequestStatusPill } from './Support';
 import { formatDate, formatTime } from '../lib/format';
@@ -202,6 +203,13 @@ function KbTab() {
         </div>
       )}
 
+      {/* المستورَد والمرفوع مصدران مختلفان في تبويب واحد. وبلا عنوانين كان
+          «لم تُرفع أي وثيقة بعد» يُقرأ نفياً للمحتوى كلِّه — وواحدٌ وسبعون
+          نظاماً في القاعدة. */}
+      <div className="kb-section">الأنظمة المستوردة</div>
+      <LegalLaws />
+
+      <div className="kb-section">الوثائق المرفوعة</div>
       {docs.length === 0 ? (
         <div className="empty-state">لم تُرفع أي وثيقة بعد. ابدأ برفع أول وثيقة.</div>
       ) : (

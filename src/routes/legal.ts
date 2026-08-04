@@ -15,6 +15,7 @@ import {
   getArticle,
   getChunkById,
   listLaws,
+  listLawArticles,
   getLawWithRegulations,
   legalStats,
 } from '../lib/legal';
@@ -26,8 +27,14 @@ app.use('*', requireAuth);
 /** سقف ما يُعرَض من أخطاء الأسطر في التقرير — لئلا يصير الردّ ملفاً ثانياً. */
 const MAX_REPORTED_ERRORS = 50;
 
-/** كم مقطعاً يُضمَّن داخل طلب الاستيراد نفسه قبل أن يتولّى الباقيَ الـCron. */
-const IMPORT_EMBED_BUDGET = 100;
+/**
+ * كم مقطعاً يُضمَّن داخل طلب الاستيراد نفسه قبل أن يتولّى الباقيَ الـCron.
+ *
+ * بقدر دفعة الشاشة (٥٠٠ سطر) فتُضمَّن الدفعة التي وصلت للتوّ ولا يتراكم
+ * معلَّقٌ يحتاج ليالي. كان مئةً، فترك من استورد ستّة آلاف مادة ينتظر أربع
+ * ليالٍ ليعمل نصفُ بحثه.
+ */
+const IMPORT_EMBED_BUDGET = 500;
 
 /**
  * استيراد JSONL — سطر واحد = مقطع واحد.
@@ -175,6 +182,16 @@ app.get('/article', async (c) => {
 
 /** الأنظمة المستوردة — لبناء قوائم التصفية. */
 app.get('/laws', async (c) => c.json({ laws: await listLaws(c.env) }));
+
+/** مواد نظامٍ بعينه — للتصفّح، مرتّبةً كما وردت في ملفه. */
+app.get('/laws/:lawId/articles', async (c) => {
+  const { articles, total } = await listLawArticles(c.env, c.req.param('lawId'), {
+    offset: Number(c.req.query('offset') ?? 0),
+    limit: Number(c.req.query('limit') ?? 50),
+    includeRepealed: c.req.query('include_repealed') !== '0',
+  });
+  return c.json({ articles, total });
+});
 
 /** نظامٌ مع لوائحه — العلاقة عبر `parent_law_id`. */
 app.get('/laws/:lawId', async (c) => {

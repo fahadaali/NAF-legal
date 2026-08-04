@@ -190,6 +190,46 @@ export interface LegalStats {
   vectorize: boolean;
 }
 
+/** نظامٌ مستورد وحالُ مواده. */
+export interface LegalLaw {
+  law_id: string;
+  law_title: string | null;
+  parent_law_id: string | null;
+  doc_type: string | null;
+  instrument_no: string | null;
+  issue_date: string | null;
+  issue_date_hijri: string | null;
+  source_url: string | null;
+  chunks: number;
+  effective: number;
+  repealed: number;
+}
+
+/** مادةٌ كما تُعرض — `text` وحده، ولا أثر لـ`embed_text`. */
+export interface LegalArticle {
+  id: string;
+  articleNo: string | null;
+  lawTitle: string | null;
+  instrumentNo: string | null;
+  status: string;
+  isRepealed: boolean;
+  issueDate: string | null;
+  issueDateHijri: string | null;
+  sourceUrl: string | null;
+  text: string;
+}
+
+/** دفعة استيراد كما سُجّلت. */
+export interface LegalImportRecord {
+  id: string;
+  filename: string | null;
+  lines: number;
+  inserted: number;
+  updated: number;
+  failed: number;
+  created_at: number;
+}
+
 /** سطرٌ رُفض، برقمه في الملف وسببه. */
 export interface LegalLineError {
   line: number;
@@ -316,6 +356,18 @@ export const api = {
   kbVersionFileUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/file`,
   // المحتوى النظامي المستورد — عقد الاستيراد في docs/legal-import.md
   legalStats: () => req<LegalStats>('/legal/stats'),
+  legalLaws: () => req<{ laws: LegalLaw[] }>('/legal/laws'),
+  legalLaw: (lawId: string) =>
+    req<{ law: LegalLaw; regulations: LegalLaw[] }>(`/legal/laws/${encodeURIComponent(lawId)}`),
+  legalLawArticles: (lawId: string, offset = 0, limit = 25) =>
+    req<{ articles: LegalArticle[]; total: number }>(
+      `/legal/laws/${encodeURIComponent(lawId)}/articles?offset=${offset}&limit=${limit}`
+    ),
+  legalImports: () => req<{ imports: LegalImportRecord[] }>('/legal/imports'),
+  legalEmbedPending: (limit = 1000) =>
+    req<{ embedded: number; remaining: number; skipped?: string }>(`/legal/embed-pending?limit=${limit}`, {
+      method: 'POST',
+    }),
   /**
    * يستورد دفعة أسطر JSONL.
    *
