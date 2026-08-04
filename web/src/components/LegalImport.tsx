@@ -27,6 +27,8 @@ interface FileResult {
   updated: number;
   /** مواد بُني نصُّ تضمينها لغيابه — بطلبٍ صريح. */
   built?: number;
+  /** أسطر تُخطّيت في وضع «ما صحّ». */
+  skipped?: number;
   report?: LegalImportReport;
 }
 
@@ -38,6 +40,9 @@ export function LegalImport() {
   // معطَّل افتراضياً: العقد يشترط `embed_text` في الملف، وهذا استثناءٌ يُطلَب
   // ولا يقع من نفسه — ويُقال في التقرير كم مادة بُني نصُّ تضمينها.
   const [buildEmbed, setBuildEmbed] = useState(false);
+  // الصرامة هي الافتراض: نظامٌ نصفه مستورد أسوأ من نظام لم يُستورَد. وهذا
+  // الخيار لمن يعرف ما يتخطّاه — والمتخطَّى معدودٌ ومذكورٌ بأسبابه.
+  const [partial, setPartial] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   const loadStats = () => {
@@ -63,10 +68,12 @@ export function LegalImport() {
     let inserted = 0;
     let updated = 0;
     let built = 0;
+    let skipped = 0;
+    const summary: NonNullable<LegalImportReport['error_summary']> = [];
 
     for (let start = 0; start < lines.length; start += BATCH_LINES) {
       setNow({ name: file.name, file: index + 1, files: count, batch: Math.floor(start / BATCH_LINES) + 1, batches });
-      const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name, buildEmbed);
+      const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name, { buildEmbed, partial });
       if (!batch.ok) {
         // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل دفعة
         // لا يدلّ صاحبَ الملف على شيء.
@@ -85,8 +92,14 @@ export function LegalImport() {
       inserted += batch.inserted ?? 0;
       updated += batch.updated ?? 0;
       built += batch.embed_text_built ?? 0;
+      // في وضع «ما صحّ»: الدفعة تنجح ومعها أسطرٌ متخطّاة. تُجمع أسبابها
+      // ليُقال ما فات، فتخطٍّ صامت يجعل نظاماً ناقصاً يبدو تامّاً.
+      if (batch.failed) {
+        skipped += batch.failed;
+        summary.push(...(batch.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })));
+      }
     }
-    return { name: file.name, ok: true, inserted, updated, built };
+    return { name: file.name, ok: true, inserted, updated, built, skipped, report: skipped ? { ok: true, error_summary: summary } : undefined };
   };
 
   const run = async (files: FileList | null) => {
@@ -117,7 +130,8 @@ export function LegalImport() {
     }
   };
 
-  const rejected = results.filter((r) => !r.ok);
+  // المرفوض والمُستورَد جزئياً كلاهما يحتاج جدول أسباب.
+  const withCauses = results.filter((r) => r.report?.error_summary?.length || !r.ok);
 
   return (
     <div>
@@ -136,6 +150,10 @@ export function LegalImport() {
       <label className="import-option">
         <input type="checkbox" checked={buildEmbed} disabled={busy} onChange={(e) => setBuildEmbed(e.target.checked)} />
         بناء نصّ التضمين عند غيابه — من اسم النظام ورقم المادة ونصّها
+      </label>
+      <label className="import-option">
+        <input type="checkbox" checked={partial} disabled={busy} onChange={(e) => setPartial(e.target.checked)} />
+        استيراد ما صحّ وتخطّي ما رُفض — ويُذكر المتخطّى بأسبابه
       </label>
 
       <div className="dropzone" onClick={() => !busy && input.current?.click()}>
@@ -170,6 +188,7 @@ export function LegalImport() {
                   <th>مواد جديدة</th>
                   <th>مواد مستبدَلة</th>
                   <th>نصّ تضمين مبنيّ</th>
+                  <th>أسطر متخطّاة</th>
                 </tr>
               </thead>
               <tbody>
@@ -177,21 +196,25 @@ export function LegalImport() {
                   <tr key={i}>
                     <td><bdi>{r.name}</bdi></td>
                     <td>
-                      <span className={`pill ${r.ok ? 'ready' : 'error'}`}>{r.ok ? 'تم الاستيراد' : 'الملف مرفوض'}</span>
+                      <span className={`pill ${!r.ok ? 'error' : r.skipped ? 'warn' : 'ready'}`}>
+                        {!r.ok ? 'الملف مرفوض' : r.skipped ? 'استيراد جزئي' : 'تم الاستيراد'}
+                      </span>
                     </td>
                     <td><bdi>{formatNumber(r.inserted)}</bdi></td>
                     <td><bdi>{formatNumber(r.updated)}</bdi></td>
                     <td><bdi>{formatNumber(r.built ?? 0)}</bdi></td>
+                    <td><bdi>{formatNumber(r.skipped ?? 0)}</bdi></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          {rejected.map((r, i) => (
+          {withCauses.map((r, i) => (
             <div key={i} className="import-report">
               <p>
-                <bdi>{r.name}</bdi>: {r.report?.error ?? 'أسطر غير صالحة — لم يُكتب شيء'}
+                <bdi>{r.name}</bdi>:{' '}
+                {r.ok ? 'أسطر تُخطّيت' : (r.report?.error ?? 'أسطر غير صالحة — لم يُكتب شيء')}
               </p>
               {/* «وما استُورد قبلها محفوظ» تُقال حين يكون قبلها شيء فعلاً. وقولها
                   مع صفر يُقلق بلا سبب: يوهم أن شيئاً كُتب ثم ضاع. */}
