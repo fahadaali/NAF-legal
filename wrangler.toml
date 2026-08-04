@@ -31,12 +31,22 @@ bucket_name = "naf-legal-files"
 #   wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
 #   wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
 # (يتطلّب أن يملك رمز API صلاحية Vectorize)
+#
+# ولا يلزم تعديل هذا الملف بيدك: سير النشر يفكّ التعليق بين العلامتين أدناه
+# متى وجد الفهرسين قائمين، ويتركه معلَّقاً متى لم يجدهما. فمنحُ الصلاحية
+# وحده يكفي، والنشر التالي يربط.
+#
+# ولماذا يبقى معلَّقاً بلا صلاحية: ربطٌ إلى فهرس لا وجود له يُسقط
+# `wrangler deploy` كلَّه — فيُفقد النشر بأسره مقابل ميزة اختيارية.
+#
+# VECTORIZE-BINDINGS-START
 # [[vectorize]]
 # binding = "VECTORIZE"
 # index_name = "naf-legal-kb"
 # [[vectorize]]
 # binding = "CONV_VECTORIZE"
 # index_name = "naf-legal-conv"
+# VECTORIZE-BINDINGS-END
 
 # ── الذكاء الاصطناعي للتضمينات Workers AI ──
 [ai]
