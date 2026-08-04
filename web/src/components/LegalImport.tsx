@@ -7,7 +7,8 @@
 // ولا أيقونة في هذه الشاشة: «استيراد» ليس له مقابل مسجَّل في naf-icons.md،
 // واستعارة `Upload` تصادم «رفع» المسجَّلة لمعنى آخر.
 import { useEffect, useRef, useState } from 'react';
-import { api, type LegalImportReport, type LegalStats } from '../lib/api';
+import { api, type LegalImportRecord, type LegalImportReport, type LegalStats } from '../lib/api';
+import { formatDate } from '../lib/format';
 import { formatNumber } from '../lib/format';
 
 /**
@@ -48,12 +49,36 @@ export function LegalImport() {
      تتغيّر معه أتمتةٌ ولا سكربتٌ قائم بتغيير الشاشة. */
   const [buildEmbed, setBuildEmbed] = useState(true);
   const [partial, setPartial] = useState(true);
+  const [history, setHistory] = useState<LegalImportRecord[]>([]);
+  const [draining, setDraining] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   const loadStats = () => {
     api.legalStats().then(setStats).catch(() => {});
+    api.legalImports().then((r) => setHistory(r.imports)).catch(() => {});
   };
   useEffect(loadStats, []);
+
+  /**
+   * يصرّف ما ينتظر التضمين الآن بدل انتظار الـCron.
+   *
+   * دفعاتٌ متتابعة حتى ينتهي أو يتوقّف التقدّم: نداءٌ واحد لا يسع آلاف
+   * المقاطع — لكلٍّ منها طلبٌ إلى نموذج التضمين وآخر إلى الفهرس، وللنداء سقف.
+   */
+  const drain = async () => {
+    setDraining(true);
+    try {
+      for (;;) {
+        const r = await api.legalEmbedPending(500);
+        if (!r.embedded || !r.remaining) break;
+      }
+    } catch {
+      // يبقى المعلَّق معلَّقاً ويصرّفه الـCron — لا ضرر يستدعي إنذاراً.
+    } finally {
+      setDraining(false);
+      loadStats();
+    }
+  };
 
   /**
    * يستورد ملفاً واحداً.
@@ -266,6 +291,36 @@ export function LegalImport() {
         </div>
       )}
 
+      {history.length > 0 && (
+        <>
+          <div className="kb-section">سجل الاستيراد</div>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>الملف</th>
+                  <th>التاريخ</th>
+                  <th>مواد جديدة</th>
+                  <th>مواد مستبدَلة</th>
+                  <th>أسطر متخطّاة</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr key={h.id}>
+                    <td><bdi>{h.filename ?? '—'}</bdi></td>
+                    <td><bdi>{formatDate(h.created_at)}</bdi></td>
+                    <td><bdi>{formatNumber(h.inserted)}</bdi></td>
+                    <td><bdi>{formatNumber(h.updated)}</bdi></td>
+                    <td><bdi>{formatNumber(h.failed)}</bdi></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
       {stats && stats.chunks === 0 && !busy ? (
         <div className="empty-state">لا محتوى نظامي بعد. استورد أول ملف.</div>
       ) : null}
@@ -292,6 +347,11 @@ export function LegalImport() {
                 {/* الفهرس المتجهي غير مهيّأ: البحث اللفظي يعمل والدلاليّ لا.
                     تُقال هنا لأن رقماً معلَّقاً لا ينقص بلا سبب ظاهر يُقلق. */}
                 {!stats.vectorize ? <span className="pill pending">الفهرس المتجهي غير مهيّأ</span> : null}
+                {stats.vectorize && stats.pending_embeddings > 0 ? (
+                  <button className="btn-sm" disabled={draining} onClick={drain}>
+                    {draining ? <><span className="spinner" /> جارٍ التضمين</> : 'تضمين الآن'}
+                  </button>
+                ) : null}
               </td>
             </tr>
           </tbody>

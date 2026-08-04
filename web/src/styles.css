@@ -615,3 +615,14 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .denied-icon.muted { color: var(--muted-foreground); }
 /* خيار الاستيراد: مربّع اختيارٍ بسطره، فوق منطقة اختيار الملفات. */
 .import-option { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); font-size: 0.875rem; color: var(--muted-foreground); }
+/* ── تصفّح الأنظمة المستوردة ── */
+.law-head { margin-block: var(--space-4); }
+.law-head h3 { margin: 0 0 var(--space-2); font-size: 1.125rem; }
+.law-head p { margin: 0 0 var(--space-1); color: var(--muted-foreground); font-size: 0.875rem; }
+/* المادة كتلةُ قراءة لا صفَّ جدول: نصّها فقرةٌ تُقرأ، وسطرُها قد يطول. */
+.legal-article { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+.legal-article h4 { margin: 0 0 var(--space-2); font-size: 0.875rem; display: flex; align-items: center; gap: var(--space-2); }
+.legal-article p { margin: 0; line-height: var(--leading-relaxed, 1.9); white-space: pre-wrap; }
+.law-pager { display: flex; align-items: center; gap: var(--space-3); margin-block: var(--space-4); color: var(--muted-foreground); font-size: 0.875rem; }
+/* عنوان قسمٍ داخل التبويب: يفصل المستورَد عن المرفوع فلا يُقرأ أحدهما مكان الآخر. */
+.kb-section { margin-block: var(--space-6) var(--space-2); font-size: 0.875rem; font-weight: 700; color: var(--muted-foreground); }

@@ -241,7 +241,19 @@ async function checkRegulation(env: Env, title: string): Promise<{ changed: bool
 // وجدولٌ لم تُطبَّق هجرته يوقف تنبيهات المواعيد وتتبّع الأنظمة معه.
 export async function runLegalEmbedding(env: Env): Promise<{ embedded: number; remaining: number }> {
   try {
-    const { embedded, remaining } = await embedPending(env, 1000);
+    // دفعاتٌ متتابعة حتى ينتهي المعلَّق أو يبلغ السقف. دفعةٌ واحدة في الليلة
+    // تجعل ستّة آلاف مادة تحتاج أسبوعاً، ونصفُ البحث معطَّل طوالَه.
+    let embedded = 0;
+    let remaining = 0;
+    // ٥٠٠ في الدورة وثمانُ دورات: كل مقطع يكلّف ثلاثة طلبات فرعية (تضمين
+    // ودفع إلى الفهرس وكتابة في D1)، وسقفُ الطلبات الفرعية في نداءٍ واحد
+    // ألف. فأربعة آلاف مقطع في الليلة تحت السقف بمريح.
+    for (let round = 0; round < 8; round++) {
+      const result = await embedPending(env, 500);
+      embedded += result.embedded;
+      remaining = result.remaining;
+      if (!result.embedded || !remaining) break;
+    }
     return { embedded, remaining };
   } catch {
     return { embedded: 0, remaining: 0 };

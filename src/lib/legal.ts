@@ -945,25 +945,71 @@ export interface LawSummary {
   law_title: string | null;
   parent_law_id: string | null;
   doc_type: string | null;
+  instrument_no: string | null;
+  issue_date: string | null;
+  issue_date_hijri: string | null;
+  source_url: string | null;
   chunks: number;
   effective: number;
+  repealed: number;
 }
 
-/** الأنظمة المستوردة وعدد مواد كلٍّ منها — لبناء قوائم التصفية. */
+/**
+ * الأنظمة المستوردة وحالُ كلٍّ منها.
+ *
+ * `MAX` على حقول النظام لا لأنها تتفاوت بين مواده — هي واحدة لكلّها — بل
+ * لأن التجميع يفرض دالّة. وأوّل ما يتفاوت منها يظهر خللاً في الملف لا هنا.
+ */
 export async function listLaws(env: Env): Promise<LawSummary[]> {
   const rows = await env.DB.prepare(
     `SELECT c.law_id AS law_id,
             MAX(c.law_title) AS law_title,
             MAX(c.parent_law_id) AS parent_law_id,
             MAX(c.doc_type) AS doc_type,
+            MAX(c.instrument_no) AS instrument_no,
+            MAX(c.issue_date) AS issue_date,
+            MAX(c.issue_date_hijri) AS issue_date_hijri,
+            MAX(c.source_url) AS source_url,
             COUNT(*) AS chunks,
-            SUM(CASE WHEN ${EFFECTIVE_SQL} THEN 1 ELSE 0 END) AS effective
+            SUM(CASE WHEN ${EFFECTIVE_SQL} THEN 1 ELSE 0 END) AS effective,
+            SUM(CASE WHEN c.is_repealed = 1 OR c.status = 'repealed' THEN 1 ELSE 0 END) AS repealed
      FROM legal_chunks c
      WHERE c.law_id IS NOT NULL
      GROUP BY c.law_id
      ORDER BY law_title`
   ).all<LawSummary>();
   return rows.results ?? [];
+}
+
+/**
+ * مواد نظامٍ بعينه، مرتّبةً كما وردت في ملفه.
+ *
+ * الترتيب بـ`seq` لا برقم المادة: الأرقام نصوصٌ قد تكون «٧٤ مكرر» أو
+ * «الأولى»، وترتيبها نصّياً يقلب النظام على قارئه. و`seq` ترتيبُ الاستيراد،
+ * وهو ترتيب الملف، وهو ترتيب النظام كما صدر.
+ */
+export async function listLawArticles(
+  env: Env,
+  lawId: string,
+  opts: { offset?: number; limit?: number; includeRepealed?: boolean } = {}
+): Promise<{ articles: LegalHit[]; total: number }> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const offset = Math.max(opts.offset ?? 0, 0);
+  // المنسوخة تُعرض في التصفّح افتراضياً: هذه شاشةُ اطّلاعٍ على النظام كما هو
+  // لا مسارُ استشهاد، وإخفاؤها يجعل ترقيم المواد يقفز بلا تفسير.
+  const filters = buildFilters({ lawId, withRegulations: false, includeRepealed: opts.includeRepealed !== false });
+
+  const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_chunks c WHERE 1 = 1${filters.sql}`)
+    .bind(...filters.binds)
+    .first<{ n: number }>();
+
+  const rows = await env.DB.prepare(
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE 1 = 1${filters.sql} ORDER BY c.seq LIMIT ? OFFSET ?`
+  )
+    .bind(...filters.binds, limit, offset)
+    .all<HitRow>();
+
+  return { articles: (rows.results ?? []).map(toHit), total: total?.n ?? 0 };
 }
 
 /** نظامٌ مع لوائحه — العلاقة عبر `parent_law_id`. */
