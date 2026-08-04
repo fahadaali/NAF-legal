@@ -141,6 +141,26 @@ jobs:
             fi
           fi
 
+      # ── ربط Vectorize: يُفعَّل يوم تُمنح الصلاحية، بلا تعديل في الشيفرة ──
+      #
+      # الربط معلَّق في `wrangler.toml` لأن ربطاً إلى فهرس لا وجود له يُسقط
+      # `wrangler deploy` كلَّه: فيُفقد النشر بأسره — بمصادقته ومحادثاته
+      # وترحيلاته — مقابل ميزة اختيارية. ولذلك لا يُفَكّ إلا بعد التحقّق.
+      #
+      # والتحقّق بوجود الفهرسين فعلاً لا بنجاح خطوة الإنشاء قبله: تلك تعمل
+      # بـ`set +e` فتمرّ وإن رفضها الرمز، فنجاحها لا يدلّ على شيء.
+      - name: ربط Vectorize إن توفّرت صلاحيته
+        run: |
+          set -uo pipefail
+          LIST=$(npx wrangler vectorize list 2>&1) || LIST=""
+          if grep -q "naf-legal-kb" <<<"$LIST" && grep -q "naf-legal-conv" <<<"$LIST"; then
+            sed -i '/VECTORIZE-BINDINGS-START/,/VECTORIZE-BINDINGS-END/ s/^# \(\[\[vectorize\]\]\|binding \|index_name \)/\1/' wrangler.toml
+            echo "الفهرسان قائمان — الربط مُفعَّل في هذا النشر:"
+            grep -A2 '^\[\[vectorize\]\]' wrangler.toml
+          else
+            echo "::notice::فهارس Vectorize غير متاحة — يُنشر بلا استرجاع دلالي. البحث اللفظي في المحتوى النظامي يعمل، والتضمين يبقى معلَّقاً حتى تُمنح صلاحية Vectorize للرمز، ثم يصرّفه أوّل نشر تالٍ مع الـCron."
+          fi
+
       - name: تطبيق ترحيلات قاعدة البيانات
         run: npx wrangler d1 migrations apply naf_legal --remote
 
