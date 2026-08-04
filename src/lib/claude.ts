@@ -5,18 +5,22 @@ const API_URL = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
 
 /**
- * البديل التلقائي عند رفض المصنّف — تجريبيّ، ويُحذف السطران معاً إن لم يكن
- * مفعَّلاً للحساب.
+ * البديل التلقائي عند رفض المصنّف — **مطفأ حتى يُتحقَّق منه**.
  *
  * Opus 5 يحمل ضوابط أمنية مشدَّدة، ومصنّفاتها قد تردّ طلباً مشروعاً بـ200
  * و `stop_reason: "refusal"` لا بخطأ. والقيمة `default` تجعل الخادم يعيد
  * الطلب على النموذج المناسب حسب صنف الرفض بدل أن يعود الرفض إلينا.
  *
- * وترويسة التجربة تُرسل مع كل طلب، فإن لم تكن مفعَّلة للحساب رُدّت الطلبات
- * كلها بـ400 — وهو الصنف نفسه الذي عطّل المنصة. لذلك: **اضغط «فحص Claude»
- * في لوحة الإدارة أولَ نشرة**؛ إن قال «غير مربوط» مع ذكر البديل أو الترويسة،
- * فاحذف هذين السطرين وحدهما ويعود كل شيء إلى عمله.
+ * وهو تجريبيّ: `fallbacks` حقلٌ في جسم الطلب، وحقلٌ لا يعرفه الـAPI يردّه
+ * بـ400 — الصنفُ نفسه الذي عطّل المنصة. فلا يُشغَّل في النشرة التي تُعيدها
+ * إلى العمل: خطرٌ غير مُتحقَّق منه يُركَب على إصلاحٍ مُتحقَّق منه يجعل
+ * الفشل مبهماً، ولا يُعرَف أيُّ التغييرين سببُه.
+ *
+ * **التشغيل بعد أن يقول «فحص Claude» في لوحة الإدارة: مربوط.** عندئذٍ
+ * ارفع هذا السطر إلى `true` وانشر: مسارُ الطلب معلومُ السلامة، فأيُّ عطبٍ
+ * بعده يعود إلى البديل وحده.
  */
+const FALLBACK_ENABLED = false;
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 const FALLBACK_MODE = 'default';
 
@@ -104,8 +108,8 @@ function buildBody(opts: ClaudeCallOptions, defaultMaxTokens: number, stream: bo
     model: opts.model,
     max_tokens: Math.max(opts.max_tokens ?? defaultMaxTokens, MIN_MAX_TOKENS),
     messages,
-    fallbacks: FALLBACK_MODE,
   };
+  if (FALLBACK_ENABLED) body.fallbacks = FALLBACK_MODE;
   // الحقول الاختيارية تُحذف ولا تُرسل فارغة: `system` فارغ و`tools` فارغة
   // كلاهما 400، والإغفال هو ما يعنيه غيابُها أصلاً.
   if (opts.system?.trim()) body.system = opts.system;
@@ -117,12 +121,13 @@ function buildBody(opts: ClaudeCallOptions, defaultMaxTokens: number, stream: bo
 }
 
 function headers(env: Env): Record<string, string> {
-  return {
+  const h: Record<string, string> = {
     'content-type': 'application/json',
     'x-api-key': env.ANTHROPIC_API_KEY,
     'anthropic-version': API_VERSION,
-    'anthropic-beta': FALLBACK_BETA,
   };
+  if (FALLBACK_ENABLED) h['anthropic-beta'] = FALLBACK_BETA;
+  return h;
 }
 
 /**
