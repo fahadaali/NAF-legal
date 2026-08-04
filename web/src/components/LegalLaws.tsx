@@ -42,14 +42,67 @@ const docTypeLabel = (t: string | null) => (t ? (DOC_TYPE_LABELS[t] ?? t) : '—
 export function LegalLaws() {
   const [laws, setLaws] = useState<LegalLaw[] | null>(null);
   const [openLaw, setOpenLaw] = useState<string | null>(null);
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState<LegalArticle[] | null>(null);
 
   useEffect(() => {
     api.legalLaws().then((r) => setLaws(r.laws)).catch(() => setLaws([]));
   }, []);
 
+  /* البحث في المحتوى: لفظيٌّ بلا نموذج تضمين — بحثُ مسؤولٍ في نصٍّ مفهرس
+     لا استرجاعٌ لإجابة. والاسم يُرشَّح هنا في الصفحة، فقائمة الأنظمة عندها
+     كاملةً ولا يستحقّ ترشيحُها نداءً. */
+  useEffect(() => {
+    if (!q.trim()) {
+      setHits(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      api.legalSearch(q).then((r) => setHits(r.results)).catch(() => setHits([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
   if (openLaw) return <LawDetail lawId={openLaw} onBack={() => setOpenLaw(null)} onOpen={setOpenLaw} />;
   if (!laws?.length) return null;
 
+  /* الأنظمة المطابقة تُشتقّ من المواد التي طابقت: الفهرس اللفظي يحوي اسم
+     النظام ورقم المادة مع نصّها، فالبحث بالاسم يُصيب مواده. ولا يُعاد
+     التطبيع في الواجهة — مصدرٌ واحد له في الخادم. */
+  const hitLaws = new Set((hits ?? []).map((h) => h.lawId).filter(Boolean));
+  const shown = q.trim() ? laws.filter((l) => hitLaws.has(l.law_id)) : laws;
+
+  return (
+    <>
+      <div className="search-page-box">
+        <input placeholder="ابحث باسم النظام أو في نصّ مواده" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+
+      {hits?.length ? (
+        <>
+          <div className="kb-section">مواد مطابقة</div>
+          {hits.map((a) => (
+            <article key={a.id} className="legal-article">
+              <h4>
+                <bdi>{a.lawTitle ?? ''}</bdi>
+                {a.articleNo ? <span className="pill pending">المادة <bdi>{a.articleNo}</bdi></span> : null}
+              </h4>
+              <p>{a.text}</p>
+            </article>
+          ))}
+        </>
+      ) : null}
+
+      {q.trim() && hits && !hits.length && !shown.length ? (
+        <div className="empty-state">لا نتائج مطابقة لبحثك. جرّب كلمات أخرى.</div>
+      ) : null}
+
+      {shown.length ? <LawsTable laws={shown} onOpen={setOpenLaw} /> : null}
+    </>
+  );
+}
+
+function LawsTable({ laws, onOpen }: { laws: LegalLaw[]; onOpen: (id: string) => void }) {
   return (
     <div className="table-scroll">
       <table className="data-table">
@@ -72,7 +125,7 @@ export function LegalLaws() {
               <td><bdi>{formatNumber(l.effective)}</bdi></td>
               <td><bdi>{formatNumber(l.repealed)}</bdi></td>
               <td>
-                <button className="btn-sm primary" onClick={() => setOpenLaw(l.law_id)}>عرض</button>
+                <button className="btn-sm primary" onClick={() => onOpen(l.law_id)}>عرض</button>
               </td>
             </tr>
           ))}

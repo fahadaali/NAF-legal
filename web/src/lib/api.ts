@@ -190,6 +190,33 @@ export interface LegalStats {
   vectorize: boolean;
 }
 
+/** نتيجة البحث في المنصة، مقسّمةً بمواضعها. */
+export interface PlatformSearch {
+  chats: {
+    conversation_id: string;
+    title: string | null;
+    message_id: string;
+    role: string;
+    created_at: number;
+    snippet: string;
+  }[];
+  outputs: {
+    id: string;
+    message_id: string;
+    version: number;
+    note: string | null;
+    created_at: number;
+    conversation_id: string;
+    title: string | null;
+    snippet: string;
+  }[];
+  kb: {
+    articles: LegalArticle[];
+    documents: { id: string; title: string; category: string | null; source_authority: string | null; status: string }[];
+  };
+  mode: string;
+}
+
 /** نظامٌ مستورد وحالُ مواده. */
 export interface LegalLaw {
   law_id: string;
@@ -208,6 +235,7 @@ export interface LegalLaw {
 /** مادةٌ كما تُعرض — `text` وحده، ولا أثر لـ`embed_text`. */
 export interface LegalArticle {
   id: string;
+  lawId: string | null;
   articleNo: string | null;
   lawTitle: string | null;
   instrumentNo: string | null;
@@ -398,6 +426,11 @@ export const api = {
   // المحتوى النظامي المستورد — عقد الاستيراد في docs/legal-import.md
   legalStats: () => req<LegalStats>('/legal/stats'),
   legalLaws: () => req<{ laws: LegalLaw[] }>('/legal/laws'),
+  /** بحث المسؤول في المحتوى النظامي — لفظيّ بلا نموذج تضمين. */
+  legalSearch: (q: string, limit = 20) =>
+    req<{ results: LegalArticle[]; count: number }>(
+      `/legal/search?q=${encodeURIComponent(q)}&limit=${limit}&lexical=1`
+    ),
   legalLaw: (lawId: string) =>
     req<{ law: LegalLaw; regulations: LegalLaw[] }>(`/legal/laws/${encodeURIComponent(lawId)}`),
   legalLawArticles: (lawId: string, offset = 0, limit = 25) =>
@@ -492,7 +525,13 @@ export const api = {
   deleteShare: (id: string) => req(`/shares/${id}`, { method: 'DELETE' }),
 
   // البحث الدلالي
-  search: (q: string) => req<{ results: any[]; mode: string }>(`/search?q=${encodeURIComponent(q)}`),
+  /**
+   * البحث في المنصة — لفظيٌّ بلا ذكاء اصطناعي.
+   *
+   * `scope` يحصره في موضع: `chats` أو `outputs` أو `kb`، و`all` يعمّها.
+   */
+  search: (q: string, scope: 'all' | 'chats' | 'outputs' | 'kb' = 'all') =>
+    req<PlatformSearch>(`/search?q=${encodeURIComponent(q)}&scope=${scope}`),
 
   // بنك البنود
   clauses: (q?: string) => req<{ clauses: any[] }>(`/clauses${q ? `?q=${encodeURIComponent(q)}` : ''}`),

@@ -7,6 +7,7 @@ import Tools from './components/Tools';
 import ReviewPage from './components/ReviewPage';
 import ChangePassword from './components/ChangePassword';
 import Deadlines from './components/Deadlines';
+import SearchPage from './components/SearchPage';
 import CaseFile from './components/CaseFile';
 import Support from './components/Support';
 import Denied from './components/Denied';
@@ -28,7 +29,9 @@ export default function App() {
   const [theme, setTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support'>('chat');
+  const [view, setView] = useState<'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search'>('chat');
+  // نصّ البحث يُرفع من الشريط الجانبي إلى الشاشة: يُكتب مرّة ولا يُعاد.
+  const [searchQuery, setSearchQuery] = useState('');
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [pendingInitial, setPendingInitial] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -125,6 +128,10 @@ export default function App() {
         onOpenMembers={() => openView('members')}
         onOpenTools={() => openView('tools')}
         onOpenDeadlines={() => openView('deadlines')}
+        onOpenSearch={(q) => {
+          setSearchQuery(q);
+          openView('search');
+        }}
         onOpenCase={() => openView('case')}
         onOpenSupport={() => openView('support')}
       />
@@ -184,6 +191,15 @@ export default function App() {
           <CaseFile onOpenConversation={(id) => { setActiveConv(id); openView('chat'); }} />
         )}
         {view === 'support' && <Support />}
+        {view === 'search' && (
+          <SearchPage
+            initial={searchQuery}
+            onOpenConversation={(id) => {
+              setActiveConv(id);
+              setView('chat');
+            }}
+          />
+        )}
         </main>
 
         <div className="disclaimer-bar">

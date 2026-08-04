@@ -495,6 +495,16 @@ await check('٣ · اللفظي يجد رقم المادة ولو لم يرد د
   assert.ok(!q('SELECT text FROM legal_chunks WHERE id = ?', 'labor:74')[0].text.includes('74'));
 });
 
+await check('٣ · البحث المباشر لفظيٌّ بحت — لا نداءَ لنموذج التضمين', async () => {
+  embeddedTexts.length = 0;
+  const hits = await lib.searchLegal(env, 'الاجراءات النظاميه', { limit: 5, lexicalOnly: true });
+  assert.equal(embeddedTexts.length, 0, 'نودي نموذج التضمين في بحثٍ لفظيّ');
+  assert.ok(hits.some((h) => h.id === 'labor:74'), 'اللفظي وحده لم يجد المادة');
+  assert.ok(hits.every((h) => !h.signals.includes('semantic')), 'تسرّبت إشارة دلالية');
+  // والتصفية على السريان قائمةٌ فيه كما في غيره.
+  assert.ok(!hits.some((h) => h.isRepealed));
+});
+
 await check('٣ · هجين فعلاً: المساران يشاركان في نتيجة واحدة', async () => {
   const hits = await lib.searchLegal(env, 'التعويض عن الإخطار', { limit: 10 });
   const signals = new Set(hits.flatMap((h) => h.signals));

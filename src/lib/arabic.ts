@@ -123,3 +123,45 @@ export function normalizeArticleNo(raw: string | null | undefined): string | nul
   if (digits?.length) return digits.join('/');
   return normalized;
 }
+
+/**
+ * صيغ الحرف العربي الواحد كما تُكتب فعلاً.
+ *
+ * المفتاح هو الحرف بعد التطبيع، والقيمة صنفُ ما يقابله في نصٍّ لم يُطبَّع.
+ */
+const LETTER_CLASSES: Record<string, string> = {
+  ا: 'اأإآٱ',
+  ه: 'هة',
+  ي: 'يى',
+  و: 'وؤ',
+};
+
+/** يُهرَّب ما له معنى في GLOB: النجمة وعلامة الاستفهام والقوس. */
+function globEscape(ch: string): string {
+  return '*?['.includes(ch) ? `[${ch}]` : ch;
+}
+
+/**
+ * يبني نمط `GLOB` يطابق الكلمة بكل صور همزاتها.
+ *
+ * جداول المحادثات والمخرجات نصوصٌ خام لا عمود مطبَّع فيها — بخلاف المحتوى
+ * النظامي المفهرس لفظياً. فبدل تطبيع الطرفين يُوسَّع طرفُ الاستعلام: تُكتب
+ * كل ألفٍ صنفاً يقبل «أ إ آ ٱ»، وكل هاءٍ يقبل التاء المربوطة، وهكذا.
+ *
+ * و`GLOB` لا `LIKE`: الأخير لا يعرف أصناف الحروف، وكلاهما يمسح الجدول
+ * فلا فرق في الكلفة.
+ */
+export function arabicGlobPattern(token: string): string {
+  const body = Array.from(normalizeArabic(token))
+    .map((ch) => {
+      const klass = LETTER_CLASSES[ch];
+      return klass ? `[${klass}]` : globEscape(ch);
+    })
+    .join('');
+  return `*${body}*`;
+}
+
+/** أنماط `GLOB` لكلمات الاستعلام كلِّها — تُطابَق مجتمعةً لا متفرّقة. */
+export function arabicGlobPatterns(query: string, max = 6): string[] {
+  return tokenize(query).slice(0, max).map(arabicGlobPattern);
+}
