@@ -15,6 +15,10 @@
 //   --cookie  كوكي جلسة مسؤول (أو متغيّر البيئة NAF_COOKIE)
 //   --batch   عدد الأسطر في الدفعة (الافتراضي 500)
 //   --partial قبول الأسطر الصالحة وتخطّي الفاسدة (الافتراضي: صارم)
+//   --build-embed-text  بناء `embed_text` عند غيابه من اسم النظام ورقم المادة
+//
+// وهاتان مطفأتان هنا وإن كانتا مفعَّلتين في شاشة الإدارة: أمرٌ في طرفية
+// يُكتب مرّة ويُعاد ألف مرّة في أتمتة، فتغييرُ افتراضه يغيّر ما لا يُراجَع.
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -42,6 +46,7 @@ const origin = (args.get('url') ?? 'http://localhost:8787').replace(/\/$/, '');
 const cookie = args.get('cookie') ?? process.env.NAF_COOKIE ?? '';
 const batchSize = Math.max(1, Number(args.get('batch') ?? 500));
 const partial = args.has('partial');
+const buildEmbedText = args.has('build-embed-text');
 
 if (!cookie) {
   console.error('المطلوب: --cookie "naf_session=…" أو متغيّر البيئة NAF_COOKIE');
@@ -61,10 +66,14 @@ if (!lines.length) {
 const endpoint = `${origin}/api/legal/import?${new URLSearchParams({
   filename: path.basename(file),
   ...(partial ? { partial: '1' } : {}),
+  ...(buildEmbedText ? { build_embed_text: '1' } : {}),
 })}`;
 
 console.log(`الملف: ${file}`);
-console.log(`الأسطر: ${lines.length} · الدفعة: ${batchSize} سطراً · الوضع: ${partial ? 'قبول الصالح' : 'صارم'}`);
+console.log(
+  `الأسطر: ${lines.length} · الدفعة: ${batchSize} سطراً · الوضع: ${partial ? 'قبول الصالح' : 'صارم'}` +
+    (buildEmbedText ? ' · بناء نصّ التضمين عند غيابه' : '')
+);
 console.log(`الوجهة: ${endpoint}\n`);
 
 const totals = { inserted: 0, updated: 0, failed: 0, pending: 0 };
