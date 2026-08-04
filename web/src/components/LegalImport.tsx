@@ -25,6 +25,8 @@ interface FileResult {
   ok: boolean;
   inserted: number;
   updated: number;
+  /** مواد بُني نصُّ تضمينها لغيابه — بطلبٍ صريح. */
+  built?: number;
   report?: LegalImportReport;
 }
 
@@ -33,6 +35,9 @@ export function LegalImport() {
   const [now, setNow] = useState<{ name: string; file: number; files: number; batch: number; batches: number } | null>(null);
   const [results, setResults] = useState<FileResult[]>([]);
   const [stats, setStats] = useState<LegalStats | null>(null);
+  // معطَّل افتراضياً: العقد يشترط `embed_text` في الملف، وهذا استثناءٌ يُطلَب
+  // ولا يقع من نفسه — ويُقال في التقرير كم مادة بُني نصُّ تضمينها.
+  const [buildEmbed, setBuildEmbed] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   const loadStats = () => {
@@ -57,10 +62,11 @@ export function LegalImport() {
     const batches = Math.ceil(lines.length / BATCH_LINES);
     let inserted = 0;
     let updated = 0;
+    let built = 0;
 
     for (let start = 0; start < lines.length; start += BATCH_LINES) {
       setNow({ name: file.name, file: index + 1, files: count, batch: Math.floor(start / BATCH_LINES) + 1, batches });
-      const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name);
+      const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name, buildEmbed);
       if (!batch.ok) {
         // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل دفعة
         // لا يدلّ صاحبَ الملف على شيء.
@@ -78,8 +84,9 @@ export function LegalImport() {
       }
       inserted += batch.inserted ?? 0;
       updated += batch.updated ?? 0;
+      built += batch.embed_text_built ?? 0;
     }
-    return { name: file.name, ok: true, inserted, updated };
+    return { name: file.name, ok: true, inserted, updated, built };
   };
 
   const run = async (files: FileList | null) => {
@@ -126,6 +133,11 @@ export function LegalImport() {
         }}
       />
 
+      <label className="import-option">
+        <input type="checkbox" checked={buildEmbed} disabled={busy} onChange={(e) => setBuildEmbed(e.target.checked)} />
+        بناء نصّ التضمين عند غيابه — من اسم النظام ورقم المادة ونصّها
+      </label>
+
       <div className="dropzone" onClick={() => !busy && input.current?.click()}>
         {busy && now ? (
           <>
@@ -157,6 +169,7 @@ export function LegalImport() {
                   <th>الحالة</th>
                   <th>مواد جديدة</th>
                   <th>مواد مستبدَلة</th>
+                  <th>نصّ تضمين مبنيّ</th>
                 </tr>
               </thead>
               <tbody>
@@ -168,6 +181,7 @@ export function LegalImport() {
                     </td>
                     <td><bdi>{formatNumber(r.inserted)}</bdi></td>
                     <td><bdi>{formatNumber(r.updated)}</bdi></td>
+                    <td><bdi>{formatNumber(r.built ?? 0)}</bdi></td>
                   </tr>
                 ))}
               </tbody>

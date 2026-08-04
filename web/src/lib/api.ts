@@ -222,6 +222,7 @@ export interface LegalImportReport {
   errors_truncated?: number;
   warnings?: string[];
   embed_text_truncated?: number;
+  embed_text_built?: number;
   pending_embeddings?: number;
   error?: string;
 }
@@ -321,8 +322,9 @@ export const api = {
    * لا يرمي عند الرفض: تقرير الدفعة المرفوضة هو المطلوب عرضُه — أرقام
    * الأسطر وأسبابها — ورميُ رسالةٍ واحدة يضيّعه.
    */
-  importLegal: async (lines: string[], filename: string): Promise<LegalImportReport> => {
-    const res = await fetch(`/api/legal/import?filename=${encodeURIComponent(filename)}`, {
+  importLegal: async (lines: string[], filename: string, buildEmbedText = false): Promise<LegalImportReport> => {
+    const query = new URLSearchParams({ filename, ...(buildEmbedText ? { build_embed_text: '1' } : {}) });
+    const res = await fetch(`/api/legal/import?${query}`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-ndjson' },
       body: lines.join('\n'),

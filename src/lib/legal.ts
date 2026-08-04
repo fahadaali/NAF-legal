@@ -30,6 +30,38 @@ export const EFFECTIVE_STATUSES = ['active', 'amended'] as const;
 const VALID_STATUSES = new Set(['active', 'amended', 'repealed']);
 
 /**
+ * ألفاظ الحالة العربية ومقابلها المسجَّل.
+ *
+ * الملفات المُعدَّة من المصادر الرسمية تكتب الحالة بالعربية، والمعاني هي
+ * الثلاثة نفسها لا رابع لها — فهذه ترجمةٌ محصورة لا توسيعٌ للعقد: لا تُضيف
+ * حالةً رابعة ولا تُغيّر ما تعنيه واحدةٌ من الثلاث.
+ *
+ * وتُطبَّع قبل المطابقة، فـ«سارٍ» و«سارية» و«ساري» شيء واحد.
+ */
+const STATUS_ALIASES = new Map<string, string>(
+  (
+    [
+      ['ساري', 'active'],
+      // الصيغة المنقوصة: «سارٍ» تُطبَّع إلى «سار» — تنوينُها يسقط مع التشكيل
+      // وياؤها ساقطةٌ في الرسم أصلاً، فلا تلتقي بـ«ساري» ولو طُبّعت.
+      ['سار', 'active'],
+      ['سارية', 'active'],
+      ['نافذ', 'active'],
+      ['نافذة', 'active'],
+      ['معمول به', 'active'],
+      ['مُعدَّل', 'amended'],
+      ['مُعدَّلة', 'amended'],
+      ['ملغي', 'repealed'],
+      ['ملغ', 'repealed'],
+      ['ملغى', 'repealed'],
+      ['ملغاة', 'repealed'],
+      ['منسوخ', 'repealed'],
+      ['منسوخة', 'repealed'],
+    ] as [string, string][]
+  ).map(([k, v]) => [normalizeArabic(k), v] as [string, string])
+);
+
+/**
  * التصفية الافتراضية الإلزامية.
  *
  * الشرطان معاً لا أحدهما: من رفع الملف قد يكتب `is_repealed: true` وينسى
@@ -106,6 +138,20 @@ export interface PreparedChunk {
   handle_norm: string;
   meta_json: string | null;
   embed_hash: string;
+  /** بُني `embed_text` هنا لأنه غاب عن السطر وطُلب بناؤه صراحةً. */
+  built_embed_text: boolean;
+}
+
+/** خيارات الاستيراد — كلُّها معطَّلة افتراضياً، ولا يُفعِّلها إلا طلبٌ صريح. */
+export interface ImportOptions {
+  /**
+   * يبني `embed_text` من اسم النظام ورقم المادة ونصّها حين يغيب عن السطر.
+   *
+   * لملفٍّ أُعِدّ للعرض لا للاسترجاع: فيه النصّ ولا نصَّ تضمينٍ فيه. والبناء
+   * يركّب ما يطلبه العقد ولا يُحوّل `text` مجرَّداً، ويُعَدّ ويُقال في التقرير
+   * فلا يقع شيء صامتاً.
+   */
+  buildEmbedText?: boolean;
 }
 
 export interface LineError {
@@ -143,6 +189,8 @@ export interface ParsedJsonl {
   warnings: string[];
   /** أسطر تجاوز `embed_text` فيها سقف المتجه فقُصَّ مدخله (ولم يُقسَّم المقطع). */
   longEmbedText: number;
+  /** أسطر بُني `embed_text` لها لغيابه — بطلبٍ صريح، وتُعَدّ لتُقال. */
+  builtEmbedText: number;
 }
 
 /** خطأ تحقّقٍ برمزه. الرمز ثابت والرسالة قد تُصاغ من جديد. */
@@ -156,7 +204,14 @@ class ChunkError extends Error {
 }
 
 const SAMPLE_LINES = 5;
-const SAMPLE_KEYS = 14;
+/**
+ * سقف الحقول المذكورة في التشخيص.
+ *
+ * كان أربعة عشر فقطع قائمةَ حقولٍ عدّتها أربعة عشر تماماً، فخفي ما بعدها —
+ * وهو بالضبط ما يبحث عنه القارئ: أفيه `text` و`embed_text` أم لا. والسقف
+ * على عددٍ لا يبلغه سطرٌ حقيقي أنفعُ من سقفٍ يقصّ أوّل ملفٍ يُجرَّب.
+ */
+const SAMPLE_KEYS = 40;
 
 /** يجمع أخطاء الأسطر بأسبابها. لا سقف على العدّ — السقف على العرض وحده. */
 export function summarizeErrors(errors: LineError[]): ErrorGroup[] {
@@ -190,7 +245,7 @@ export function summarizeErrors(errors: LineError[]): ErrorGroup[] {
  *
  * سطرٌ = مقطع. لا يُقسَّم سطر ولا يُدمج سطران مهما طالا أو قصرا.
  */
-export function parseJsonl(input: ArrayBuffer | Uint8Array | string): ParsedJsonl {
+export function parseJsonl(input: ArrayBuffer | Uint8Array | string, opts: ImportOptions = {}): ParsedJsonl {
   const warnings: string[] = [];
   let content: string;
 
@@ -213,6 +268,7 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string): ParsedJson
   const seen = new Map<string, number>();
   let total = 0;
   let longEmbedText = 0;
+  let builtEmbedText = 0;
 
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
@@ -239,7 +295,7 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string): ParsedJson
     }
 
     try {
-      const row = prepareChunk(parsed);
+      const row = prepareChunk(parsed, opts);
       const previous = seen.get(row.id);
       if (previous) {
         // مكرّر داخل الملف نفسه: الـ upsert سيُبقي الأخير ويُسقط الأول بصمت،
@@ -254,6 +310,7 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string): ParsedJson
       }
       seen.set(row.id, lineNo);
       if (row.embed_text.length > EMBED_MAX_CHARS) longEmbedText++;
+      if (row.built_embed_text) builtEmbedText++;
       rows.push(row);
     } catch (e: any) {
       // حقول السطر تُرافق الخطأ: ملفٌّ مولَّد بقالب واحد تفشل أسطره كلّها
@@ -267,7 +324,7 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string): ParsedJson
     }
   }
 
-  return { total, rows, errors, warnings, longEmbedText };
+  return { total, rows, errors, warnings, longEmbedText, builtEmbedText };
 }
 
 const MAX_ID_LEN = 200;
@@ -275,7 +332,7 @@ const MAX_TEXT_LEN = 200_000;
 const GREGORIAN_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** يتحقّق من سطر واحد ويحسب حقوله المشتقّة. يرمي رسالةً عربية عند الخطأ. */
-export function prepareChunk(raw: unknown): PreparedChunk {
+export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedChunk {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new ChunkError('not_object', 'السطر ليس كائن JSON');
   }
@@ -289,38 +346,55 @@ export function prepareChunk(raw: unknown): PreparedChunk {
   if (!text) throw new ChunkError('missing_text', '`text` مطلوب — وهو ما يُعرض ويُستشهد به');
   if (text.length > MAX_TEXT_LEN) throw new ChunkError('long_text', '`text` أطول من الحدّ المسموح');
 
-  const embedText = str(o.embed_text);
+  const articleNo = str(o.article_no) || null;
+  const lawTitle = str(o.law_title) || str(o.law_name) || str(o.title) || null;
+
+  let embedText = str(o.embed_text);
+  let builtEmbedText = false;
   if (!embedText) {
-    // لا رجوع إلى `text`: الرجوع الصامت هو بعينه الخلط الذي يمنعه العقد،
-    // ونتيجته استرجاعٌ ضعيف لا يظهر أثره إلا في جودة الإجابات.
-    throw new ChunkError('missing_embed_text', '`embed_text` مطلوب — وهو وحده ما يُحوَّل إلى متجه');
+    // لا رجوع صامتاً إلى `text`: ذاك هو الخلط الذي يمنعه العقد، ونتيجته
+    // استرجاعٌ ضعيف لا يظهر أثره إلا في جودة الإجابات.
+    //
+    // والبناء الصريح شيء آخر: يركّب نصَّ التضمين الذي يطلبه العقد — اسم
+    // النظام ورقم المادة ثم النصّ — ولا يُحوّل `text` مجرَّداً. ولا يقع إلا
+    // بطلبٍ صريح، ويُعَدّ ويُقال في التقرير.
+    if (!opts.buildEmbedText) {
+      throw new ChunkError('missing_embed_text', '`embed_text` مطلوب — وهو وحده ما يُحوَّل إلى متجه');
+    }
+    const head = [lawTitle, articleNo ? `المادة ${articleNo}` : ''].filter(Boolean).join(' — ');
+    embedText = head ? `${head}\n${text}` : text;
+    builtEmbedText = true;
   }
   if (embedText.length > MAX_TEXT_LEN) throw new ChunkError('long_embed_text', '`embed_text` أطول من الحدّ المسموح');
 
-  const status = str(o.status) || 'active';
-  if (!VALID_STATUSES.has(status)) {
-    throw new ChunkError('bad_status', `\`status\` غير معروف: ${status} — المسموح: active | amended | repealed`);
+  const rawStatus = str(o.status);
+  const status = !rawStatus
+    ? 'active'
+    : VALID_STATUSES.has(rawStatus)
+      ? rawStatus
+      : (STATUS_ALIASES.get(normalizeArabic(rawStatus)) ?? '');
+  if (!status) {
+    throw new ChunkError('bad_status', `\`status\` غير معروف: ${rawStatus} — المسموح: active | amended | repealed`);
   }
 
   // منسوخٌ إن قال أيُّهما ذلك. لا يُصحَّح أحدهما بالآخر: التصفية تأخذ
   // بالاثنين، وتغيير قيمة وردت في الملف اختلاقٌ لبيانات لم تُرسَل.
   const isRepealed = status === 'repealed' || truthy(o.is_repealed) ? 1 : 0;
 
-  const articleNo = str(o.article_no) || null;
-  const lawTitle = str(o.law_title) || str(o.title) || null;
   const lawId = str(o.law_id) || null;
   const docType = str(o.doc_type) || null;
   const instrumentNo = str(o.instrument_no) || null;
 
-  const issueDate = date(o.issue_date ?? o.issue_date_g, 'issue_date');
+  const issueDate = date(o.issue_date ?? o.issue_date_g ?? o.date_gregorian, 'issue_date');
   const effectiveFrom = date(o.effective_from, 'effective_from');
   const effectiveTo = date(o.effective_to, 'effective_to');
-  const issueDateHijri = str(o.issue_date_hijri) || str(o.issue_date_h) || null;
+  const issueDateHijri = str(o.issue_date_hijri) || str(o.issue_date_h) || str(o.date_hijri) || null;
 
   const known = new Set([
     'id', 'law_id', 'parent_law_id', 'doc_type', 'article_no', 'status', 'is_repealed',
-    'law_title', 'title', 'instrument_no', 'issue_date', 'issue_date_g', 'issue_date_hijri',
-    'issue_date_h', 'effective_from', 'effective_to', 'source_url', 'text', 'embed_text',
+    'law_title', 'law_name', 'title', 'instrument_no', 'issue_date', 'issue_date_g',
+    'date_gregorian', 'issue_date_hijri', 'issue_date_h', 'date_hijri',
+    'effective_from', 'effective_to', 'source_url', 'text', 'embed_text',
   ]);
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) if (!known.has(k)) extra[k] = v;
@@ -353,6 +427,7 @@ export function prepareChunk(raw: unknown): PreparedChunk {
     handle_norm: normalizeArabic(handle),
     meta_json: Object.keys(extra).length ? JSON.stringify(extra) : null,
     embed_hash: hashText(embedText),
+    built_embed_text: builtEmbedText,
   };
 }
 

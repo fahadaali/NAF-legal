@@ -39,6 +39,8 @@ const IMPORT_EMBED_BUDGET = 100;
  */
 app.post('/import', requireAdmin, async (c) => {
   const partial = c.req.query('partial') === '1';
+  // بناء نصّ التضمين عند غيابه — بطلبٍ صريح وحده، ومعدودٌ في التقرير.
+  const buildEmbedText = c.req.query('build_embed_text') === '1';
   const contentType = c.req.header('content-type') ?? '';
 
   let bytes: ArrayBuffer;
@@ -54,7 +56,7 @@ app.post('/import', requireAdmin, async (c) => {
   }
   if (!bytes.byteLength) return c.json({ error: 'الملف فارغ' }, 400);
 
-  const parsed = parseJsonl(bytes);
+  const parsed = parseJsonl(bytes, { buildEmbedText });
   if (!parsed.total) return c.json({ error: 'لا سطور في الملف' }, 400);
 
   const report = {
@@ -70,6 +72,9 @@ app.post('/import', requireAdmin, async (c) => {
     warnings: parsed.warnings,
     // مدخل المتجه وحده هو ما قُصَّ — المقطع لم يُقسَّم ونصّه كامل كما ورد.
     embed_text_truncated: parsed.longEmbedText,
+    // ما بُني نصُّ تضمينه لغيابه. يُقال دائماً: بناءٌ صامت يجعل جودة
+    // الاسترجاع تتغيّر بلا أثرٍ يدلّ عليها.
+    embed_text_built: parsed.builtEmbedText,
   };
 
   if (parsed.errors.length && !partial) {
