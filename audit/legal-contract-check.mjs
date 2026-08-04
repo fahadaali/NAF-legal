@@ -253,6 +253,26 @@ await check('١ · سطر بلا `embed_text` يُرفض ولا يُستعاض �
   assert.match(bad.errors[0].error, /embed_text/);
 });
 
+await check('١ · تقرير الرفض يجمع الأسباب ويعدّها كلَّها ويقول ما حمله السطر', () => {
+  // ملفٌّ مولَّد بقالب واحد: مئةُ رسالة متطابقة لا تقول أكثر مما تقوله
+  // واحدة، والعدد المخفيّ خلف سقف العرض يُخفي الحقيقة كلَّها.
+  const lines = [];
+  for (let i = 1; i <= 60; i++) lines.push(line({ id: `x:${i}`, law_id: 'x', article_no: String(i), text: 'نصّ المادة' }));
+  lines.push(line({ id: 'y:1', text: 'ن', embed_text: 'س', status: 'draft' }));
+
+  const bad = lib.parseJsonl(lines.join('\n'));
+  assert.equal(bad.rows.length, 0);
+  assert.equal(bad.errors.length, 61);
+
+  const groups = lib.summarizeErrors(bad.errors);
+  assert.equal(groups.length, 2, 'الأسباب لم تُجمَع');
+  assert.equal(groups[0].code, 'missing_embed_text');
+  assert.equal(groups[0].count, 60, 'العدّ على المعروض لا على الكل');
+  assert.ok(groups[0].lines.length > 0 && groups[0].lines.length <= 5, 'أمثلة الأسطر إمّا غائبة أو غير مقصوصة');
+  assert.deepEqual(groups[0].keys, ['id', 'law_id', 'article_no', 'text'], 'حقول السطر لم تُذكر، فلا يُعرف الناقص');
+  assert.equal(groups[1].code, 'bad_status');
+});
+
 await check('١ · حالة سريان غير معروفة تُرفض', () => {
   const bad = lib.parseJsonl('{"id":"a","text":"ن","embed_text":"س","status":"draft"}');
   assert.equal(bad.rows.length, 0);

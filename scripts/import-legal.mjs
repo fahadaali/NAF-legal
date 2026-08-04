@@ -90,11 +90,13 @@ for (let start = 0; start < lines.length; start += batchSize) {
 
   if (!res.ok) {
     console.error(`\nالدفعة ${no}/${of} رُفضت (${res.status}): ${report.error ?? ''}`);
-    for (const e of report.errors ?? []) {
-      // رقم السطر داخل الدفعة يُردّ إلى رقمه في الملف الأصلي.
-      console.error(`  السطر ${start + e.line}: ${e.error}`);
+    // الأسباب مجموعةً أولاً: ملفٌّ مولَّد بقالب واحد تفشل أسطره بالسبب نفسه،
+    // وطباعةُ خمسين رسالة متطابقة تُخفي ما تقوله واحدة.
+    for (const g of report.error_summary ?? []) {
+      const lines = g.lines?.length ? ` (أسطر: ${g.lines.join(' · ')}…)` : '';
+      console.error(`  ${g.count} سطراً: ${g.error}${lines}`);
+      if (g.keys?.length) console.error(`    الحقول الموجودة في هذه الأسطر: ${g.keys.join(' · ')}`);
     }
-    if (report.errors_truncated) console.error(`  …و${report.errors_truncated} خطأً آخر`);
     process.exit(1);
   }
 

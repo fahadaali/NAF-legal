@@ -8,6 +8,7 @@ import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import {
   parseJsonl,
+  summarizeErrors,
   upsertLegalChunks,
   embedPending,
   searchLegal,
@@ -60,6 +61,10 @@ app.post('/import', requireAdmin, async (c) => {
     lines: parsed.total,
     accepted: parsed.rows.length,
     failed: parsed.errors.length,
+    // الأسباب مجموعةً على **كل** الأسطر لا على المعروض منها: ملفٌّ مولَّد
+    // بقالب واحد تفشل أسطره بالسبب نفسه، وسقفُ العرض كان يُخفي الحقيقة خلف
+    // «وأخطاء أخرى لم تُعرَض» فلا يعرف صاحب الملف ما الذي يصلحه.
+    error_summary: summarizeErrors(parsed.errors),
     errors: parsed.errors.slice(0, MAX_REPORTED_ERRORS),
     errors_truncated: Math.max(0, parsed.errors.length - MAX_REPORTED_ERRORS),
     warnings: parsed.warnings,

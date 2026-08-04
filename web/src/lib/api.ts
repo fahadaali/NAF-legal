@@ -193,8 +193,19 @@ export interface LegalStats {
 /** سطرٌ رُفض، برقمه في الملف وسببه. */
 export interface LegalLineError {
   line: number;
+  code: string;
   error: string;
   id?: string;
+  keys?: string[];
+}
+
+/** سببٌ واحد مجموعاً على الملف كلّه — لا على المعروض من أسطره. */
+export interface LegalErrorGroup {
+  code: string;
+  error: string;
+  count: number;
+  lines: number[];
+  keys?: string[];
 }
 
 /** تقرير دفعة استيراد — كما يردّه `/api/legal/import`. */
@@ -206,6 +217,7 @@ export interface LegalImportReport {
   inserted?: number;
   updated?: number;
   failed?: number;
+  error_summary?: LegalErrorGroup[];
   errors?: LegalLineError[];
   errors_truncated?: number;
   warnings?: string[];

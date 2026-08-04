@@ -110,8 +110,29 @@ export interface PreparedChunk {
 
 export interface LineError {
   line: number;
+  /** رمزٌ ثابت للسبب — عليه يقوم التجميع، لا على نصّ الرسالة. */
+  code: string;
   error: string;
   id?: string;
+  /** الحقول التي حملها السطر فعلاً — بها يُعرَف الناقص بلا تخمين. */
+  keys?: string[];
+}
+
+/**
+ * سببٌ واحد مجموعاً عبر الملف كلّه.
+ *
+ * ملفٌّ مولَّد بقالبٍ واحد تفشل أسطرُه بالسبب نفسه: مئةُ رسالة متطابقة لا
+ * تقول أكثر مما تقوله واحدة، والعدد المخفيّ بعد سقف العرض يُخفي الحقيقة
+ * كلَّها. فيُجمع السبب مرّة، ويُعدّ، وتُذكر أمثلةٌ من أسطره.
+ */
+export interface ErrorGroup {
+  code: string;
+  error: string;
+  count: number;
+  /** أمثلة من أرقام الأسطر — لا كلّها. */
+  lines: number[];
+  /** الحقول التي وردت في هذه الأسطر — لتظهر أيّها ناقص. */
+  keys?: string[];
 }
 
 export interface ParsedJsonl {
@@ -122,6 +143,44 @@ export interface ParsedJsonl {
   warnings: string[];
   /** أسطر تجاوز `embed_text` فيها سقف المتجه فقُصَّ مدخله (ولم يُقسَّم المقطع). */
   longEmbedText: number;
+}
+
+/** خطأ تحقّقٍ برمزه. الرمز ثابت والرسالة قد تُصاغ من جديد. */
+class ChunkError extends Error {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+const SAMPLE_LINES = 5;
+const SAMPLE_KEYS = 14;
+
+/** يجمع أخطاء الأسطر بأسبابها. لا سقف على العدّ — السقف على العرض وحده. */
+export function summarizeErrors(errors: LineError[]): ErrorGroup[] {
+  const groups = new Map<string, ErrorGroup>();
+  for (const e of errors) {
+    const existing = groups.get(e.code);
+    if (existing) {
+      existing.count++;
+      if (existing.lines.length < SAMPLE_LINES) existing.lines.push(e.line);
+      if (e.keys?.length) {
+        const merged = new Set([...(existing.keys ?? []), ...e.keys]);
+        existing.keys = Array.from(merged).slice(0, SAMPLE_KEYS);
+      }
+    } else {
+      groups.set(e.code, {
+        code: e.code,
+        error: e.error,
+        count: 1,
+        lines: [e.line],
+        keys: e.keys?.length ? e.keys.slice(0, SAMPLE_KEYS) : undefined,
+      });
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => b.count - a.count);
 }
 
 // ── ١) الاستيراد ──
@@ -163,7 +222,11 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string): ParsedJson
     const lineNo = i + 1;
 
     if (total === 1 && raw.startsWith('[')) {
-      errors.push({ line: lineNo, error: 'الملف مصفوفة JSON لا JSONL — المطلوب سطر مستقل لكل مادة' });
+      errors.push({
+        line: lineNo,
+        code: 'json_array',
+        error: 'الملف مصفوفة JSON لا JSONL — المطلوب سطر مستقل لكل مادة',
+      });
       break;
     }
 
@@ -171,7 +234,7 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string): ParsedJson
     try {
       parsed = JSON.parse(raw);
     } catch (e: any) {
-      errors.push({ line: lineNo, error: `سطر غير صالح كـJSON: ${String(e?.message ?? e)}` });
+      errors.push({ line: lineNo, code: 'bad_json', error: `سطر غير صالح كـJSON: ${String(e?.message ?? e)}` });
       continue;
     }
 
@@ -181,14 +244,26 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string): ParsedJson
       if (previous) {
         // مكرّر داخل الملف نفسه: الـ upsert سيُبقي الأخير ويُسقط الأول بصمت،
         // وهو غالباً خطأ في التوليد لا قصداً — فيُقال.
-        errors.push({ line: lineNo, error: `المعرّف مكرّر في الملف نفسه (وردَ في السطر ${previous})`, id: row.id });
+        errors.push({
+          line: lineNo,
+          code: 'duplicate_id',
+          error: `المعرّف مكرّر في الملف نفسه (وردَ في السطر ${previous})`,
+          id: row.id,
+        });
         continue;
       }
       seen.set(row.id, lineNo);
       if (row.embed_text.length > EMBED_MAX_CHARS) longEmbedText++;
       rows.push(row);
     } catch (e: any) {
-      errors.push({ line: lineNo, error: String(e?.message ?? e) });
+      // حقول السطر تُرافق الخطأ: ملفٌّ مولَّد بقالب واحد تفشل أسطره كلّها
+      // بالسبب نفسه، ورؤية ما حمله السطر فعلاً تُري الناقصَ بلا تخمين.
+      errors.push({
+        line: lineNo,
+        code: e instanceof ChunkError ? e.code : 'invalid_line',
+        error: String(e?.message ?? e),
+        keys: topLevelKeys(parsed),
+      });
     }
   }
 
@@ -202,29 +277,29 @@ const GREGORIAN_DATE = /^\d{4}-\d{2}-\d{2}$/;
 /** يتحقّق من سطر واحد ويحسب حقوله المشتقّة. يرمي رسالةً عربية عند الخطأ. */
 export function prepareChunk(raw: unknown): PreparedChunk {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('السطر ليس كائن JSON');
+    throw new ChunkError('not_object', 'السطر ليس كائن JSON');
   }
   const o = raw as Record<string, unknown>;
 
   const id = str(o.id);
-  if (!id) throw new Error('`id` مطلوب — وهو المفتاح الأساسي الذي يقوم عليه الاستبدال');
-  if (id.length > MAX_ID_LEN) throw new Error(`\`id\` أطول من ${MAX_ID_LEN} حرفاً`);
+  if (!id) throw new ChunkError('missing_id', '`id` مطلوب — وهو المفتاح الأساسي الذي يقوم عليه الاستبدال');
+  if (id.length > MAX_ID_LEN) throw new ChunkError('long_id', `\`id\` أطول من ${MAX_ID_LEN} حرفاً`);
 
   const text = str(o.text);
-  if (!text) throw new Error('`text` مطلوب — وهو ما يُعرض ويُستشهد به');
-  if (text.length > MAX_TEXT_LEN) throw new Error('`text` أطول من الحدّ المسموح');
+  if (!text) throw new ChunkError('missing_text', '`text` مطلوب — وهو ما يُعرض ويُستشهد به');
+  if (text.length > MAX_TEXT_LEN) throw new ChunkError('long_text', '`text` أطول من الحدّ المسموح');
 
   const embedText = str(o.embed_text);
   if (!embedText) {
     // لا رجوع إلى `text`: الرجوع الصامت هو بعينه الخلط الذي يمنعه العقد،
     // ونتيجته استرجاعٌ ضعيف لا يظهر أثره إلا في جودة الإجابات.
-    throw new Error('`embed_text` مطلوب — وهو وحده ما يُحوَّل إلى متجه');
+    throw new ChunkError('missing_embed_text', '`embed_text` مطلوب — وهو وحده ما يُحوَّل إلى متجه');
   }
-  if (embedText.length > MAX_TEXT_LEN) throw new Error('`embed_text` أطول من الحدّ المسموح');
+  if (embedText.length > MAX_TEXT_LEN) throw new ChunkError('long_embed_text', '`embed_text` أطول من الحدّ المسموح');
 
   const status = str(o.status) || 'active';
   if (!VALID_STATUSES.has(status)) {
-    throw new Error(`\`status\` غير معروف: ${status} — المسموح: active | amended | repealed`);
+    throw new ChunkError('bad_status', `\`status\` غير معروف: ${status} — المسموح: active | amended | repealed`);
   }
 
   // منسوخٌ إن قال أيُّهما ذلك. لا يُصحَّح أحدهما بالآخر: التصفية تأخذ
@@ -299,9 +374,18 @@ function date(v: unknown, field: string): string | null {
   const s = str(v);
   if (!s) return null;
   if (!GREGORIAN_DATE.test(s)) {
-    throw new Error(`\`${field}\` يجب أن يكون ميلادياً بصيغة YYYY-MM-DD (التاريخ الهجري في \`issue_date_hijri\`)`);
+    throw new ChunkError(
+      `bad_date:${field}`,
+      `\`${field}\` يجب أن يكون ميلادياً بصيغة YYYY-MM-DD (التاريخ الهجري في \`issue_date_hijri\`)`
+    );
   }
   return s;
+}
+
+/** أسماء حقول السطر كما وردت — مقصوصةً، فهي للتشخيص لا للتخزين. */
+function topLevelKeys(parsed: unknown): string[] | undefined {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  return Object.keys(parsed as Record<string, unknown>).slice(0, SAMPLE_KEYS);
 }
 
 /** بصمة نصّ التضمين: طوله ثم FNV-1a. تكفي لمعرفة «هل تغيّر؟» ولا تُستعمل لغيرها. */

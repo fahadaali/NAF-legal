@@ -15,15 +15,23 @@ import { formatNumber } from '../lib/format';
  *
  * التقسيم بالأسطر لا بالحجم: سطرٌ = مادة، وقصّ الملف بالبايت يشقّ سطراً في
  * منتصفه فتضيع مادة ويُرفض ما بعدها. والدفعات متتابعة لا متوازية، ليقف
- * الاستيراد عند أوّل دفعة تُرفَض بدل أن تمضي بقيتها على الخطأ نفسه.
+ * استيراد الملف عند أوّل دفعة تُرفَض بدل أن تمضي بقيتها على الخطأ نفسه.
  */
 const BATCH_LINES = 500;
 
+/** نتيجة ملف واحد من الاختيار. */
+interface FileResult {
+  name: string;
+  ok: boolean;
+  inserted: number;
+  updated: number;
+  report?: LegalImportReport;
+}
+
 export function LegalImport() {
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [report, setReport] = useState<LegalImportReport | null>(null);
-  const [written, setWritten] = useState<{ inserted: number; updated: number } | null>(null);
+  const [now, setNow] = useState<{ name: string; file: number; files: number; batch: number; batches: number } | null>(null);
+  const [results, setResults] = useState<FileResult[]>([]);
   const [stats, setStats] = useState<LegalStats | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
@@ -32,51 +40,77 @@ export function LegalImport() {
   };
   useEffect(loadStats, []);
 
-  const run = async (file: File | undefined) => {
-    if (!file) return;
-    setBusy(true);
-    setReport(null);
-    setWritten(null);
-    try {
-      const text = await file.text();
-      const lines = text.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
-      if (!lines.length) {
-        setReport({ ok: false, error: 'لا سطور في الملف' });
-        return;
-      }
+  /**
+   * يستورد ملفاً واحداً.
+   *
+   * وحدة «الكل أو لا شيء» هي الملف لا الاختيار كلّه: نظامٌ نصفه مستورد أسوأ
+   * من نظام لم يُستورَد، أما نظامٌ سليم بجانب نظامٍ مرفوض فلا ضرر فيه. فيمضي
+   * الاستيراد إلى الملف التالي ويُذكر لكلٍّ حالُه.
+   */
+  const importFile = async (file: File, index: number, count: number): Promise<FileResult> => {
+    const text = await file.text();
+    const lines = text.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
+    if (!lines.length) {
+      return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: 'لا سطور في الملف' } };
+    }
 
-      const total = Math.ceil(lines.length / BATCH_LINES);
-      let inserted = 0;
-      let updated = 0;
+    const batches = Math.ceil(lines.length / BATCH_LINES);
+    let inserted = 0;
+    let updated = 0;
 
-      for (let start = 0; start < lines.length; start += BATCH_LINES) {
-        setProgress({ done: Math.floor(start / BATCH_LINES), total });
-        const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name);
-        if (!batch.ok) {
-          // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل دفعة
-          // لا يدلّ صاحبَ الملف على شيء.
-          setReport({
+    for (let start = 0; start < lines.length; start += BATCH_LINES) {
+      setNow({ name: file.name, file: index + 1, files: count, batch: Math.floor(start / BATCH_LINES) + 1, batches });
+      const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name);
+      if (!batch.ok) {
+        // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل دفعة
+        // لا يدلّ صاحبَ الملف على شيء.
+        return {
+          name: file.name,
+          ok: false,
+          inserted,
+          updated,
+          report: {
             ...batch,
             errors: (batch.errors ?? []).map((e) => ({ ...e, line: start + e.line })),
-          });
-          setWritten({ inserted, updated });
-          return;
-        }
-        inserted += batch.inserted ?? 0;
-        updated += batch.updated ?? 0;
-        setReport(batch);
+            error_summary: (batch.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })),
+          },
+        };
       }
-      setWritten({ inserted, updated });
-    } catch (e: any) {
-      setReport({ ok: false, error: e?.message ?? 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة' });
+      inserted += batch.inserted ?? 0;
+      updated += batch.updated ?? 0;
+    }
+    return { name: file.name, ok: true, inserted, updated };
+  };
+
+  const run = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setBusy(true);
+    setResults([]);
+    const chosen = Array.from(files);
+    const done: FileResult[] = [];
+    try {
+      for (let i = 0; i < chosen.length; i++) {
+        try {
+          done.push(await importFile(chosen[i], i, chosen.length));
+        } catch (e: any) {
+          done.push({
+            name: chosen[i].name,
+            ok: false,
+            inserted: 0,
+            updated: 0,
+            report: { ok: false, error: e?.message ?? 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة' },
+          });
+        }
+        setResults([...done]);
+      }
     } finally {
       setBusy(false);
-      setProgress(null);
+      setNow(null);
       loadStats();
     }
   };
 
-  const rejected = report && !report.ok;
+  const rejected = results.filter((r) => !r.ok);
 
   return (
     <div>
@@ -84,90 +118,109 @@ export function LegalImport() {
         ref={input}
         type="file"
         hidden
+        multiple
         accept=".jsonl,.ndjson"
         onChange={(e) => {
-          run(e.target.files?.[0]);
+          run(e.target.files);
           e.target.value = '';
         }}
       />
 
       <div className="dropzone" onClick={() => !busy && input.current?.click()}>
-        {busy ? (
+        {busy && now ? (
           <>
-            <span className="spinner" /> جارٍ الاستيراد
-            {progress && progress.total > 1 ? (
+            <span className="spinner" /> جارٍ الاستيراد <bdi>{now.name}</bdi>{' '}
+            {now.files > 1 ? (
+              <>
+                (<bdi>{formatNumber(now.file)}</bdi> / <bdi>{formatNumber(now.files)}</bdi>)
+              </>
+            ) : null}
+            {now.batches > 1 ? (
               <>
                 {' '}
-                <bdi>{formatNumber(progress.done + 1)}</bdi> / <bdi>{formatNumber(progress.total)}</bdi>
+                <bdi>{formatNumber(now.batch)}</bdi> / <bdi>{formatNumber(now.batches)}</bdi>
               </>
             ) : null}
           </>
         ) : (
-          <>اختر ملف JSONL — سطر مستقل لكل مادة، يُستورَد كما هو ولا يُعاد تقطيعه</>
+          <>اختر ملفات JSONL — سطر مستقل لكل مادة، تُستورَد كما هي ولا يُعاد تقطيعها</>
         )}
       </div>
 
-      {report && (
+      {results.length > 0 && (
         <div className="import-report">
-          <span className={`pill ${rejected ? 'error' : 'ready'}`}>{rejected ? 'الملف مرفوض' : 'تم الاستيراد'}</span>
-          {report.error ? <p>{report.error}</p> : null}
-          {(report.warnings ?? []).map((w, i) => (
-            <p key={i}>{w}</p>
-          ))}
-
-          {written && (written.inserted > 0 || written.updated > 0) ? (
-            <div className="table-scroll"><table className="data-table">
+          <div className="table-scroll">
+            <table className="data-table">
               <thead>
                 <tr>
+                  <th>الملف</th>
+                  <th>الحالة</th>
                   <th>مواد جديدة</th>
                   <th>مواد مستبدَلة</th>
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  {/* ما فعلته هذه الدفعة وحدها. وحالُ المحتوى كلِّه — ومنه
-                      ما ينتظر التضمين — في جدول الحال أدناه، فلا يُعاد رقمٌ
-                      واحد في موضعين برقمين مختلفين. */}
-                  <td><bdi>{formatNumber(written.inserted)}</bdi></td>
-                  <td><bdi>{formatNumber(written.updated)}</bdi></td>
-                </tr>
-              </tbody>
-            </table></div>
-          ) : null}
-
-          {/* «وما استُورد قبلها محفوظ» تُقال حين يكون قبلها شيء فعلاً. وقولها
-              مع صفر يُقلق بلا سبب: يوهم أن شيئاً كُتب ثم ضاع. */}
-          {rejected && written && written.inserted + written.updated > 0 ? (
-            <p>
-              الأسطر المرفوضة لم يُكتب منها شيء. وما استُورد قبلها محفوظ:{' '}
-              <bdi>{formatNumber(written.inserted + written.updated)}</bdi> مادة.
-            </p>
-          ) : null}
-
-          {report.errors?.length ? (
-            <div className="table-scroll"><table className="data-table">
-              <thead>
-                <tr>
-                  <th>السطر</th>
-                  <th>السبب</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.errors.map((e, i) => (
+                {results.map((r, i) => (
                   <tr key={i}>
-                    <td><bdi>{formatNumber(e.line)}</bdi></td>
-                    <td>{e.error}</td>
+                    <td><bdi>{r.name}</bdi></td>
+                    <td>
+                      <span className={`pill ${r.ok ? 'ready' : 'error'}`}>{r.ok ? 'تم الاستيراد' : 'الملف مرفوض'}</span>
+                    </td>
+                    <td><bdi>{formatNumber(r.inserted)}</bdi></td>
+                    <td><bdi>{formatNumber(r.updated)}</bdi></td>
                   </tr>
                 ))}
               </tbody>
-            </table></div>
-          ) : null}
+            </table>
+          </div>
 
-          {report.errors_truncated ? (
-            <p>
-              وأخطاء أخرى لم تُعرَض: <bdi>{formatNumber(report.errors_truncated)}</bdi>
-            </p>
-          ) : null}
+          {rejected.map((r, i) => (
+            <div key={i} className="import-report">
+              <p>
+                <bdi>{r.name}</bdi>: {r.report?.error ?? 'أسطر غير صالحة — لم يُكتب شيء'}
+              </p>
+              {/* «وما استُورد قبلها محفوظ» تُقال حين يكون قبلها شيء فعلاً. وقولها
+                  مع صفر يُقلق بلا سبب: يوهم أن شيئاً كُتب ثم ضاع. */}
+              {r.inserted + r.updated > 0 ? (
+                <p>
+                  وما استُورد من هذا الملف قبل الرفض محفوظ: <bdi>{formatNumber(r.inserted + r.updated)}</bdi> مادة.
+                </p>
+              ) : null}
+
+              {r.report?.error_summary?.length ? (
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>السبب</th>
+                        <th>الأسطر</th>
+                        <th>الحقول الموجودة</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {r.report.error_summary.map((g, j) => (
+                        <tr key={j}>
+                          <td>{g.error}</td>
+                          <td>
+                            <bdi>{formatNumber(g.count)}</bdi>
+                            {/* أمثلةٌ من أرقام الأسطر: تكفي لفتح الملف على
+                                موضع العطب، ولا تُغرق الجدول بمئة رقم. */}
+                            {g.lines.length ? (
+                              <>
+                                {' '}
+                                (<bdi>{g.lines.map((l) => formatNumber(l)).join(' · ')}</bdi>)
+                              </>
+                            ) : null}
+                          </td>
+                          <td>{g.keys?.length ? <bdi>{g.keys.join(' · ')}</bdi> : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          ))}
         </div>
       )}
 
