@@ -118,7 +118,15 @@ export async function getEffectiveConfig(env: Env, key: string): Promise<Consult
   if (row?.config_json) {
     try {
       const parsed = JSON.parse(row.config_json);
-      return { ...defaultConfig(key), ...parsed, key };
+      const merged = { ...defaultConfig(key), ...parsed, key };
+      /* تجاوزٌ بلا برومبت لا يعني «بلا برومبت».
+
+         البرومبت الافتراضي يحمل قيود الإسناد وسطر إخلاء المسؤولية (§٤).
+         ومحوُه من شاشة الإدارة — أو حفظُ إعدادٍ يحمل `null` مكانه — كان
+         يُخرج مسوّدات قانونية بلا هذه القيود، ويُرسل `system` فارغاً
+         يردّه الـAPI بـ400. فالفارغ يعود إلى الافتراضي. */
+      if (!merged.system_prompt?.trim()) merged.system_prompt = systemPromptFor(key);
+      return merged;
     } catch {}
   }
   return defaultConfig(key);

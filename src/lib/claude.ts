@@ -9,40 +9,98 @@ export interface ClaudeMessage {
   content: string | any[];
 }
 
+/**
+ * لا معامِلات عيّنة هنا ولا في أي مستدعٍ لهذا الملف — لا `temperature` ولا
+ * `top_p` ولا `top_k`.
+ *
+ * أُزيلت هذه المعامِلات من عائلة Opus 4.7 فصاعداً، وهي عائلة النموذج
+ * المضبوط في `wrangler.toml`. فإرسال أيٍّ منها يردّه الـAPI بـ400 **قبل أن
+ * يبدأ التوليد**، فيفشل كل استدعاء في المنصة: المُخطِّط والتصنيف والاستخراج
+ * والتحقّق والتوليد. وأثر ذلك في الواجهة جملةٌ واحدة عند أول رسالة، لأن كل
+ * مستدعٍ عدا التوليد يبتلع خطأه ويكمل بخطة احتياطية.
+ *
+ * وحذفها آمن على أي نموذج: الإغفال يعني القيمة الافتراضية لا قيمة شاذّة.
+ * التوجيه يكون بالبرومبت لا بمعامِل عيّنة.
+ */
 export interface ClaudeCallOptions {
   model: string;
   system?: string;
   messages: ClaudeMessage[];
   max_tokens?: number;
-  temperature?: number;
   tools?: any[];
   tool_choice?: any;
+}
+
+/** رسالة بلا محتوى يردّها الـAPI بـ400، والفراغ يقع من نصٍّ مقتطع أو حقل ناقص. */
+function hasContent(m: ClaudeMessage): boolean {
+  if (typeof m.content === 'string') return m.content.trim().length > 0;
+  return Array.isArray(m.content) && m.content.length > 0;
+}
+
+/**
+ * تنقية سجلّ الرسائل قبل إرساله.
+ *
+ * الـAPI يردّ 400 على رسالةٍ بمحتوى فارغ، وعلى سجلٍّ أوّلُه دور المساعد.
+ * وكلتا الحالتين تقعان من سجلّ محادثةٍ تكتبه المنصة نفسها: محادثةٌ قُصَّ
+ * أوّلها بحدّ الأربعين رسالة قد تبدأ برد مساعد. فالمنع في موضع البناء
+ * أوثق من تتبّعه في كل مستدعٍ على حدة.
+ */
+function sanitizeMessages(messages: ClaudeMessage[]): ClaudeMessage[] {
+  const kept = (messages ?? []).filter(hasContent);
+  let start = 0;
+  while (start < kept.length && kept[start].role !== 'user') start++;
+  return kept.slice(start);
+}
+
+/** جسمُ الطلب — موضعٌ واحد يبنيه للاستدعاءين، فما صحّ لأحدهما صحّ للآخر. */
+function buildBody(opts: ClaudeCallOptions, defaultMaxTokens: number, stream: boolean): string {
+  const messages = sanitizeMessages(opts.messages);
+  if (!messages.length) throw new Error('Claude request has no usable messages');
+
+  const body: Record<string, unknown> = {
+    model: opts.model,
+    max_tokens: opts.max_tokens ?? defaultMaxTokens,
+    messages,
+  };
+  // الحقول الاختيارية تُحذف ولا تُرسل فارغة: `system` فارغ و`tools` فارغة
+  // كلاهما 400، والإغفال هو ما يعنيه غيابُها أصلاً.
+  if (opts.system?.trim()) body.system = opts.system;
+  if (opts.tools?.length) body.tools = opts.tools;
+  if (opts.tool_choice) body.tool_choice = opts.tool_choice;
+  if (stream) body.stream = true;
+  return JSON.stringify(body);
+}
+
+function headers(env: Env): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    'x-api-key': env.ANTHROPIC_API_KEY,
+    'anthropic-version': API_VERSION,
+  };
+}
+
+/**
+ * خطأ الـAPI يُسجَّل هنا لا في المستدعي.
+ *
+ * كل مستدعٍ لهذا الملف — عدا التوليد — يبتلع خطأه ويكمل بخطة احتياطية،
+ * فهذا السطر هو الوحيد الذي يقول ما ردّ به الـAPI فعلاً. وبدونه يظهر
+ * انقطاعٌ كامل في الخدمة كأنه خللٌ في صلاحيات المستخدم.
+ */
+async function apiError(res: Response, stage: string): Promise<Error> {
+  const body = await res.text().catch(() => '');
+  console.error(`claude ${stage} ${res.status}: ${body.slice(0, 500)}`);
+  return new Error(`Claude API ${res.status}: ${body.slice(0, 300)}`);
 }
 
 // استدعاء غير متدفّق يعيد النص الكامل (يُستخدم للمُخطِّط والتصنيف)
 export async function callClaude(env: Env, opts: ClaudeCallOptions): Promise<{ text: string; raw: any }> {
   const res = await fetch(API_URL, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': env.ANTHROPIC_API_KEY,
-      'anthropic-version': API_VERSION,
-    },
-    body: JSON.stringify({
-      model: opts.model,
-      max_tokens: opts.max_tokens ?? 4096,
-      temperature: opts.temperature ?? 0.3,
-      system: opts.system,
-      messages: opts.messages,
-      tools: opts.tools,
-      tool_choice: opts.tool_choice,
-    }),
+    headers: headers(env),
+    body: buildBody(opts, 4096, false),
   });
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Claude API error ${res.status}: ${body}`);
-  }
+  if (!res.ok) throw await apiError(res, 'call');
   const data = (await res.json()) as any;
   const text = (data.content ?? [])
     .filter((b: any) => b.type === 'text')
@@ -55,27 +113,11 @@ export async function callClaude(env: Env, opts: ClaudeCallOptions): Promise<{ t
 export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<ReadableStream<Uint8Array>> {
   const upstream = await fetch(API_URL, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': env.ANTHROPIC_API_KEY,
-      'anthropic-version': API_VERSION,
-    },
-    body: JSON.stringify({
-      model: opts.model,
-      max_tokens: opts.max_tokens ?? 8192,
-      temperature: opts.temperature ?? 0.4,
-      system: opts.system,
-      messages: opts.messages,
-      tools: opts.tools,
-      tool_choice: opts.tool_choice,
-      stream: true,
-    }),
+    headers: headers(env),
+    body: buildBody(opts, 8192, true),
   });
 
-  if (!upstream.ok || !upstream.body) {
-    const body = await upstream.text().catch(() => '');
-    throw new Error(`Claude stream error ${upstream.status}: ${body}`);
-  }
+  if (!upstream.ok || !upstream.body) throw await apiError(upstream, 'stream');
 
   // نحوّل أحداث Anthropic SSE إلى أحداث SSE مبسّطة للواجهة:
   //   event: delta   data: {"text": "..."}

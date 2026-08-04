@@ -92,7 +92,6 @@ async function extractViaClaude(env: Env, buf: ArrayBuffer, mediaType: string, k
   const { text } = await callClaude(env, {
     model: env.PLANNER_MODEL,
     max_tokens: 8192,
-    temperature: 0,
     messages: [
       {
         role: 'user',

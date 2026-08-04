@@ -47,7 +47,6 @@ export async function verifyGrounding(
         { role: 'user', content: `السياق النظامي:\n${ragContext.slice(0, 12000)}\n\n---\n\nالمخرَج:\n${generated.slice(0, 12000)}` },
       ],
       max_tokens: 800,
-      temperature: 0,
     });
     const u = usageFromRaw(raw);
     await logUsage(env, { userId, kind: 'verify', model: env.PLANNER_MODEL, ...u, consultationType });
@@ -60,7 +59,10 @@ export async function verifyGrounding(
       unsupported,
       note: parsed.note ?? '',
     };
-  } catch {
+  } catch (e) {
+    // التحقّق لا يُفشل التوليد، لكن صمتَه يخفي انقطاعاً في Claude يطال
+    // المنصة كلها — فيُسجَّل السبب ويتابع الردّ بلا شارة تحقّق.
+    console.error('verify failed:', e instanceof Error ? e.message : e);
     return null;
   }
 }

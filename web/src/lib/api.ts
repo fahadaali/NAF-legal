@@ -487,6 +487,11 @@ export const api = {
     req(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   audit: () => req<{ entries: any[] }>('/admin/audit'),
   aiCheck: () => req<{ ok: boolean; model: string; dimensions?: number; ms?: number; error?: string }>('/admin/ai-check'),
+  /** فحص Claude — يردّ ٢٠٠ ولو فشل، فالتقرير هو المطلوب لا رمز الخطأ. */
+  claudeCheck: () =>
+    req<{ ok: boolean; checks: { model: string; ok: boolean; ms: number; sample?: string; error?: string }[] }>(
+      '/admin/claude-check'
+    ),
   analytics: () => req<any>('/admin/analytics'),
   settings: () => req<{ settings: Record<string, string> }>('/admin/settings'),
   saveSettings: (s: Record<string, string>) => req('/admin/settings', { method: 'POST', body: JSON.stringify(s) }),

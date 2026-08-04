@@ -4,6 +4,7 @@ import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { runTrackingScan, runNewsDigest } from '../cron';
 import { ingestDocument } from '../ingest';
 import { getAllEffectiveConfigs, getEffectiveConfig, defaultConfig } from '../lib/consultationConfig';
+import { callClaude } from '../lib/claude';
 import { uuid, hashPassword } from '../lib/crypto';
 import { notify } from '../lib/notify';
 import type { Env, Variables } from '../types';
@@ -253,6 +254,38 @@ app.get('/ai-check', async (c) => {
   } catch (e: any) {
     return c.json({ ok: false, model: c.env.EMBEDDING_MODEL, error: String(e?.message ?? e) }, 502);
   }
+});
+
+// ── فحص Claude (التخطيط والتوليد) ──
+//
+// للمنصة فحصٌ لـWorkers AI منذ البداية ولا فحص لـClaude، مع أن Claude هو ما
+// تقوم عليه كل مخرجاتها. وكل مستدعٍ له — عدا التوليد — يبتلع خطأه ويكمل
+// بخطة احتياطية، فانقطاعٌ كامل فيه يظهر جملةً واحدة عند أول رسالة يرسلها
+// المستخدم، ويُقرأ خطأَ صلاحيات. هذا الفحص يفصل الحالتين في ثانية.
+//
+// والنموذجان يُفحصان لا واحد: `PLANNER_MODEL` و `GENERATION_MODEL` قد
+// يختلفان، وفشلُ الأول وحده يترك المنصة تعمل بخطة احتياطية بلا تخطيط.
+//
+// والردّ ٢٠٠ دائماً وإن فشل الفحص: التقرير نفسه هو المطلوب — أيّ نموذج فشل
+// وبأي رسالة — ورمزُ خطأٍ يجعل عميل الواجهة يرمي فيضيّع تفصيله.
+app.get('/claude-check', async (c) => {
+  const models = Array.from(new Set([c.env.GENERATION_MODEL, c.env.PLANNER_MODEL].filter(Boolean)));
+  const checks = await Promise.all(
+    models.map(async (model) => {
+      const t0 = Date.now();
+      try {
+        const { text } = await callClaude(c.env, {
+          model,
+          messages: [{ role: 'user', content: 'أجب بكلمة واحدة: جاهز' }],
+          max_tokens: 16,
+        });
+        return { model, ok: true, ms: Date.now() - t0, sample: text.trim().slice(0, 40) };
+      } catch (e: any) {
+        return { model, ok: false, ms: Date.now() - t0, error: String(e?.message ?? e) };
+      }
+    })
+  );
+  return c.json({ ok: checks.every((r) => r.ok), checks });
 });
 
 // ── إعداد نماذج الاستشارات (البرومبت + الحقول + طلب الملف) ──

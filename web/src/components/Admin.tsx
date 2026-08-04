@@ -841,6 +841,12 @@ function SettingsTab() {
       <div className="section-title">فحص Workers AI (التضمين)</div>
       <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>يشغّل استدعاء تضمين صغيرًا للتأكّد من عمل Workers AI على الخادم.</p>
       <AiCheck />
+
+      <div className="section-title">فحص Claude (التخطيط والتوليد)</div>
+      <p className="source-note">
+        يشغّل استدعاءً صغيرًا لكل نموذج مضبوط. إن ظهر «غير مربوط» هنا فالخلل في الخدمة أو المفتاح أو شكل الطلب، لا في صلاحية المستخدم.
+      </p>
+      <ClaudeCheck />
     </div>
   );
 }
@@ -866,6 +872,45 @@ function AiCheck() {
         {busy ? <><span className="spinner" /> جارٍ الفحص…</> : 'فحص Workers AI'}
       </button>
       {result && <p style={{ marginTop: 8, fontSize: '0.875rem' }}>{result}</p>}
+    </div>
+  );
+}
+
+/**
+ * فحص Claude — سطرٌ لكل نموذج مضبوط.
+ *
+ * المعرّفات والأزمنة لاتينية داخل نصٍّ عربي، فكلٌّ منها في `bdi` وإلا أعاد
+ * العربي ترتيبها (§٢ من قواعد الواجهة).
+ */
+function ClaudeCheck() {
+  const [busy, setBusy] = useState(false);
+  const [checks, setChecks] = useState<{ model: string; ok: boolean; ms: number; error?: string }[] | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setChecks(null);
+    try {
+      const r = await api.claudeCheck();
+      setChecks(r.checks);
+    } catch (e: any) {
+      setChecks([{ model: '—', ok: false, ms: 0, error: e.message ?? '' }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div>
+      <button className="btn-sm primary" onClick={run} disabled={busy}>
+        {busy ? <><span className="spinner" /> جارٍ الفحص…</> : 'فحص Claude'}
+      </button>
+      {checks?.map((r) => (
+        <p key={r.model} className="source-note">
+          {r.ok ? (
+            <>مربوط — النموذج <bdi>{r.model}</bdi> · <bdi>{r.ms}ms</bdi></>
+          ) : (
+            <>غير مربوط — النموذج <bdi>{r.model}</bdi> · <bdi>{r.error}</bdi></>
+          )}
+        </p>
+      ))}
     </div>
   );
 }

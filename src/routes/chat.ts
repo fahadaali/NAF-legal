@@ -79,8 +79,10 @@ app.post('/:conversationId', async (c) => {
       const results = await retrieve(c.env, plan.kb_queries, 6);
       ragContext = formatRagContext(results);
       citations = results.map((r) => ({ title: r.title, ref: r.articleRef, score: r.score }));
-    } catch {
-      // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG
+    } catch (e: any) {
+      // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ:
+      // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هنا وحده.
+      console.error('retrieval failed:', e?.message ?? e);
     }
   }
 
@@ -123,6 +125,10 @@ app.post('/:conversationId', async (c) => {
       max_tokens: 8192,
     });
   } catch (e: any) {
+    // السبب يُسجَّل ولا يُعرض. هذه الجملة هي كل ما يراه المستخدم حين تنقطع
+    // خدمة Claude، فتُقرأ خطأَ صلاحيات أو خللاً في حسابه — وما يفرّق بين
+    // مفتاح ناقص وشكل طلبٍ مرفوض إنما هو ردّ الـAPI، ومكانه السجلّ لا الشاشة.
+    console.error('generation failed:', e?.message ?? e);
     return c.json({ error: 'تعذّر توليد الرد', detail: String(e?.message ?? e) }, 502);
   }
 
@@ -209,9 +215,17 @@ app.post('/:conversationId', async (c) => {
           .bind(uuid(), asstId, fullText, 'النسخة الأولى المولَّدة', Date.now())
           .run()
           .catch(() => {});
-        // فهرسة دلالية للرسالتين (§3) — best-effort
-        await indexConversationMessage(env, { messageId: userMsgId, conversationId, userId, role: 'user', content: message, title: conv.title });
-        await indexConversationMessage(env, { messageId: asstId, conversationId, userId, role: 'assistant', content: fullText, title: conv.title });
+        // فهرسة دلالية للرسالتين (§3) — best-effort.
+        //
+        // ويُمسَك خطؤها هنا فعلاً: هذا الموضع داخل `start` المجرى، واستثناءٌ
+        // منه يقطع البثّ **بعد** أن حُفظ الرد، فيرى المستخدم ردّاً ناقصاً
+        // بلا حدث `done` — والمفهرِس تفصيلٌ لا علاقة له بردٍّ اكتمل وخُزِّن.
+        await indexConversationMessage(env, { messageId: userMsgId, conversationId, userId, role: 'user', content: message, title: conv.title }).catch(
+          (e) => console.error('index user message failed:', e?.message ?? e)
+        );
+        await indexConversationMessage(env, { messageId: asstId, conversationId, userId, role: 'assistant', content: fullText, title: conv.title }).catch(
+          (e) => console.error('index assistant message failed:', e?.message ?? e)
+        );
       } else {
         // لم يُنتِج التوليد نصًّا (انقطاع أو خطأ بعد بدء البثّ): أبلِغ الواجهة
         // بدل ترك فقاعة فارغة، ولا نخزّن ردًّا فارغًا.
@@ -283,8 +297,9 @@ async function findMissingRegulations(env: Env, names: string[], userId: string)
       if (requested) continue;
 
       missing.push(name);
-    } catch {
+    } catch (e: any) {
       // جدول غير مهيّأ بعد — لا نُفشل المحادثة بسبب الكشف
+      console.error('missing-regulations scan failed:', e?.message ?? e);
       return missing;
     }
   }

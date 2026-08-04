@@ -56,13 +56,17 @@ ${userMessage}`;
       system: PLANNER_SYSTEM,
       messages: [{ role: 'user', content: context }],
       max_tokens: 1024,
-      temperature: 0,
     });
     await logUsage(env, { userId, kind: 'planner', model: env.PLANNER_MODEL, ...usageFromRaw(raw) });
     const plan = extractJson(text);
     return normalize(plan, selectedType, hasAttachments, forceInternet);
   } catch (e) {
-    // احتياط: خطة افتراضية آمنة إن تعذّر المُخطِّط
+    // احتياط: خطة افتراضية آمنة إن تعذّر المُخطِّط.
+    //
+    // ويُسجَّل السبب. صمتُ هذا الموضع بالذات هو ما جعل انقطاع Claude كاملاً
+    // يظهر للمستخدم جملةً واحدة عند التوليد وحده: المُخطِّط يفشل أولاً ثم
+    // يمضي بخطته الاحتياطية كأن شيئاً لم يكن، فلا يبقى أثر يقول أين انقطع.
+    console.error('planner failed:', e instanceof Error ? e.message : e);
     return normalize({}, selectedType, hasAttachments, forceInternet);
   }
 }

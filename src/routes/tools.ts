@@ -41,7 +41,6 @@ app.post('/compare', async (c) => {
       },
     ],
     max_tokens: 8192,
-    temperature: 0.2,
   });
   await logUsage(c.env, { userId: user.id, kind: 'generation', model: c.env.GENERATION_MODEL, ...usageFromRaw(raw), consultationType: 'compare' });
   return c.json({ result: text });
@@ -65,7 +64,6 @@ app.post('/deadlines', async (c) => {
     system: DEADLINE_SYSTEM,
     messages: [{ role: 'user', content: prompt }],
     max_tokens: 3000,
-    temperature: 0.1,
   });
   await logUsage(c.env, { userId: user.id, kind: 'generation', model: c.env.GENERATION_MODEL, ...usageFromRaw(raw), consultationType: 'deadlines' });
   return c.json({ result: text });
@@ -89,7 +87,6 @@ app.post('/proofread', async (c) => {
     system,
     messages: [{ role: 'user', content: text.slice(0, 40000) }],
     max_tokens: 8192,
-    temperature: 0,
   });
   await logUsage(c.env, { userId: user.id, kind: 'generation', model: c.env.GENERATION_MODEL, ...usageFromRaw(raw), consultationType: 'proofread' });
   return c.json({ result: out });

@@ -270,7 +270,6 @@ async function classifyDocument(env: Env, filename: string, sample: string) {
       system,
       messages: [{ role: 'user', content: `اسم الملف: ${filename}\n\nعيّنة من المحتوى:\n${sample}` }],
       max_tokens: 512,
-      temperature: 0,
     });
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : { title: filename };

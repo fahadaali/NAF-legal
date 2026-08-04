@@ -113,7 +113,6 @@ app.post('/:messageId/alternative', async (c) => {
       },
     ],
     max_tokens: 8192,
-    temperature: 0.7,
   });
   await logUsage(c.env, {
     userId: user.id,
