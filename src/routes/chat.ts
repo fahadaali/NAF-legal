@@ -9,6 +9,7 @@ import { BILINGUAL_INSTRUCTION } from '../lib/prompts';
 import { getEffectiveConfig } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
+import { findMissingRegulations } from '../lib/regulations';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -257,56 +258,6 @@ app.post('/:conversationId', async (c) => {
     },
   });
 });
-
-// ── كشف الأنظمة الغائبة عن قاعدة المعرفة ──
-// المُخطِّط يُسمّي الأنظمة التي تحتاجها المسألة؛ نقارنها بعناوين وثائق قاعدة
-// المعرفة. المطابقة في الاتجاهين لأن العنوان قد يكون أطول من الاسم المرشَّح
-// («نظام العمل السعودي» مقابل «نظام العمل») أو أقصر منه.
-// نستخدم instr لا LIKE: الاتجاه العكسي يبني النمط بالدمج فيرفضه D1
-// («LIKE or GLOB pattern too complex»)، كما أنّ instr لا يفسّر % و _ داخل
-// اسم النظام القادم من المُخطِّط.
-const MISSING_REGULATIONS_MAX = 3;
-
-async function findMissingRegulations(env: Env, names: string[], userId: string): Promise<string[]> {
-  const missing: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of names) {
-    if (missing.length >= MISSING_REGULATIONS_MAX) break;
-    const name = (raw ?? '').trim().replace(/\s+/g, ' ');
-    if (name.length < 4 || name.length > 200) continue;
-    const key = name.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    try {
-      const hit = await env.DB.prepare(
-        `SELECT id FROM kb_documents
-         WHERE status != 'repealed' AND length(title) >= 4
-           AND (instr(lower(title), ?) > 0 OR instr(?, lower(title)) > 0)
-         LIMIT 1`
-      )
-        .bind(key, key)
-        .first();
-      if (hit) continue;
-
-      // طلب قائم للنظام نفسه (معلّق أو معتمد): لا نُزعج المستخدم بطلبه مجددًا
-      const requested = await env.DB.prepare(
-        `SELECT id FROM regulation_requests
-         WHERE user_id = ? AND status != 'rejected' AND lower(name) = ? LIMIT 1`
-      )
-        .bind(userId, key)
-        .first();
-      if (requested) continue;
-
-      missing.push(name);
-    } catch (e: any) {
-      // جدول غير مهيّأ بعد — لا نُفشل المحادثة بسبب الكشف
-      console.error('missing-regulations scan failed:', e?.message ?? e);
-      return missing;
-    }
-  }
-  return missing;
-}
 
 // يبني كتلة الملفات المرفوعة بسقف كلّي للحجم (يوزَّع على الملفات)
 const ATTACH_TOTAL_BUDGET = 60_000; // حروف

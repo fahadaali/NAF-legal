@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { notify } from '../lib/notify';
+import { sameRegulationName } from '../lib/regulations';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -54,12 +55,17 @@ app.post('/', async (c) => {
   const source = body.source === 'chat' ? 'chat' : 'support';
   const conversationId = cleanText(body.conversation_id, 64);
 
-  // طلب معلّق بالاسم نفسه من المستخدم نفسه: نُعيده بدل تكرار السطر
-  const existing = await c.env.DB.prepare(
-    "SELECT id FROM regulation_requests WHERE user_id = ? AND status = 'pending' AND lower(name) = lower(?)"
+  /* طلب معلّق يدلّ على النظام نفسه من المستخدم نفسه: يُعاد بدل تكرار السطر.
+
+     والمقارنة مطبَّعة لا حرفية: `lower()` في SQLite لا يمسّ العربية، فكان
+     «نظام الإثبات» و«نظام الاثبات» طلبين في لوحة المسؤول عن نظام واحد —
+     وهو الصنف نفسه الذي جعل الكشف يطلب نظاماً موجوداً في القاعدة. */
+  const pending = await c.env.DB.prepare(
+    "SELECT id, name FROM regulation_requests WHERE user_id = ? AND status = 'pending' LIMIT 200"
   )
-    .bind(user.id, name)
-    .first<{ id: string }>();
+    .bind(user.id)
+    .all<{ id: string; name: string }>();
+  const existing = (pending.results ?? []).find((r) => sameRegulationName(r.name, name));
   if (existing) return c.json({ id: existing.id, duplicate: true });
 
   const id = uuid();
