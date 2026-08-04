@@ -8,7 +8,7 @@ interface Props {
   user: User;
   open: boolean;
   activeConv: string | null;
-  view: 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support';
+  view: 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search';
   refreshKey: number;
   onSelectConv: (id: string) => void;
   onNewChat: () => void;
@@ -16,6 +16,8 @@ interface Props {
   onOpenMembers: () => void;
   onOpenTools: () => void;
   onOpenDeadlines: () => void;
+  /** يفتح شاشة البحث في المنصة بنصّ الاستعلام كما كُتب. */
+  onOpenSearch: (q: string) => void;
   onOpenCase: () => void;
   onOpenSupport: () => void;
 }
@@ -56,16 +58,20 @@ export default function Sidebar(props: Props) {
     if (!search) { setSearchMode(''); load(); return; }
     const t = setTimeout(() => {
       // بحث دلالي في سجل المحادثات مع رجوع نصّي (§3)
-      api.search(search).then((r) => {
+      // ترشيح المحادثات في الشريط: بحثٌ لفظيّ في المحادثات وحدها.
+      api.search(search, 'chats').then((r) => {
         setSearchMode(r.mode);
+        const seen = new Set<string>();
         setConvs(
-          r.results.map((x: any) => ({
-            id: x.conversationId ?? x.id,
-            title: x.title,
-            consultation_type: null,
-            created_at: 0,
-            updated_at: 0,
-          }))
+          r.chats
+            .filter((x) => (seen.has(x.conversation_id) ? false : seen.add(x.conversation_id)))
+            .map((x) => ({
+              id: x.conversation_id,
+              title: x.title ?? '',
+              consultation_type: null,
+              created_at: 0,
+              updated_at: 0,
+            }))
         );
       }).catch(() => {});
     }, 350);
@@ -108,8 +114,21 @@ export default function Sidebar(props: Props) {
       )}
 
       <div className="search-box">
-        <input placeholder="بحث دلالي في محادثاتك…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        {searchMode === 'semantic' && <div className="search-mode"><Icon.search size={ICON_SM} aria-hidden /> بحث دلالي</div>}
+        {/* الشريط يرشّح المحادثات، و«Enter» يفتح البحث في المنصة كلها:
+            محادثاتٍ ومخرجاتٍ وقاعدةَ معرفة. وكلاهما لفظيّ بلا نموذج. */}
+        <input
+          placeholder="بحث في محادثاتك — Enter للبحث في المنصة"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && search.trim()) props.onOpenSearch(search.trim());
+          }}
+        />
+        {search.trim() ? (
+          <button className="search-mode" onClick={() => props.onOpenSearch(search.trim())}>
+            <Icon.search size={ICON_SM} aria-hidden /> البحث في المنصة
+          </button>
+        ) : null}
       </div>
 
       <button className="tools-link" onClick={props.onOpenTools}><Icon.tools size={ICON_SM} aria-hidden /> الأدوات القانونية</button>

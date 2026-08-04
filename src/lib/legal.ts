@@ -990,6 +990,14 @@ function toHit(r: HitRow): LegalHit {
 export interface LegalSearchOptions extends LegalFilters {
   limit?: number;
   /**
+   * بحثٌ لفظيّ وحده — بلا تضمينٍ ولا نداءِ نموذج.
+   *
+   * لشاشات البحث المباشر: يبحث المستخدم بكلماته في محتوىً مفهرس، ولا حاجة
+   * فيه إلى نموذج ولا كلفةَ نداءٍ ولا تأخيرَه. والاسترجاع للمحادثة يبقى
+   * هجيناً كما هو.
+   */
+  lexicalOnly?: boolean;
+  /**
    * متجه الاستعلام محسوباً سلفاً.
    *
    * للنداء الذي يبحث في المصدرين بالاستعلام نفسه (`retrieve`): تضمينه مرّة
@@ -1047,7 +1055,7 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
   }
 
   // ── المسار الدلالي ──
-  if (env.VECTORIZE) {
+  if (env.VECTORIZE && !opts.lexicalOnly) {
     try {
       // الاستعلام يُضمَّن كما كتبه صاحبه لا مطبَّعاً: النموذج يفهم الصرف
       // العربي، والتطبيع يمحو منه ما يستفيد منه. التطبيع للفظيّ وحده.

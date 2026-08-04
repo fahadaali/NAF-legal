@@ -635,3 +635,23 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .compare-pair { display: grid; gap: var(--space-3); grid-template-columns: 1fr; }
 @media (min-width: 720px) { .compare-pair { grid-template-columns: 1fr 1fr; } }
 .compare-label { font-size: 0.875rem; font-weight: 700; color: var(--muted-foreground); margin-bottom: var(--space-1); }
+/* ── شاشة البحث في المنصة ── */
+.page-title { font-size: 1.5rem; margin-top: 0; }
+.search-page-box { margin-bottom: var(--space-3); }
+.search-page-box input {
+  width: 100%; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--input); color: var(--foreground); font-family: inherit; font-size: 0.875rem;
+}
+.search-page-box input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
+.muted-line { color: var(--muted-foreground); font-size: 0.875rem; display: flex; align-items: center; gap: var(--space-2); }
+/* النتيجة زرٌّ لا سطر: تُفتح بالنقر وبالمفتاح، ولها حلقة تركيز ظاهرة. */
+.search-hit {
+  display: flex; flex-direction: column; gap: var(--space-1); width: 100%; text-align: start;
+  padding: var(--space-3); margin-bottom: var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card); color: var(--foreground); font-family: inherit; font-size: 0.875rem;
+  transition: border-color 0.15s ease-out;
+}
+.search-hit:hover { border-color: var(--primary); }
+.search-hit-title { display: flex; align-items: center; gap: var(--space-2); font-weight: 700; }
+.search-hit-snippet { color: var(--muted-foreground); line-height: var(--leading-relaxed, 1.9); }

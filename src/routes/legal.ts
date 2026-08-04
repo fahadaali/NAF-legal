@@ -163,6 +163,8 @@ app.get('/search', async (c) => {
     articleNo: c.req.query('article_no') ?? null,
     withRegulations: c.req.query('with_regulations') !== '0',
     includeRepealed: c.req.query('include_repealed') === '1',
+    // `lexical=1` يبحث بلا نموذج تضمين — لشاشات البحث المباشر.
+    lexicalOnly: c.req.query('lexical') === '1',
   });
   return c.json({ results: hits, count: hits.length });
 });
