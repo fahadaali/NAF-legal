@@ -169,8 +169,66 @@ export async function callClaude(env: Env, opts: ClaudeCallOptions): Promise<{ t
   return { text, raw: data };
 }
 
-// استدعاء متدفّق (SSE) — يعيد ReadableStream من مقاطع النص لعرضها تدريجيًا
-export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<ReadableStream<Uint8Array>> {
+/**
+ * ما انتهى إليه دورٌ متدفّق.
+ *
+ * كان المحوِّل يمرّر `text_delta` ويُسقط كل ما عداه بصمت — ولا يقرأ
+ * `stop_reason` إطلاقاً. فدورٌ ينتهي بلا نصّ — رفضُ مصنّف، أو انقطاعٌ من
+ * الخادم، أو حدٌّ استنفده التفكير، أو وقفةُ أداةٍ خادمية — كان يُخرج فقاعةً
+ * فارغة بلا كلمة تقول ما جرى، لا للقارئ ولا في السجلّ.
+ */
+export interface StreamOutcome {
+  /** هل وصل نصٌّ فعليّ (لا تفكيرٌ ولا نداءُ أداة)؟ */
+  sawText: boolean;
+  stopReason: string | null;
+  refusalCategory: string | null;
+  /** أنواع الكتل التي مرّت — للسجلّ وحده. */
+  blocks: string[];
+}
+
+export interface ClaudeStream {
+  /**
+   * أحداث SSE مبسّطة للواجهة: `delta` · `search` · `usage`.
+   *
+   * ولا `done` فيها ولا `error`: المستدعي وحده يعرف هل بقيت محاولة أخرى،
+   * فمن يختم الدور هو من يملك قراره.
+   */
+  stream: ReadableStream<Uint8Array>;
+  /** يُحلّ عند انتهاء المجرى أو إلغائه — يُقرأ بعد استنفاده. */
+  outcome: Promise<StreamOutcome>;
+}
+
+/** ما يُقال للقارئ حين ينتهي الدور بلا نصّ — بحسب سببه لا جملةً واحدة. */
+export function emptyTurnReason(o: StreamOutcome): string {
+  switch (o.stopReason) {
+    case 'refusal':
+      return `رُفض هذا الطلب لأسباب تتعلّق بسياسة الاستخدام${o.refusalCategory ? ` (${o.refusalCategory})` : ''}. أعِد صياغة السؤال أو راجع مسؤول المنصة.`;
+    case 'max_tokens':
+      return 'تجاوز المخرَج الحدّ المسموح قبل أن يبدأ النصّ. قسّم الطلب إلى أجزاء أصغر وأعد المحاولة.';
+    case 'model_context_window_exceeded':
+      return 'طالت المحادثة عن سعة النموذج. ابدأ محادثة جديدة لهذه المسألة.';
+    case 'pause_turn':
+      return 'توقّف البحث في المصادر قبل اكتمال الرد. أعد الإرسال للمتابعة.';
+    case 'stream_error':
+      return 'انقطع التوليد من الخدمة. أعد المحاولة بعد قليل.';
+    default:
+      return 'انتهى التوليد بلا نصّ. أعد المحاولة، وإن تكرّر فراجع مسؤول المنصة.';
+  }
+}
+
+/**
+ * هل يُرجى من إعادة المحاولة شيء؟
+ *
+ * الرفض يقع على الطلب نفسه قبل التوليد، وتجاوزُ سعة النموذج يقع على المحادثة
+ * كلّها — وإعادةُ الطلب كما هو تعيد الجواب نفسه وتُحمّل ضِعف الكلفة. وما عداهما
+ * عارضٌ في الدور: حدٌّ استنفده التفكير، أو وقفةُ أداة، أو انقطاعٌ من الخدمة.
+ */
+export function isRetryableEmptyTurn(o: StreamOutcome): boolean {
+  return o.stopReason !== 'refusal' && o.stopReason !== 'model_context_window_exceeded';
+}
+
+// استدعاء متدفّق (SSE) — يعيد مجرى مقاطع النص لعرضها تدريجيًا، ومآلَ الدور
+export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<ClaudeStream> {
   const upstream = await fetch(API_URL, {
     method: 'POST',
     headers: headers(env),
@@ -179,103 +237,98 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<R
 
   if (!upstream.ok || !upstream.body) throw await apiError(upstream, 'stream');
 
-  // نحوّل أحداث Anthropic SSE إلى أحداث SSE مبسّطة للواجهة:
-  //   event: delta   data: {"text": "..."}
-  //   event: citation data: {...}
-  //   event: done    data: {}
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const reader = upstream.body.getReader();
   let buffer = '';
 
-  /* ما ينتهي به الدور، ولماذا.
-     كان المحوِّل يمرّر `text_delta` ويُسقط كل ما عداه بصمت — ولا يقرأ
-     `stop_reason` إطلاقاً. فدورٌ ينتهي بلا نصّ — رفضُ مصنّف، أو انقطاعٌ
-     من الخادم، أو حدٌّ استُنفد بالتفكير، أو وقفةُ أداةٍ خادمية — كان يُخرج
-     فقاعةً فارغة بلا كلمة تقول ما جرى، لا للقارئ ولا في السجلّ. */
-  let sawText = false;
-  let stopReason: string | null = null;
-  let refusalCategory: string | null = null;
-  const blocks: string[] = [];
+  const outcome: StreamOutcome = { sawText: false, stopReason: null, refusalCategory: null, blocks: [] };
+  let settle: (o: StreamOutcome) => void = () => {};
+  const finished = new Promise<StreamOutcome>((resolve) => {
+    settle = resolve;
+  });
 
-  /** ما يُقال للقارئ حين ينتهي الدور بلا نصّ — بحسب سببه لا جملةً واحدة. */
-  const emptyReason = (): string => {
-    switch (stopReason) {
-      case 'refusal':
-        return `رُفض هذا الطلب لأسباب تتعلّق بسياسة الاستخدام${refusalCategory ? ` (${refusalCategory})` : ''}. أعِد صياغة السؤال أو راجع مسؤول المنصة.`;
-      case 'max_tokens':
-        return 'تجاوز المخرَج الحدّ المسموح قبل أن يبدأ النصّ. قسّم الطلب إلى أجزاء أصغر وأعد المحاولة.';
-      case 'model_context_window_exceeded':
-        return 'طالت المحادثة عن سعة النموذج. ابدأ محادثة جديدة لهذه المسألة.';
-      case 'pause_turn':
-        return 'توقّف البحث في المصادر قبل اكتمال الرد. أعد الإرسال للمتابعة.';
-      default:
-        return 'انتهى التوليد بلا نصّ. أعد المحاولة، وإن تكرّر فراجع مسؤول المنصة.';
-    }
-  };
+  const stream = new ReadableStream<Uint8Array>({
+    /* حلقةٌ حتى يخرج شيء، لا قراءةٌ واحدة.
 
-  return new ReadableStream({
+       `pull` لا يُستدعى ثانيةً حتى يُدرِج المجرى قطعةً أو يُغلَق — هذا نصّ
+       المواصفة لا سلوكُ تنفيذٍ بعينه. وكانت الدالّة تقرأ قطعةً واحدة ثم
+       تعود: فإن لم تحمل تلك القطعة حدثاً يُمرَّر، تجمّد البثّ كلّه إلى الأبد.
+
+       وعلى Opus 5 هذه هي الحال الغالبة لا النادرة: التفكير مُفعَّل بالإغفال،
+       و`display` الافتراضي `omitted`، فيسبق النصَّ سيلٌ من `thinking_delta`
+       لا يُمرَّر منه شيء — فتتجمّد أول قطعةٍ منه، ولا يصل النص أبداً. وما
+       يراه المستخدم فقاعةٌ فيها المصادر بلا كلمة: الواجهة تنتظر حتى ينقطع
+       الاتصال، ثم تختم الفقاعة بما جُمع — ولا شيء جُمع.
+
+       ولهذا لم يظهر تشخيص «انتهى الدور بلا نصّ» أصلاً: فرعُ الانتهاء لا
+       يُبلَغ في مجرًى متجمّد. */
     async pull(controller) {
-      const { done, value } = await reader.read();
-      if (done) {
-        if (!sawText) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
           // السجلّ يحمل التشخيص كاملاً، والشاشة تحمل ما يُفيد القارئ.
-          console.error(`claude stream ended with no text — stop_reason=${stopReason ?? 'none'} blocks=[${blocks.join(',')}]`);
-          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: emptyReason() })}\n\n`));
-        }
-        controller.enqueue(encoder.encode(`event: done\ndata: {}\n\n`));
-        controller.close();
-        return;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split('\n\n');
-      buffer = events.pop() ?? '';
-      for (const evt of events) {
-        const line = evt.split('\n').find((l) => l.startsWith('data: '));
-        if (!line) continue;
-        const json = line.slice(6);
-        if (json === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(json);
-          if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
-            sawText = true;
-            controller.enqueue(encoder.encode(`event: delta\ndata: ${JSON.stringify({ text: parsed.delta.text })}\n\n`));
-          } else if (parsed.type === 'content_block_start') {
-            const kind = parsed.content_block?.type;
-            if (kind) blocks.push(kind);
-            if (kind === 'web_search_tool_result') {
-              controller.enqueue(encoder.encode(`event: search\ndata: ${JSON.stringify({ active: true })}\n\n`));
-            }
-          } else if (parsed.type === 'message_start' && parsed.message?.usage) {
-            controller.enqueue(encoder.encode(`event: usage\ndata: ${JSON.stringify({ input_tokens: parsed.message.usage.input_tokens ?? 0 })}\n\n`));
-          } else if (parsed.type === 'message_delta') {
-            if (parsed.delta?.stop_reason) stopReason = parsed.delta.stop_reason;
-            if (parsed.delta?.stop_details?.category) refusalCategory = parsed.delta.stop_details.category;
-            if (parsed.usage) {
-              controller.enqueue(encoder.encode(`event: usage\ndata: ${JSON.stringify({ output_tokens: parsed.usage.output_tokens ?? 0 })}\n\n`));
-            }
-          } else if (parsed.type === 'error') {
-            /* خطأٌ يرسله الخادم **داخل** البثّ لا في ترويسة الردّ — تحميلٌ
-               زائد أو عطلٌ مؤقّت. كان يسقط في `else` فارغة، فيقرأه القارئ
-               ردّاً فارغاً لا عطلاً. */
-            const detail = parsed.error?.message ?? parsed.error?.type ?? 'unknown';
-            console.error(`claude stream error event: ${String(detail).slice(0, 300)}`);
-            stopReason = stopReason ?? 'stream_error';
-            controller.enqueue(
-              encoder.encode(
-                `event: error\ndata: ${JSON.stringify({ error: 'انقطع التوليد من الخدمة. أعد المحاولة بعد قليل.' })}\n\n`
-              )
+          if (!outcome.sawText) {
+            console.error(
+              `claude stream ended with no text — stop_reason=${outcome.stopReason ?? 'none'} blocks=[${outcome.blocks.join(',')}]`
             );
           }
-        } catch {
-          // تجاهل الأحداث غير القابلة للتحليل
+          settle(outcome);
+          controller.close();
+          return;
         }
+
+        let emitted = false;
+        const emit = (event: string, data: unknown) => {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          emitted = true;
+        };
+
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() ?? '';
+        for (const evt of events) {
+          const line = evt.split('\n').find((l) => l.startsWith('data: '));
+          if (!line) continue;
+          const json = line.slice(6);
+          if (json === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(json);
+            if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+              outcome.sawText = true;
+              emit('delta', { text: parsed.delta.text });
+            } else if (parsed.type === 'content_block_start') {
+              const kind = parsed.content_block?.type;
+              if (kind) outcome.blocks.push(kind);
+              if (kind === 'web_search_tool_result') emit('search', { active: true });
+            } else if (parsed.type === 'message_start' && parsed.message?.usage) {
+              emit('usage', { input_tokens: parsed.message.usage.input_tokens ?? 0 });
+            } else if (parsed.type === 'message_delta') {
+              if (parsed.delta?.stop_reason) outcome.stopReason = parsed.delta.stop_reason;
+              if (parsed.delta?.stop_details?.category) outcome.refusalCategory = parsed.delta.stop_details.category;
+              if (parsed.usage) emit('usage', { output_tokens: parsed.usage.output_tokens ?? 0 });
+            } else if (parsed.type === 'error') {
+              /* خطأٌ يرسله الخادم **داخل** البثّ لا في ترويسة الردّ — تحميلٌ
+                 زائد أو عطلٌ مؤقّت. كان يسقط في `else` فارغة، فيقرأه القارئ
+                 ردّاً فارغاً لا عطلاً. */
+              const detail = parsed.error?.message ?? parsed.error?.type ?? 'unknown';
+              console.error(`claude stream error event: ${String(detail).slice(0, 300)}`);
+              outcome.stopReason = outcome.stopReason ?? 'stream_error';
+            }
+          } catch {
+            // تجاهل الأحداث غير القابلة للتحليل
+          }
+        }
+        if (emitted) return; // خرج شيء: يُنتظر طلبُ القارئ التالي
       }
     },
-    cancel() {
-      reader.cancel();
+    cancel(reason) {
+      settle(outcome);
+      reader.cancel(reason);
     },
   });
+
+  return { stream, outcome: finished };
 }
 
 /**

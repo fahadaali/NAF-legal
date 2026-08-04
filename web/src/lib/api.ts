@@ -620,6 +620,8 @@ export interface StreamHandlers {
   onVerify?: (v: any) => void;
   /** الأنظمة الغائبة — تصل بعد التوليد لا معه، فهي مصفّاة بالردّ نفسه. */
   onRegulations?: (missing: string[]) => void;
+  /** عنوان المحادثة حين يُصاغ من موضوعها — أول ردّ وحده. */
+  onTitle?: (title: string) => void;
   onDone?: () => void;
   onError?: (err: string) => void;
 }
@@ -652,6 +654,10 @@ export async function streamChat(
   let buf = '';
   // حدث `done` يصل من الخادم، ويُستدعى ثانيةً عند انتهاء المجرى. والنداءان
   // معاً كانا يعيدان كتابة الفقاعة مرّتين على مصفوفةٍ قد تكون تغيّرت بينهما.
+  //
+  // و`done` يسبق «تحقّق الإسناد» و«الأنظمة الغائبة» و«العنوان»: الخادم يختم
+  // الفقاعة أول ما يُحفظ الرد، ثم يُتبعها بما يُحسب عليه. فالقراءة تتواصل
+  // بعد `done` ولا تتوقّف عنده.
   let finished = false;
   const finish = () => {
     if (finished) return;
@@ -676,7 +682,9 @@ export async function streamChat(
         else if (event === 'search') handlers.onSearch?.();
         else if (event === 'verify') handlers.onVerify?.(data);
         else if (event === 'regulations') handlers.onRegulations?.(data.missing ?? []);
-        else if (event === 'error') handlers.onError?.(data.error ?? 'تعذّر التوليد');
+        else if (event === 'title') {
+          if (data.title) handlers.onTitle?.(data.title);
+        } else if (event === 'error') handlers.onError?.(data.error ?? 'تعذّر التوليد');
         else if (event === 'done') finish();
       } catch {}
     }

@@ -29,6 +29,10 @@ interface UiMessage extends Message {
 
 export default function ChatView({ conversationId, initialMessage, onInitialConsumed, onStartConversation, onConversationChange, readOnly = false }: Props) {
   const [convType, setConvType] = useState<string | null>(null);
+  // عنوان المحادثة كما هو مخزَّن — يُصاغ من موضوعها عند أول ردّ (§٦ من مسار
+  // المحادثة). وكانت الترويسة تعرض أول خمسين حرفاً من رسالة المستخدم، وهي في
+  // كل مرّة ترويسةُ نموذج الإدخال نفسها.
+  const [convTitle, setConvTitle] = useState('');
   const [configs, setConfigs] = useState<ConsultConfig[]>([]);
   const [intake, setIntake] = useState<ConsultConfig | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
@@ -75,6 +79,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     if (conversationId) {
       api.getConversation(conversationId).then((r) => {
         setConvType(r.conversation.consultation_type);
+        setConvTitle(r.conversation.title ?? '');
         setConvFolder((r.conversation as any).folder_id ?? '');
         // استجابةٌ تخصّ محادثةً غادرها القارئ، أو بثٌّ سبقها: لا تُبنى
         // الرسائل فوقه. وما في القاعدة يظهر عند فتح المحادثة من جديد.
@@ -105,6 +110,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       }).catch(() => {});
     } else {
       setConvType(null);
+      setConvTitle('');
       setMessages([]);
       setAttachments([]);
     }
@@ -192,20 +198,36 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
 
     let acc = '';
     let meta: any = {};
-    let verification: any = null;
-    let missingRegs: string[] = [];
     let failed = false; // حتى لا يمحو حدث done رسالة الخطأ
+
+    /* تحقّقُ الإسناد والأنظمة الغائبة والعنوان تصل **بعد** `done`، وعنده
+       يكون معرّف الفقاعة قد بُدِّل بمعرّف الخادم. فالتعديل يقبل المعرّفين
+       معاً ولا يتوقّف على ترتيبٍ بينهما. */
+    const patchAny = (patch: (m: UiMessage) => UiMessage) => {
+      const ids = [localId, meta.messageId].filter(Boolean) as string[];
+      setMessages((msgs) => msgs.map((m) => (ids.includes(m.id) ? patch(m) : m)));
+    };
+
     try {
       await streamChat(conversationId, text, internet, bilingual, {
         onMeta: (m) => {
           meta = m;
         },
         onSearch: () => setSearching(true),
-        onVerify: (v) => {
-          verification = v;
-        },
+        onVerify: (v) => patchAny((m) => ({ ...m, verification: v })),
         onRegulations: (missing) => {
-          missingRegs = missing;
+          patchAny((m) => ({ ...m, missingRegulations: missing }));
+          // نظام يتطلّبه الإسناد وغير موجود: تُعرض النافذة مرّة واحدة لكل نظام،
+          // ويبقى التنبيه أسفل الرد لفتحها متى شاء المستخدم بعد إغلاقها.
+          const pending = missing.filter((n) => !autoAsked.current.has(n));
+          if (pending.length) {
+            autoAsked.current.add(pending[0]);
+            setRegRequest(pending[0]);
+          }
+        },
+        onTitle: (t) => {
+          setConvTitle(t);
+          onConversationChange(conversationId); // القائمة الجانبية تحمل العنوان أيضًا
         },
         onDelta: (t) => {
           acc += t;
@@ -219,26 +241,21 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           if (failed) return; // أُبلِغ الخطأ سابقًا
           patchMessage(localId, (m) => ({
             ...m, id: meta.messageId ?? m.id, content: acc, streaming: false,
-            citations: meta.citations, clarifying: meta.clarifying, verification, missingRegulations: missingRegs,
+            citations: meta.citations, clarifying: meta.clarifying,
           }));
           onConversationChange(conversationId);
-          // نظام يتطلّبه الإسناد وغير موجود: تُعرض النافذة مرّة واحدة لكل نظام،
-          // ويبقى التنبيه أسفل الرد لفتحها متى شاء المستخدم بعد إغلاقها.
-          const pending: string[] = missingRegs.filter((n) => !autoAsked.current.has(n));
-          if (pending.length) {
-            autoAsked.current.add(pending[0]);
-            setRegRequest(pending[0]);
-          }
         },
         onError: (err) => {
           failed = true;
-          patchMessage(localId, (m) => ({ ...m, content: err, streaming: false }));
+          // ردٌّ انقطع في منتصفه يبقى معروضاً ويُذيَّل بسببه: محوُه يُضيّع على
+          // المحامي ما وصل، وهو مسوّدة عملٍ لا سطرَ حالة.
+          patchAny((m) => ({ ...m, content: acc ? `${acc}\n\n${err}` : err, streaming: false }));
         },
       });
     } catch {
       // انقطاعٌ قبل أن يصل أي حدث — لا يُترك القارئ أمام فقاعةٍ تنبض بلا نهاية.
       failed = true;
-      patchMessage(localId, (m) => ({
+      patchAny((m) => ({
         ...m,
         content: m.content || 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة',
         streaming: false,
@@ -379,7 +396,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   return (
     <>
       <div className="chat-header">
-        <span className="ch-title">{messages.find((m) => m.role === 'user')?.content.slice(0, 50) ?? 'محادثة جديدة'}</span>
+        <span className="ch-title">{convTitle || 'محادثة جديدة'}</span>
         {folders.length > 0 && (
           <select className="folder-select" value={convFolder} onChange={(e) => assignFolder(e.target.value)} title="ربط بقضية">
             <option value="">بدون قضية</option>

@@ -4,7 +4,17 @@ import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
 import { retrieve, formatRagContext, indexConversationMessage } from '../lib/rag';
-import { streamClaude, webSearchTool, OFFICIAL_DOMAINS } from '../lib/claude';
+import {
+  streamClaude,
+  webSearchTool,
+  OFFICIAL_DOMAINS,
+  emptyTurnReason,
+  isRetryableEmptyTurn,
+  type ClaudeEffort,
+  type ClaudeStream,
+  type StreamOutcome,
+} from '../lib/claude';
+import { needsGeneratedTitle, generateTitle } from '../lib/title';
 import { BILINGUAL_INSTRUCTION } from '../lib/prompts';
 import { getEffectiveConfig } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
@@ -14,6 +24,26 @@ import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth);
+
+/**
+ * محاولتان لا واحدة.
+ *
+ * دورٌ ينتهي بلا نصّ ليس حالةً نادرة على نموذجٍ تفكيرُه مُفعَّل: الحدّ سقفٌ
+ * للتفكير والنص معاً فقد يستنفده التفكير قبل أن تبدأ الكلمة الأولى، وأداةُ
+ * البحث تُوقف الدور (`pause_turn`) قبل أن يُكتب شيء، والخدمة تنقطع داخل البثّ.
+ * وكان المستخدم يرى في هذه الحالات كلّها فقاعةً بمصادرَ بلا استشارة — يطلب
+ * رأياً قانونياً فيأخذ أرقام موادّ وحدها.
+ *
+ * فالمحاولة الثانية تُخفض الجهد — فيقصر التفكير ويتّسع المتاح للنص — وتُسقط
+ * الأدوات فلا وقفةَ أداةٍ أصلاً. وهي لا تقع إلا حين لا يأتي نصّ، فلا تُضاعف
+ * كلفة الدور الناجح.
+ */
+const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }[] = [
+  // الحدُّ سقفٌ للتفكير والنص معاً، والمخرَج صحيفةُ دعوى أو مذكرة قد تطول.
+  // والبثّ مُفعَّل فلا يُخشى عليه من مهلة الاتصال.
+  { effort: 'high', max_tokens: 64000, withTools: true },
+  { effort: 'medium', max_tokens: 32000, withTools: false },
+];
 
 // POST /api/chat/:conversationId  → SSE stream
 app.post('/:conversationId', async (c) => {
@@ -68,8 +98,17 @@ app.post('/:conversationId', async (c) => {
     )
       .bind(asstId, conversationId, 'assistant', clarifyText, JSON.stringify({ plan, clarifying: true }), Date.now())
       .run();
-    await touchConversation(c.env, conversationId, message, conv.title);
-    return sseOnce(clarifyText, { messageId: asstId, plan });
+    await touchConversation(c.env, conversationId);
+    // الاستيضاح محادثةٌ بدأت فعلاً: عنوانها يُصاغ من سؤالها ولا يُؤجَّل إلى
+    // أول ردٍّ مكتمل — وإلا بقيت «محادثة جديدة» في القائمة إلى أن يُجاب.
+    const title = await retitle(c.env, {
+      conversationId,
+      current: conv.title,
+      question: message,
+      userId: user.id,
+      consultationType: conv.consultation_type,
+    });
+    return sseOnce(clarifyText, { messageId: asstId, plan }, title);
   }
 
   // [2] المُنفِّذ: استرجاع RAG
@@ -116,17 +155,20 @@ app.post('/:conversationId', async (c) => {
     ? [webSearchTool(force_internet ? undefined : OFFICIAL_DOMAINS)]
     : undefined;
 
-  let claudeStream: ReadableStream<Uint8Array>;
-  try {
-    claudeStream = await streamClaude(c.env, {
-      model: c.env.GENERATION_MODEL,
+  const env = c.env;
+  const openAttempt = (i: number): Promise<ClaudeStream> =>
+    streamClaude(env, {
+      model: env.GENERATION_MODEL,
       system,
       messages,
-      tools,
-      // الحدُّ الآن سقفٌ للتفكير والنص معاً، والمخرَج صحيفةُ دعوى أو مذكرة
-      // قد تطول. والبثّ مُفعَّل فلا يخشى عليه من مهلة الاتصال.
-      max_tokens: 64000,
+      tools: ATTEMPTS[i].withTools ? tools : undefined,
+      effort: ATTEMPTS[i].effort,
+      max_tokens: ATTEMPTS[i].max_tokens,
     });
+
+  let firstAttempt: ClaudeStream;
+  try {
+    firstAttempt = await openAttempt(0);
   } catch (e: any) {
     // السبب يُسجَّل ولا يُعرض. هذه الجملة هي كل ما يراه المستخدم حين تنقطع
     // خدمة Claude، فتُقرأ خطأَ صلاحيات أو خللاً في حسابه — وما يفرّق بين
@@ -141,92 +183,99 @@ app.post('/:conversationId', async (c) => {
   let inputTokens = 0;
   let outputTokens = 0;
   const encoder = new TextEncoder();
-  const env = c.env;
   const userId = user.id;
 
   const outStream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      // أرسل بيانات وصفية أولية
-      controller.enqueue(
-        encoder.encode(
-          `event: meta\ndata: ${JSON.stringify({ messageId: asstId, plan, citations })}\n\n`
-        )
-      );
+      /* القارئ قد ينصرف قبل أن يكتمل الدور — يغلق التبويب أو تنقطع شبكته —
+         فيرمي الإدراجُ في مجرًى أُلغي. وما يُحفَظ يُكمَل على أي حال: الرد
+         والعنوان وشارة التحقّق تُخزَّن، فيعود المستخدم فيجد محادثته تامّة. */
+      let readerGone = false;
+      const push = (chunk: Uint8Array) => {
+        if (readerGone) return;
+        try {
+          controller.enqueue(chunk);
+        } catch {
+          readerGone = true;
+        }
+      };
+      const send = (event: string, data: unknown) =>
+        push(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 
-      const reader = claudeStream.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        controller.enqueue(value); // مرّر أحداث SSE كما هي للواجهة
-        // استخرج النص لتجميعه
-        buf += chunk;
-        const parts = buf.split('\n\n');
-        buf = parts.pop() ?? '';
-        for (const p of parts) {
-          const dataLine = p.split('\n').find((l) => l.startsWith('data: '));
-          if (dataLine && p.includes('event: delta')) {
+      // أرسل بيانات وصفية أولية
+      send('meta', { messageId: asstId, plan, citations });
+
+      /** يمرّر أحداث محاولةٍ كما هي إلى الواجهة، ويجمع نصّها وعدّاداتها. */
+      const pump = async (attempt: ClaudeStream): Promise<StreamOutcome> => {
+        const reader = attempt.stream.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          push(value); // مرّر أحداث SSE كما هي للواجهة
+          // استخرج النص لتجميعه
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop() ?? '';
+          for (const p of parts) {
+            const dataLine = p.split('\n').find((l) => l.startsWith('data: '));
+            if (!dataLine) continue;
             try {
-              fullText += JSON.parse(dataLine.slice(6)).text ?? '';
-            } catch {}
-          } else if (dataLine && p.includes('event: usage')) {
-            try {
-              const u = JSON.parse(dataLine.slice(6));
-              if (u.input_tokens) inputTokens = u.input_tokens;
-              if (u.output_tokens) outputTokens = u.output_tokens;
+              const payload = JSON.parse(dataLine.slice(6));
+              if (p.includes('event: delta')) {
+                fullText += payload.text ?? '';
+              } else if (p.includes('event: usage')) {
+                // العدّادات تُجمع لا تُستبدل: محاولتان تُدفَعان كلتاهما.
+                if (payload.input_tokens) inputTokens += payload.input_tokens;
+                if (payload.output_tokens) outputTokens += payload.output_tokens;
+              }
             } catch {}
           }
         }
-      }
+        return attempt.outcome;
+      };
 
-      /* [5أ] الأنظمة الغائبة تُصفَّى بالردّ نفسه قبل أن تُعرض.
-
-         `target_regulations` نصٌّ يكتبه المُخطِّط ولا شيء يتحقّق منه، فاسمٌ
-         يخترعه — «نظام المحاكم العمالية» ولا نظام بهذا الاسم — كان يصير
-         تنبيهاً وزرَّ طلبٍ يبعث المحامي يبحث عمّا لا وجود له. وما لم يذكره
-         الردّ لم يتوقّف عليه الإسناد، فلا وجه لمطالبة أحدٍ به. */
-      const relevantMissing = mentionedInAnswer(missingRegulations, fullText);
-      if (missingRegulations.length !== relevantMissing.length) {
+      let outcome = await pump(firstAttempt);
+      for (let i = 1; i < ATTEMPTS.length && !fullText.trim() && isRetryableEmptyTurn(outcome); i++) {
         console.error(
-          `dropped unmentioned target regulations: ${missingRegulations.filter((n) => !relevantMissing.includes(n)).join(' · ')}`
+          `empty turn (stop_reason=${outcome.stopReason ?? 'none'}) — retrying at effort=${ATTEMPTS[i].effort} without tools`
         );
-      }
-      controller.enqueue(
-        encoder.encode(`event: regulations\ndata: ${JSON.stringify({ missing: relevantMissing })}\n\n`)
-      );
-
-      // [5] طبقة التحقّق بعد التوليد (الاقتباس المُتحقَّق منه) — §2
-      let verification = null;
-      try {
-        verification = await verifyGrounding(env, userId, fullText, ragContext, plan.consultation_type);
-      } catch {}
-      if (verification) {
-        controller.enqueue(encoder.encode(`event: verify\ndata: ${JSON.stringify(verification)}\n\n`));
+        try {
+          outcome = await pump(await openAttempt(i));
+        } catch (e: any) {
+          console.error('retry failed:', e?.message ?? e);
+          break;
+        }
       }
 
       // خزّن رد المساعد
       if (fullText.trim()) {
+        /* [5أ] الأنظمة الغائبة تُصفَّى بالردّ نفسه قبل أن تُعرض.
+
+           `target_regulations` نصٌّ يكتبه المُخطِّط ولا شيء يتحقّق منه، فاسمٌ
+           يخترعه — «نظام المحاكم العمالية» ولا نظام بهذا الاسم — كان يصير
+           تنبيهاً وزرَّ طلبٍ يبعث المحامي يبحث عمّا لا وجود له. وما لم يذكره
+           الردّ لم يتوقّف عليه الإسناد، فلا وجه لمطالبة أحدٍ به. */
+        const relevantMissing = mentionedInAnswer(missingRegulations, fullText);
+        if (missingRegulations.length !== relevantMissing.length) {
+          console.error(
+            `dropped unmentioned target regulations: ${missingRegulations.filter((n) => !relevantMissing.includes(n)).join(' · ')}`
+          );
+        }
+
+        const metadata: Record<string, unknown> = {
+          plan,
+          citations,
+          output_format: plan.output_format,
+          missing_regulations: relevantMissing,
+        };
         await env.DB.prepare(
           'INSERT INTO messages (id, conversation_id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
         )
-          .bind(
-            asstId,
-            conversationId,
-            'assistant',
-            fullText,
-            JSON.stringify({
-              plan,
-              citations,
-              output_format: plan.output_format,
-              verification,
-              missing_regulations: relevantMissing,
-            }),
-            Date.now()
-          )
+          .bind(asstId, conversationId, 'assistant', fullText, JSON.stringify(metadata), Date.now())
           .run();
-        await touchConversation(env, conversationId, message, conv.title);
+        await touchConversation(env, conversationId);
         // لقطة أولى في سجل النُسخ
         await env.DB.prepare(
           'INSERT INTO draft_versions (id, message_id, version, content, note, created_at) VALUES (?, ?, 1, ?, ?, ?)'
@@ -234,25 +283,61 @@ app.post('/:conversationId', async (c) => {
           .bind(uuid(), asstId, fullText, 'النسخة الأولى المولَّدة', Date.now())
           .run()
           .catch(() => {});
+
+        /* الدور يُختم هنا لا قبل ذلك.
+           كان حدث `done` يخرج مع نهاية بثّ النموذج — أي قبل أن يُخزَّن الرد
+           وقبل حدثَي «الأنظمة الغائبة» و«تحقّق الإسناد» — فتُنهي الواجهة
+           الفقاعة ثم تصل الحدثان إلى مستمعٍ انصرف: شارة التحقّق لا تظهر
+           أبداً، وطلبُ إضافة نظامٍ ناقص لا يُعرض. وزرُّ التصدير كان يظهر
+           للحظةٍ قبل أن يوجد الصفّ الذي يصدّره. */
+        send('done', {});
+        send('regulations', { missing: relevantMissing });
+
+        // [5] طبقة التحقّق بعد التوليد (الاقتباس المُتحقَّق منه) — §2
+        let verification = null;
+        try {
+          verification = await verifyGrounding(env, userId, fullText, ragContext, plan.consultation_type);
+        } catch {}
+        if (verification) {
+          // التحقّق يجري بعد الحفظ الآن، فيُكتب في بياناته الوصفية لتبقى
+          // الشارة ظاهرة حين تُفتح المحادثة من جديد.
+          metadata.verification = verification;
+          await env.DB.prepare('UPDATE messages SET metadata_json = ? WHERE id = ?')
+            .bind(JSON.stringify(metadata), asstId)
+            .run()
+            .catch((e: any) => console.error('store verification failed:', e?.message ?? e));
+          send('verify', verification);
+        }
+
+        // [6] عنوان المحادثة من موضوعها — يُصاغ مرّة واحدة عند أول ردّ
+        const title = await retitle(env, {
+          conversationId,
+          current: conv.title,
+          question: message,
+          answer: fullText,
+          userId,
+          consultationType: plan.consultation_type,
+        });
+        if (title) send('title', { title });
+
         // فهرسة دلالية للرسالتين (§3) — best-effort.
         //
         // ويُمسَك خطؤها هنا فعلاً: هذا الموضع داخل `start` المجرى، واستثناءٌ
         // منه يقطع البثّ **بعد** أن حُفظ الرد، فيرى المستخدم ردّاً ناقصاً
         // بلا حدث `done` — والمفهرِس تفصيلٌ لا علاقة له بردٍّ اكتمل وخُزِّن.
-        await indexConversationMessage(env, { messageId: userMsgId, conversationId, userId, role: 'user', content: message, title: conv.title }).catch(
+        const indexTitle = title ?? conv.title;
+        await indexConversationMessage(env, { messageId: userMsgId, conversationId, userId, role: 'user', content: message, title: indexTitle }).catch(
           (e) => console.error('index user message failed:', e?.message ?? e)
         );
-        await indexConversationMessage(env, { messageId: asstId, conversationId, userId, role: 'assistant', content: fullText, title: conv.title }).catch(
+        await indexConversationMessage(env, { messageId: asstId, conversationId, userId, role: 'assistant', content: fullText, title: indexTitle }).catch(
           (e) => console.error('index assistant message failed:', e?.message ?? e)
         );
       } else {
-        // لم يُنتِج التوليد نصًّا (انقطاع أو خطأ بعد بدء البثّ): أبلِغ الواجهة
-        // بدل ترك فقاعة فارغة، ولا نخزّن ردًّا فارغًا.
-        controller.enqueue(
-          encoder.encode(
-            `event: error\ndata: ${JSON.stringify({ error: 'تعذّر إكمال التوليد. تحقّق من إعداد مفتاح Claude ثم أعد المحاولة.' })}\n\n`
-          )
-        );
+        // لم يأتِ نصّ ولا أفادت المحاولة الثانية: قُل السبب بعينه ولا تخزّن
+        // ردّاً فارغاً. والفقاعة تُختم بعده حتى لا تنبض بلا نهاية.
+        await touchConversation(env, conversationId);
+        send('error', { error: emptyTurnReason(outcome) });
+        send('done', {});
       }
       await logUsage(env, {
         userId,
@@ -262,7 +347,11 @@ app.post('/:conversationId', async (c) => {
         outputTokens,
         consultationType: plan.consultation_type,
       });
-      controller.close();
+      if (!readerGone) {
+        try {
+          controller.close();
+        } catch {}
+      }
     },
   });
 
@@ -296,26 +385,56 @@ function buildAttachmentsBlock(atts: { filename: string; parsed_text: string }[]
   return `\n\n<الملفات_المرفوعة>\n${parts.join('\n\n')}\n</الملفات_المرفوعة>`;
 }
 
-// يحدّث وقت المحادثة، ويولّد عنوانًا من أول رسالة إن كان افتراضيًا
-async function touchConversation(env: Env, id: string, firstMessage: string, currentTitle: string) {
-  const now = Date.now();
-  if (!currentTitle || currentTitle === 'محادثة جديدة') {
-    const title = firstMessage.slice(0, 60).replace(/\n/g, ' ');
-    await env.DB.prepare('UPDATE conversations SET updated_at = ?, title = ? WHERE id = ?')
-      .bind(now, title, id)
-      .run();
-  } else {
-    await env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(now, id).run();
+// يحدّث وقت المحادثة (ترتيبُ القائمة يقوم عليه)
+async function touchConversation(env: Env, id: string) {
+  await env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(Date.now(), id).run();
+}
+
+/**
+ * يصوغ عنوان المحادثة من موضوعها ويكتبه. يعيد العنوان الجديد، أو `null` إن
+ * لم يكن ثمّة ما يُبدَّل.
+ *
+ * كان العنوان أوّلَ ستّين حرفاً من رسالة البدء — ورسالة البدء تُبنى في نموذج
+ * الإدخال بترويسةٍ ثابتة تسبق كل شيء، فحملت كل استشارةٍ قانونية العنوان نفسه،
+ * وكل صحيفة دعوى عنوانها، ولا يُفرَّق بينها في القائمة إلا بالوقت.
+ */
+async function retitle(
+  env: Env,
+  opts: {
+    conversationId: string;
+    current: string;
+    question: string;
+    answer?: string;
+    userId: string;
+    consultationType?: string | null;
   }
+): Promise<string | null> {
+  if (!needsGeneratedTitle(opts.current)) return null;
+  const title = await generateTitle(env, {
+    question: opts.question,
+    answer: opts.answer,
+    userId: opts.userId,
+    consultationType: opts.consultationType,
+  });
+  if (!title || title === opts.current) return null;
+  try {
+    await env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?').bind(title, opts.conversationId).run();
+  } catch (e: any) {
+    // عنوانٌ لم يُكتب لا يُسقط ردّاً اكتمل — لكن لا يُبلَّغ به أيضاً.
+    console.error('title update failed:', e?.message ?? e);
+    return null;
+  }
+  return title;
 }
 
 // رد SSE من نص واحد (لحالة الاستيضاح)
-function sseOnce(text: string, meta: Record<string, unknown>): Response {
+function sseOnce(text: string, meta: Record<string, unknown>, title?: string | null): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(encoder.encode(`event: meta\ndata: ${JSON.stringify(meta)}\n\n`));
       controller.enqueue(encoder.encode(`event: delta\ndata: ${JSON.stringify({ text })}\n\n`));
+      if (title) controller.enqueue(encoder.encode(`event: title\ndata: ${JSON.stringify({ title })}\n\n`));
       controller.enqueue(encoder.encode(`event: done\ndata: {}\n\n`));
       controller.close();
     },
