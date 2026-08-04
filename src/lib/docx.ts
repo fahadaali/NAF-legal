@@ -49,7 +49,7 @@ export function buildDocx(title: string, markdown: string, opts: DocxOptions = {
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${XML_NS}>
 <w:body>
-${headingPara(title, sizes[0], t)}
+${headingPara(title, sizes[0], t, { center: true })}
 ${body}
 ${dividerPara()}
 ${para(DISCLAIMER, t, { size: Math.max(8, t.bodyPt - 3), italic: true, color: MUTED })}
@@ -255,10 +255,19 @@ interface RunOpts {
  * `spacing`، و`ind` قبل `jc`، و`pBdr` قبل `bidi`. وترتيبٌ مخالف يقرأه Word
  * أحياناً ويردّه مدقّق المخطَّط دائماً.
  */
+/**
+ * ضبط المتن بالكشيدة لا بالمسافات.
+ *
+ * `both` يوسّع ما بين الكلمات، فيترك في السطر العربي فجواتٍ بيضاء تُقطّع
+ * النصّ — وهي علّةُ الضبط في العربية. و`lowKashida` يمدّ حروف الوصل بدل
+ * ذلك، وهو ضبطُ العربية المعروف في Word («ضبط منخفض»)، ويُبقي الكلمات
+ * متلاصقة. والمنخفض دون المتوسط والعالي: المدّ الطويل يشتّت في مستندٍ
+ * قانوني يُقرأ سطراً سطراً.
+ */
 function para(text: string, t: DocTemplate, o: RunOpts): string {
   const ind = o.indent ? `<w:ind w:right="${o.indent}"/>` : '';
   // سطرٌ ونصف: العربية تحتاج فراغاً رأسياً للحركات والنقاط تحت السطر.
-  return `<w:p><w:pPr><w:bidi/><w:spacing w:after="120" w:line="360" w:lineRule="auto"/>${ind}<w:jc w:val="both"/></w:pPr><w:r>${runProps(
+  return `<w:p><w:pPr><w:bidi/><w:spacing w:after="120" w:line="360" w:lineRule="auto"/>${ind}<w:jc w:val="lowKashida"/></w:pPr><w:r>${runProps(
     t,
     o
   )}<w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;
@@ -268,9 +277,17 @@ function para(text: string, t: DocTemplate, o: RunOpts): string {
  * `w:jc w:val="right"` لا `start`: الفقرة `bidi` فجهةُ البداية هي اليمين،
  * و`start` لا يعرفها Word 2007 ولا كل قارئ. القيمة فيزيائية هنا بحكم صيغة
  * الملف لا اختياراً — والمستند عربيّ الاتجاه كلّه.
+ *
+ * والعنوان الرئيس وحده في الوسط: هو أول ما تحت الرأسية، فيقع في وسط أعلى
+ * الصفحة. وعناوين الأقسام تبقى على جهة البداية — عنوانٌ متوسّطٌ في كل قسم
+ * يُفقد القارئَ خيط التسلسل.
  */
-function headingPara(text: string, sizePt: number, t: DocTemplate): string {
-  return `<w:p><w:pPr><w:bidi/><w:spacing w:before="240" w:after="120" w:line="300" w:lineRule="auto"/><w:jc w:val="right"/></w:pPr><w:r>${runProps(
+function headingPara(text: string, sizePt: number, t: DocTemplate, o: { center?: boolean } = {}): string {
+  const jc = o.center ? 'center' : 'right';
+  const spacing = o.center
+    ? '<w:spacing w:before="0" w:after="360" w:line="300" w:lineRule="auto"/>'
+    : '<w:spacing w:before="240" w:after="120" w:line="300" w:lineRule="auto"/>';
+  return `<w:p><w:pPr><w:bidi/>${spacing}<w:jc w:val="${jc}"/></w:pPr><w:r>${runProps(
     t,
     { size: sizePt, bold: true }
   )}<w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;

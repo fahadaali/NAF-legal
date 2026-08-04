@@ -138,6 +138,11 @@ body {
   font-size: ${t.bodyPt}pt;
   /* لا يُنقص ارتفاع السطر: العربية تحتاج مدىً للحركات وما تحت السطر */
   line-height: 1.9;
+  /* الضبط بالكشيدة في مستند Word — يمدّ حروف الوصل بدل توسيع ما بين
+     الكلمات. ومحرّكات المتصفّحات لا تنفّذه: القيمة kashida في text-justify
+     بقيت في Trident وحده، ولا Blink ولا Gecko ولا WebKit ينفّذها. فالطباعة
+     من المتصفّح تضبط بالمسافات، ومن أراد الكشيدة في PDF صدّر Word وحفظه
+     منه PDF. */
   text-align: justify;
 }
 /* جدول الصفحة: رأسه وذيله يعيدهما المتصفّح في كل صفحة مطبوعة، فيحجزان
@@ -159,6 +164,9 @@ h1, h2, h3, h4 {
   break-after: avoid;
 }
 h1 { font-size: ${sizes[0]}pt; margin-top: 0; }
+/* العنوان الرئيس وحده في الوسط: هو أول ما تحت الرأسية، فيقع في وسط أعلى
+   الصفحة. وعناوين الأقسام على جهة البداية كما هي. */
+h1.naf-doc-title { text-align: center; margin-bottom: 1.2em; }
 h2 { font-size: ${sizes[1]}pt; }
 h3 { font-size: ${sizes[2]}pt; }
 h4 { font-size: ${sizes[3]}pt; }
@@ -204,7 +212,7 @@ bdi { unicode-bidi: isolate; }
 <thead><tr><td></td></tr></thead>
 <tfoot><tr><td></td></tr></tfoot>
 <tbody><tr><td>
-<h1>${escapeHtml(doc.title)}</h1>
+<h1 class="naf-doc-title">${escapeHtml(doc.title)}</h1>
 ${doc.html}
 <div class="disclaimer">${escapeHtml(doc.disclaimer)}</div>
 </td></tr></tbody>
