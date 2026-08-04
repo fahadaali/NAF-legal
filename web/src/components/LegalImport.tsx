@@ -7,7 +7,8 @@
 // ولا أيقونة في هذه الشاشة: «استيراد» ليس له مقابل مسجَّل في naf-icons.md،
 // واستعارة `Upload` تصادم «رفع» المسجَّلة لمعنى آخر.
 import { useEffect, useRef, useState } from 'react';
-import { api, type LegalImportRecord, type LegalImportReport, type LegalStats } from '../lib/api';
+import { api, type LegalImportDiff, type LegalImportRecord, type LegalImportReport, type LegalStats } from '../lib/api';
+import { ImportCompare } from './ImportCompare';
 import { formatDate } from '../lib/format';
 import { formatNumber } from '../lib/format';
 
@@ -30,6 +31,10 @@ interface FileResult {
   built?: number;
   /** أسطر تُخطّيت في وضع «ما صحّ». */
   skipped?: number;
+  /** أُرشِفت نسخُها القديمة قبل الكتابة فوقها. */
+  archived?: number;
+  /** أوقفه المستورِد بعد المقارنة. */
+  cancelled?: boolean;
   report?: LegalImportReport;
 }
 
@@ -51,6 +56,11 @@ export function LegalImport() {
   const [partial, setPartial] = useState(true);
   const [history, setHistory] = useState<LegalImportRecord[]>([]);
   const [draining, setDraining] = useState(false);
+  /* نافذة إعادة الرفع تُوقف الحلقة حتى يقرّر المستورِد. والوعد هو ما يوقفها:
+     الحلقة تنتظر جوابه، والنافذة هي التي تُحلّه. */
+  const [conflict, setConflict] = useState<
+    { filename: string; diff: LegalImportDiff; decide: (apply: boolean) => void } | null
+  >(null);
   const input = useRef<HTMLInputElement>(null);
 
   const loadStats = () => {
@@ -94,11 +104,27 @@ export function LegalImport() {
       return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: 'لا سطور في الملف' } };
     }
 
+    /* مقارنةٌ قبل الكتابة، بالملف كاملاً لا مقطّعاً: «الغائب عن الملف»
+       يُحسب على مستوى النظام، ودفعةٌ من خمسمئة سطر تجعل سائره غائباً.
+       وإن رُفض الملف في المقارنة لم نسأل شيئاً: الاستيراد التالي يردّ
+       التقرير نفسه، ورسالةُ الرفض تُقال مرّة لا مرّتين. */
+    setNow({ name: file.name, file: index + 1, files: count, batch: 0, batches: 0 });
+    const preview = await api.importLegal(lines, file.name, { buildEmbed, partial, dryRun: true });
+    const diff = preview.ok ? preview.diff : undefined;
+    if (diff && (diff.changed > 0 || diff.unchanged > 0)) {
+      const apply = await new Promise<boolean>((decide) => setConflict({ filename: file.name, diff, decide }));
+      setConflict(null);
+      if (!apply) {
+        return { name: file.name, ok: true, cancelled: true, inserted: 0, updated: 0 };
+      }
+    }
+
     const batches = Math.ceil(lines.length / BATCH_LINES);
     let inserted = 0;
     let updated = 0;
     let built = 0;
     let skipped = 0;
+    let archived = 0;
     const summary: NonNullable<LegalImportReport['error_summary']> = [];
 
     for (let start = 0; start < lines.length; start += BATCH_LINES) {
@@ -122,6 +148,7 @@ export function LegalImport() {
       inserted += batch.inserted ?? 0;
       updated += batch.updated ?? 0;
       built += batch.embed_text_built ?? 0;
+      archived += batch.archived ?? 0;
       // في وضع «ما صحّ»: الدفعة تنجح ومعها أسطرٌ متخطّاة. تُجمع أسبابها
       // ليُقال ما فات، فتخطٍّ صامت يجعل نظاماً ناقصاً يبدو تامّاً.
       if (batch.failed) {
@@ -129,7 +156,10 @@ export function LegalImport() {
         summary.push(...(batch.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })));
       }
     }
-    return { name: file.name, ok: true, inserted, updated, built, skipped, report: skipped ? { ok: true, error_summary: summary } : undefined };
+    return {
+      name: file.name, ok: true, inserted, updated, built, skipped, archived,
+      report: skipped ? { ok: true, error_summary: summary } : undefined,
+    };
   };
 
   const run = async (files: FileList | null) => {
@@ -165,6 +195,15 @@ export function LegalImport() {
 
   return (
     <div>
+      {conflict ? (
+        <ImportCompare
+          filename={conflict.filename}
+          diff={conflict.diff}
+          onApply={() => conflict.decide(true)}
+          onCancel={() => conflict.decide(false)}
+        />
+      ) : null}
+
       <input
         ref={input}
         type="file"
@@ -219,6 +258,7 @@ export function LegalImport() {
                   <th>مواد مستبدَلة</th>
                   <th>نصّ تضمين مبنيّ</th>
                   <th>أسطر متخطّاة</th>
+                  <th>نسخ مؤرشفة</th>
                 </tr>
               </thead>
               <tbody>
@@ -226,14 +266,15 @@ export function LegalImport() {
                   <tr key={i}>
                     <td><bdi>{r.name}</bdi></td>
                     <td>
-                      <span className={`pill ${!r.ok ? 'error' : r.skipped ? 'warn' : 'ready'}`}>
-                        {!r.ok ? 'الملف مرفوض' : r.skipped ? 'استيراد جزئي' : 'تم الاستيراد'}
+                      <span className={`pill ${!r.ok ? 'error' : r.cancelled ? 'pending' : r.skipped ? 'warn' : 'ready'}`}>
+                        {!r.ok ? 'الملف مرفوض' : r.cancelled ? 'أُلغي' : r.skipped ? 'استيراد جزئي' : 'تم الاستيراد'}
                       </span>
                     </td>
                     <td><bdi>{formatNumber(r.inserted)}</bdi></td>
                     <td><bdi>{formatNumber(r.updated)}</bdi></td>
                     <td><bdi>{formatNumber(r.built ?? 0)}</bdi></td>
                     <td><bdi>{formatNumber(r.skipped ?? 0)}</bdi></td>
+                    <td><bdi>{formatNumber(r.archived ?? 0)}</bdi></td>
                   </tr>
                 ))}
               </tbody>
@@ -303,6 +344,7 @@ export function LegalImport() {
                   <th>مواد جديدة</th>
                   <th>مواد مستبدَلة</th>
                   <th>أسطر متخطّاة</th>
+                  <th>نسخ مؤرشفة</th>
                 </tr>
               </thead>
               <tbody>

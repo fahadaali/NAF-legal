@@ -21,6 +21,7 @@
 //    يمرّ به. ولو تُرك للواجهة لتجاوزه أوّل مسار آخر واستشهد بمادة منسوخة.
 import { normalizeArabic, normalizeArticleNo, extractArticleNo, ftsMatchExpression } from './arabic';
 import { embed, embedBatch } from './embed';
+import { uuid } from './crypto';
 import type { Env } from '../types';
 
 // ── ثوابت العقد ──
@@ -527,6 +528,147 @@ function hashText(text: string): string {
   return `${text.length.toString(36)}-${h.toString(16)}`;
 }
 
+// ── المقارنة قبل الكتابة ──
+
+/** الحقول التي تُقارَن. غيرها بياناتُ عرضٍ لا تُنشئ نسخةً في السجلّ. */
+const COMPARED_FIELDS = ['text', 'article_no', 'status', 'is_repealed', 'instrument_no', 'issue_date'] as const;
+
+/** صفٌّ قائم كما تحتاجه المقارنة — بلا `embed_text` كعادة كل مسار عرض. */
+interface ExistingRow {
+  id: string;
+  article_no: string | null;
+  status: string;
+  is_repealed: number;
+  instrument_no: string | null;
+  issue_date: string | null;
+  issue_date_hijri: string | null;
+  text: string;
+  law_id: string | null;
+}
+
+export interface ChunkChange {
+  id: string;
+  /** ما تغيّر: `text` · `article_no` · `status` … */
+  fields: string[];
+  old_article_no: string | null;
+  new_article_no: string | null;
+  old_status: string;
+  new_status: string;
+  old_text: string;
+  new_text: string;
+}
+
+export interface ImportDiff {
+  /** مواد لا وجود لها في القاعدة. */
+  added: number;
+  /** مواد قائمة تغيّر فيها شيء. */
+  changed: number;
+  /** مواد قائمة لم يتغيّر فيها شيء — لا تُؤرشَف ولا تُعاد فهرستها. */
+  unchanged: number;
+  /**
+   * مواد قائمة في القاعدة لهذه الأنظمة ولا وجود لها في الملف.
+   *
+   * **تُحصى ولا تُحذف.** ملفٌّ جزئيّ يجعل كل ما سواه «غائباً»، والحذف على
+   * هذا الظنّ يمحو نظاماً كاملاً. الحذف قرارُ إنسانٍ لا نتيجةُ استيراد.
+   */
+  missing: number;
+  missing_ids: string[];
+  changes: ChunkChange[];
+  changes_truncated: number;
+  law_ids: string[];
+}
+
+/** سقف ما يُفصَّل من التغييرات في التقرير — والعدّ فوقه كامل. */
+const MAX_REPORTED_CHANGES = 100;
+const MAX_REPORTED_MISSING = 50;
+
+function differingFields(existing: ExistingRow, incoming: PreparedChunk): string[] {
+  const fields: string[] = [];
+  for (const f of COMPARED_FIELDS) {
+    if ((existing as any)[f] !== (incoming as any)[f]) fields.push(f);
+  }
+  return fields;
+}
+
+async function fetchExisting(env: Env, ids: string[]): Promise<Map<string, ExistingRow>> {
+  const found = new Map<string, ExistingRow>();
+  for (let i = 0; i < ids.length; i += DB_BATCH) {
+    const slice = ids.slice(i, i + DB_BATCH);
+    const marks = slice.map(() => '?').join(',');
+    const rows = await env.DB.prepare(
+      `SELECT id, article_no, status, is_repealed, instrument_no, issue_date, issue_date_hijri, text, law_id
+       FROM legal_chunks WHERE id IN (${marks})`
+    )
+      .bind(...slice)
+      .all<ExistingRow>();
+    for (const r of rows.results ?? []) found.set(r.id, r);
+  }
+  return found;
+}
+
+/**
+ * يقارن ملفاً بما في القاعدة قبل أن يُكتب منه شيء.
+ *
+ * هذا ما يجعل إعادة رفع نظامٍ قراراً مقروءاً لا كتابةً عمياء: يُعرف كم مادة
+ * ستُضاف، وكم ستتغيّر وبأيّ حقل، وكم لم تتغيّر — ثم يُعتمد أو يُترك.
+ */
+export async function diffChunks(env: Env, rows: PreparedChunk[]): Promise<ImportDiff> {
+  const existing = await fetchExisting(env, rows.map((r) => r.id));
+  const changes: ChunkChange[] = [];
+  let added = 0;
+  let changed = 0;
+  let unchanged = 0;
+
+  for (const row of rows) {
+    const old = existing.get(row.id);
+    if (!old) {
+      added++;
+      continue;
+    }
+    const fields = differingFields(old, row);
+    if (!fields.length) {
+      unchanged++;
+      continue;
+    }
+    changed++;
+    if (changes.length < MAX_REPORTED_CHANGES) {
+      changes.push({
+        id: row.id,
+        fields,
+        old_article_no: old.article_no,
+        new_article_no: row.article_no,
+        old_status: old.status,
+        new_status: row.status,
+        old_text: old.text,
+        new_text: row.text,
+      });
+    }
+  }
+
+  // الغائب عن الملف: يُحسب على مستوى النظام لا الدفعة — ولذلك تُقارَن
+  // الملفات كاملةً لا مقطّعة، وإلا عُدَّ سائرُ النظام غائباً.
+  const lawIds = Array.from(new Set(rows.map((r) => r.law_id).filter((l): l is string => !!l)));
+  const incoming = new Set(rows.map((r) => r.id));
+  const missingIds: string[] = [];
+  for (const lawId of lawIds) {
+    const rowsOfLaw = await env.DB.prepare('SELECT id FROM legal_chunks WHERE law_id = ?')
+      .bind(lawId)
+      .all<{ id: string }>();
+    for (const r of rowsOfLaw.results ?? []) if (!incoming.has(r.id)) missingIds.push(r.id);
+  }
+
+  return {
+    added,
+    changed,
+    unchanged,
+    missing: missingIds.length,
+    missing_ids: missingIds.slice(0, MAX_REPORTED_MISSING),
+    changes,
+    changes_truncated: Math.max(0, changed - changes.length),
+    law_ids: lawIds,
+  };
+}
+
 const UPSERT_SQL = `
   INSERT INTO legal_chunks (
     id, law_id, parent_law_id, doc_type, article_no, article_no_norm,
@@ -571,21 +713,50 @@ const DB_BATCH = 25;
  */
 export async function upsertLegalChunks(
   env: Env,
-  rows: PreparedChunk[]
-): Promise<{ inserted: number; updated: number }> {
-  if (!rows.length) return { inserted: 0, updated: 0 };
+  rows: PreparedChunk[],
+  opts: { importId?: string } = {}
+): Promise<{ inserted: number; updated: number; archived: number }> {
+  if (!rows.length) return { inserted: 0, updated: 0, archived: 0 };
   const now = Date.now();
 
   // معرفة الجديد من المستبدَل قبل الكتابة — ليقول التقرير أيّهما وقع.
-  let updated = 0;
-  for (let i = 0; i < rows.length; i += DB_BATCH) {
-    const slice = rows.slice(i, i + DB_BATCH);
-    const marks = slice.map(() => '?').join(',');
-    const existing = await env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_chunks WHERE id IN (${marks})`)
-      .bind(...slice.map((r) => r.id))
-      .first<{ n: number }>();
-    updated += existing?.n ?? 0;
+  // وفي الطريق نفسه تُؤرشَف المواد التي تغيّر نصُّها أو رقمها أو حالتها:
+  // الكتابة فوق نصٍّ نظاميّ بلا أثرٍ له تُفقد ما كان معمولاً به وقت الواقعة.
+  const existing = await fetchExisting(env, rows.map((r) => r.id));
+  let archived = 0;
+  const archiveStatements = [];
+  for (const row of rows) {
+    const old = existing.get(row.id);
+    if (!old) continue;
+    const fields = differingFields(old, row);
+    if (!fields.length) continue;
+    archived++;
+    archiveStatements.push(
+      env.DB.prepare(
+        `INSERT INTO legal_chunk_versions
+         (id, chunk_id, law_id, article_no, status, is_repealed, instrument_no, issue_date, issue_date_hijri, text, changed_fields, import_id, archived_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        uuid(),
+        old.id,
+        old.law_id,
+        old.article_no,
+        old.status,
+        old.is_repealed,
+        old.instrument_no,
+        old.issue_date,
+        old.issue_date_hijri,
+        old.text,
+        fields.join(','),
+        opts.importId ?? null,
+        now
+      )
+    );
   }
+  for (let i = 0; i < archiveStatements.length; i += DB_BATCH) {
+    await env.DB.batch(archiveStatements.slice(i, i + DB_BATCH));
+  }
+  const updated = rows.filter((r) => existing.has(r.id)).length;
 
   for (let i = 0; i < rows.length; i += DB_BATCH) {
     const slice = rows.slice(i, i + DB_BATCH);
@@ -601,7 +772,50 @@ export async function upsertLegalChunks(
     );
   }
 
-  return { inserted: rows.length - updated, updated };
+  return { inserted: rows.length - updated, updated, archived };
+}
+
+// ── سجلّ تحديث النظام ──
+
+export interface ChunkVersion {
+  id: string;
+  chunk_id: string;
+  article_no: string | null;
+  status: string;
+  text: string;
+  changed_fields: string;
+  archived_at: number;
+  /** النصّ الجاري اليوم — به تُقرأ النسخة المؤرشفة مقارنةً لا مفردة. */
+  current_text: string | null;
+  current_article_no: string | null;
+}
+
+/** ما أُزيح من مواد نظامٍ بعينه، أحدثه أولاً. */
+export async function listLawChanges(
+  env: Env,
+  lawId: string,
+  opts: { offset?: number; limit?: number } = {}
+): Promise<{ changes: ChunkVersion[]; total: number }> {
+  const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
+  const offset = Math.max(opts.offset ?? 0, 0);
+
+  const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM legal_chunk_versions WHERE law_id = ?')
+    .bind(lawId)
+    .first<{ n: number }>();
+
+  const rows = await env.DB.prepare(
+    `SELECT v.id, v.chunk_id, v.article_no, v.status, v.text, v.changed_fields, v.archived_at,
+            c.text AS current_text, c.article_no AS current_article_no
+     FROM legal_chunk_versions v
+     LEFT JOIN legal_chunks c ON c.id = v.chunk_id
+     WHERE v.law_id = ?
+     ORDER BY v.archived_at DESC, v.rowid DESC
+     LIMIT ? OFFSET ?`
+  )
+    .bind(lawId, limit, offset)
+    .all<ChunkVersion>();
+
+  return { changes: rows.results ?? [], total: total?.n ?? 0 };
 }
 
 // ── ٢) الفهرسة: `embed_text` وحده يصير متجهاً ──

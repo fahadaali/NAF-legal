@@ -7,8 +7,18 @@
 // يضيع عند أوّل إعادة رفع للنظام — الاستبدال على `id` يكتب فوقها. فما
 // يُصحَّح يُصحَّح في الملف ثم يُعاد استيراده.
 import { useEffect, useState } from 'react';
-import { api, type LegalArticle, type LegalLaw } from '../lib/api';
-import { formatNumber } from '../lib/format';
+import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw } from '../lib/api';
+import { formatDate, formatNumber } from '../lib/format';
+
+/** أسماء الحقول التي تُقارَن، بالعربية — كما في نافذة إعادة الرفع. */
+const FIELD_LABELS: Record<string, string> = {
+  text: 'النصّ',
+  article_no: 'رقم المادة',
+  status: 'الحالة',
+  is_repealed: 'النسخ',
+  instrument_no: 'رقم الأداة',
+  issue_date: 'تاريخ الإصدار',
+};
 
 /** مواد الصفحة الواحدة في التصفّح. */
 const PAGE = 25;
@@ -76,6 +86,7 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
   const [law, setLaw] = useState<LegalLaw | null>(null);
   const [regulations, setRegulations] = useState<LegalLaw[]>([]);
   const [parentTitle, setParentTitle] = useState<string | null>(null);
+  const [changes, setChanges] = useState<LegalChunkVersion[]>([]);
   const [articles, setArticles] = useState<LegalArticle[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -96,6 +107,13 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
         }
       })
       .catch(() => {});
+  }, [lawId]);
+
+  useEffect(() => {
+    api
+      .legalLawChanges(lawId, 0, PAGE)
+      .then((r) => setChanges(r.changes))
+      .catch(() => setChanges([]));
   }, [lawId]);
 
   useEffect(() => {
@@ -189,6 +207,43 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
         </div>
       )}
 
+      {/* سجلّ التحديث: ما أُزيح من نصوص هذا النظام ومتى. وقضيةٌ وقعت وقت
+          سريان النصّ القديم تُحاكَم به لا بالجاري، فبقاؤه ليس ترفاً. */}
+      {changes.length > 0 && (
+        <>
+          <div className="kb-section">سجل التحديث</div>
+          {changes.map((v) => (
+            <div key={v.id} className="compare-row">
+              <h4>
+                المادة <bdi>{v.article_no ?? v.chunk_id}</bdi>
+                {v.changed_fields.split(',').map((f) => (
+                  <span key={f} className="pill warn">{FIELD_LABELS[f] ?? f}</span>
+                ))}
+                <span className="compare-label"><bdi>{formatDate(v.archived_at)}</bdi></span>
+              </h4>
+              {v.article_no !== v.current_article_no ? (
+                <p>
+                  رقم المادة: <bdi>{v.article_no ?? '—'}</bdi> ← <bdi>{v.current_article_no ?? '—'}</bdi>
+                </p>
+              ) : null}
+              {v.changed_fields.split(',').includes('text') ? (
+                <div className="compare-pair">
+                  <div>
+                    <div className="compare-label">النصّ السابق</div>
+                    <p>{v.text}</p>
+                  </div>
+                  <div>
+                    <div className="compare-label">النصّ المعتمد</div>
+                    <p>{v.current_text ?? '—'}</p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </>
+      )}
+
+      <div className="kb-section">المواد</div>
       {articles.map((a) => (
         <article key={a.id} className="legal-article">
           <h4>

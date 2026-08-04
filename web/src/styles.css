@@ -626,3 +626,12 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .law-pager { display: flex; align-items: center; gap: var(--space-3); margin-block: var(--space-4); color: var(--muted-foreground); font-size: 0.875rem; }
 /* عنوان قسمٍ داخل التبويب: يفصل المستورَد عن المرفوع فلا يُقرأ أحدهما مكان الآخر. */
 .kb-section { margin-block: var(--space-6) var(--space-2); font-size: 0.875rem; font-weight: 700; color: var(--muted-foreground); }
+/* ── مقارنة إعادة الرفع: القديم والجديد جنباً إلى جنب ── */
+.compare-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+.compare-row h4 { margin: 0 0 var(--space-2); font-size: 0.875rem; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.compare-row p { margin: 0; line-height: var(--leading-relaxed, 1.9); white-space: pre-wrap; }
+/* عمودان على الشاشة الواسعة، وواحدٌ تحت الآخر على الضيّقة: نصّان طويلان
+   في عمودين ضيّقين لا يُقرآن. */
+.compare-pair { display: grid; gap: var(--space-3); grid-template-columns: 1fr; }
+@media (min-width: 720px) { .compare-pair { grid-template-columns: 1fr 1fr; } }
+.compare-label { font-size: 0.875rem; font-weight: 700; color: var(--muted-foreground); margin-bottom: var(--space-1); }
