@@ -411,6 +411,11 @@ a { color: var(--primary); }
   color: var(--muted-foreground); cursor: pointer; transition: 0.2s ease-out; margin-bottom: 16px; background: var(--card);
 }
 .dropzone:hover { border-color: var(--primary); color: var(--primary); background: var(--muted); }
+/* تقرير دفعة الاستيراد: شارة الحالة، ثم أعداد ما كُتب، ثم أسطر ما رُفض. */
+.import-report { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); }
+.import-report .pill { justify-self: start; }
+/* الجدول يمرّر نفسه على الشاشة الضيّقة. بدون هذا يمرّر الصفحةَ كلها أفقياً. */
+.table-scroll { overflow-x: auto; }
 .tool-textarea {
   width: 100%; min-height: 200px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-xl);
   background: var(--input); color: var(--foreground); font-family: inherit; font-size: 0.875rem; resize: vertical;

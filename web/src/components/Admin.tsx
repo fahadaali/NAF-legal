@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ConsultConfig, FieldDef, FieldType, RegulationRequest } from '../lib/api';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
+import { LegalImport } from './LegalImport';
 import ClauseLibrary from './ClauseLibrary';
 import { RequestStatusPill } from './Support';
 import { formatDate, formatTime } from '../lib/format';
@@ -85,7 +86,10 @@ function KbTab() {
   const [uploading, setUploading] = useState(false);
   const [versionsFor, setVersionsFor] = useState<string | null>(null);
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
-  const [mode, setMode] = useState<'file' | 'text'>('file');
+  // «استيراد» مسارٌ ثالث لا صيغةُ ملفٍ رابعة: المستورَد مقطوعٌ سلفاً بحدود
+  // مواده فلا يمرّ بالاستخراج ولا بالتقطيع ولا بالتصنيف. ولذلك هو وضعٌ قائم
+  // بذاته لا خانةٌ تُضاف إلى `accept` في رفع الملفات.
+  const [mode, setMode] = useState<'file' | 'text' | 'import'>('file');
   const [pasteTitle, setPasteTitle] = useState('');
   const [pasteText, setPasteText] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -162,9 +166,12 @@ function KbTab() {
       <div className="intake-toggle" style={{ marginBottom: 8 }}>
         <button className={`seg ${mode === 'file' ? 'on' : ''}`} onClick={() => setMode('file')}>رفع ملف</button>
         <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق النص</button>
+        <button className={`seg ${mode === 'import' ? 'on' : ''}`} onClick={() => setMode('import')}>استيراد</button>
       </div>
 
-      {mode === 'file' ? (
+      {mode === 'import' ? (
+        <LegalImport />
+      ) : mode === 'file' ? (
         <div className="dropzone" onClick={() => fileInput.current?.click()}>
           {uploading ? (
             <>

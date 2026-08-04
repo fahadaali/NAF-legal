@@ -180,6 +180,40 @@ function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
+/** حالة المحتوى النظامي المستورد. */
+export interface LegalStats {
+  chunks: number;
+  effective: number;
+  repealed: number;
+  laws: number;
+  pending_embeddings: number;
+  vectorize: boolean;
+}
+
+/** سطرٌ رُفض، برقمه في الملف وسببه. */
+export interface LegalLineError {
+  line: number;
+  error: string;
+  id?: string;
+}
+
+/** تقرير دفعة استيراد — كما يردّه `/api/legal/import`. */
+export interface LegalImportReport {
+  ok: boolean;
+  written?: boolean;
+  lines?: number;
+  accepted?: number;
+  inserted?: number;
+  updated?: number;
+  failed?: number;
+  errors?: LegalLineError[];
+  errors_truncated?: number;
+  warnings?: string[];
+  embed_text_truncated?: number;
+  pending_embeddings?: number;
+  error?: string;
+}
+
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...opts,
@@ -267,6 +301,26 @@ export const api = {
   kbFileUrl: (id: string) => `/api/kb/documents/${id}/file`,
   kbVersionTextUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/text`,
   kbVersionFileUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/file`,
+  // المحتوى النظامي المستورد — عقد الاستيراد في docs/legal-import.md
+  legalStats: () => req<LegalStats>('/legal/stats'),
+  /**
+   * يستورد دفعة أسطر JSONL.
+   *
+   * لا يرمي عند الرفض: تقرير الدفعة المرفوضة هو المطلوب عرضُه — أرقام
+   * الأسطر وأسبابها — ورميُ رسالةٍ واحدة يضيّعه.
+   */
+  importLegal: async (lines: string[], filename: string): Promise<LegalImportReport> => {
+    const res = await fetch(`/api/legal/import?filename=${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-ndjson' },
+      body: lines.join('\n'),
+      credentials: 'same-origin',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (handleAuthRedirect(res, data)) return pending<LegalImportReport>();
+    return { ...(data as LegalImportReport), ok: res.ok };
+  },
+
   tracking: () => req<{ needs_update: any[] }>('/admin/tracking'),
   resolveTracking: (id: string) => req(`/admin/tracking/${id}/resolve`, { method: 'POST' }),
   scanTracking: () => req<{ checked: number; flagged: number }>('/admin/tracking/scan', { method: 'POST' }),
