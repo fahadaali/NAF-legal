@@ -188,10 +188,41 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<R
   const reader = upstream.body.getReader();
   let buffer = '';
 
+  /* ما ينتهي به الدور، ولماذا.
+     كان المحوِّل يمرّر `text_delta` ويُسقط كل ما عداه بصمت — ولا يقرأ
+     `stop_reason` إطلاقاً. فدورٌ ينتهي بلا نصّ — رفضُ مصنّف، أو انقطاعٌ
+     من الخادم، أو حدٌّ استُنفد بالتفكير، أو وقفةُ أداةٍ خادمية — كان يُخرج
+     فقاعةً فارغة بلا كلمة تقول ما جرى، لا للقارئ ولا في السجلّ. */
+  let sawText = false;
+  let stopReason: string | null = null;
+  let refusalCategory: string | null = null;
+  const blocks: string[] = [];
+
+  /** ما يُقال للقارئ حين ينتهي الدور بلا نصّ — بحسب سببه لا جملةً واحدة. */
+  const emptyReason = (): string => {
+    switch (stopReason) {
+      case 'refusal':
+        return `رُفض هذا الطلب لأسباب تتعلّق بسياسة الاستخدام${refusalCategory ? ` (${refusalCategory})` : ''}. أعِد صياغة السؤال أو راجع مسؤول المنصة.`;
+      case 'max_tokens':
+        return 'تجاوز المخرَج الحدّ المسموح قبل أن يبدأ النصّ. قسّم الطلب إلى أجزاء أصغر وأعد المحاولة.';
+      case 'model_context_window_exceeded':
+        return 'طالت المحادثة عن سعة النموذج. ابدأ محادثة جديدة لهذه المسألة.';
+      case 'pause_turn':
+        return 'توقّف البحث في المصادر قبل اكتمال الرد. أعد الإرسال للمتابعة.';
+      default:
+        return 'انتهى التوليد بلا نصّ. أعد المحاولة، وإن تكرّر فراجع مسؤول المنصة.';
+    }
+  };
+
   return new ReadableStream({
     async pull(controller) {
       const { done, value } = await reader.read();
       if (done) {
+        if (!sawText) {
+          // السجلّ يحمل التشخيص كاملاً، والشاشة تحمل ما يُفيد القارئ.
+          console.error(`claude stream ended with no text — stop_reason=${stopReason ?? 'none'} blocks=[${blocks.join(',')}]`);
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: emptyReason() })}\n\n`));
+        }
         controller.enqueue(encoder.encode(`event: done\ndata: {}\n\n`));
         controller.close();
         return;
@@ -207,13 +238,34 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<R
         try {
           const parsed = JSON.parse(json);
           if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+            sawText = true;
             controller.enqueue(encoder.encode(`event: delta\ndata: ${JSON.stringify({ text: parsed.delta.text })}\n\n`));
-          } else if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'web_search_tool_result') {
-            controller.enqueue(encoder.encode(`event: search\ndata: ${JSON.stringify({ active: true })}\n\n`));
+          } else if (parsed.type === 'content_block_start') {
+            const kind = parsed.content_block?.type;
+            if (kind) blocks.push(kind);
+            if (kind === 'web_search_tool_result') {
+              controller.enqueue(encoder.encode(`event: search\ndata: ${JSON.stringify({ active: true })}\n\n`));
+            }
           } else if (parsed.type === 'message_start' && parsed.message?.usage) {
             controller.enqueue(encoder.encode(`event: usage\ndata: ${JSON.stringify({ input_tokens: parsed.message.usage.input_tokens ?? 0 })}\n\n`));
-          } else if (parsed.type === 'message_delta' && parsed.usage) {
-            controller.enqueue(encoder.encode(`event: usage\ndata: ${JSON.stringify({ output_tokens: parsed.usage.output_tokens ?? 0 })}\n\n`));
+          } else if (parsed.type === 'message_delta') {
+            if (parsed.delta?.stop_reason) stopReason = parsed.delta.stop_reason;
+            if (parsed.delta?.stop_details?.category) refusalCategory = parsed.delta.stop_details.category;
+            if (parsed.usage) {
+              controller.enqueue(encoder.encode(`event: usage\ndata: ${JSON.stringify({ output_tokens: parsed.usage.output_tokens ?? 0 })}\n\n`));
+            }
+          } else if (parsed.type === 'error') {
+            /* خطأٌ يرسله الخادم **داخل** البثّ لا في ترويسة الردّ — تحميلٌ
+               زائد أو عطلٌ مؤقّت. كان يسقط في `else` فارغة، فيقرأه القارئ
+               ردّاً فارغاً لا عطلاً. */
+            const detail = parsed.error?.message ?? parsed.error?.type ?? 'unknown';
+            console.error(`claude stream error event: ${String(detail).slice(0, 300)}`);
+            stopReason = stopReason ?? 'stream_error';
+            controller.enqueue(
+              encoder.encode(
+                `event: error\ndata: ${JSON.stringify({ error: 'انقطع التوليد من الخدمة. أعد المحاولة بعد قليل.' })}\n\n`
+              )
+            );
           }
         } catch {
           // تجاهل الأحداث غير القابلة للتحليل
@@ -226,9 +278,15 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<R
   });
 }
 
-// أداة البحث في الإنترنت الأصلية (§10)
+/**
+ * أداة البحث في الإنترنت الأصلية (§10).
+ *
+ * النسخة `_20260209` هي ما يدعمه Opus 5 — وفيها ترشيحٌ للنتائج قبل دخولها
+ * سياق النموذج. والنسخة `_20250305` للنماذج الأقدم، وبقاؤها على نموذجٍ
+ * أحدث يُضيّع الترشيح ويُدخل نتائج خاماً تزاحم السياق النظامي.
+ */
 export function webSearchTool(allowedDomains?: string[]) {
-  const tool: any = { type: 'web_search_20250305', name: 'web_search', max_uses: 5 };
+  const tool: any = { type: 'web_search_20260209', name: 'web_search', max_uses: 5 };
   if (allowedDomains && allowedDomains.length) tool.allowed_domains = allowedDomains;
   return tool;
 }

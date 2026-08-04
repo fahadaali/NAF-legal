@@ -193,6 +193,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     let acc = '';
     let meta: any = {};
     let verification: any = null;
+    let missingRegs: string[] = [];
     let failed = false; // حتى لا يمحو حدث done رسالة الخطأ
     try {
       await streamChat(conversationId, text, internet, bilingual, {
@@ -203,24 +204,27 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         onVerify: (v) => {
           verification = v;
         },
+        onRegulations: (missing) => {
+          missingRegs = missing;
+        },
         onDelta: (t) => {
           acc += t;
           setSearching(false);
           patchMessage(localId, (m) => ({
             ...m, content: acc, streaming: true,
-            citations: meta.citations, clarifying: meta.clarifying, missingRegulations: meta.missing_regulations,
+            citations: meta.citations, clarifying: meta.clarifying,
           }));
         },
         onDone: () => {
           if (failed) return; // أُبلِغ الخطأ سابقًا
           patchMessage(localId, (m) => ({
             ...m, id: meta.messageId ?? m.id, content: acc, streaming: false,
-            citations: meta.citations, clarifying: meta.clarifying, verification, missingRegulations: meta.missing_regulations,
+            citations: meta.citations, clarifying: meta.clarifying, verification, missingRegulations: missingRegs,
           }));
           onConversationChange(conversationId);
           // نظام يتطلّبه الإسناد وغير موجود: تُعرض النافذة مرّة واحدة لكل نظام،
           // ويبقى التنبيه أسفل الرد لفتحها متى شاء المستخدم بعد إغلاقها.
-          const pending: string[] = (meta.missing_regulations ?? []).filter((n: string) => !autoAsked.current.has(n));
+          const pending: string[] = missingRegs.filter((n) => !autoAsked.current.has(n));
           if (pending.length) {
             autoAsked.current.add(pending[0]);
             setRegRequest(pending[0]);

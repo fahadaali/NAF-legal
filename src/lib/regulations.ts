@@ -101,6 +101,27 @@ export function sameRegulationName(a: string, b: string): boolean {
 }
 
 /**
+ * يحصر الأنظمة المطلوب إضافتها فيما اعتمد عليه الردّ فعلاً.
+ *
+ * `target_regulations` نصٌّ يكتبه المُخطِّط، ولا شيء يتحقّق منه. فاسمٌ
+ * يخترعه — «نظام المحاكم العمالية» ولا نظام بهذا الاسم — كان يصير تنبيهاً
+ * في الشاشة وزرَّ طلبٍ يبعث المحامي يبحث عمّا لا وجود له، ثم صفَّ طلبٍ في
+ * لوحة المسؤول.
+ *
+ * ولا سبيل لنا إلى تمييز نظامٍ حقيقيّ نفتقده من اسمٍ مخترَع. لكن ما لم
+ * يذكره الردّ لم يتوقّف عليه الإسناد، فلا وجه لمطالبة أحدٍ به. والتصفية
+ * بعد التوليد لا قبله، ولذلك.
+ */
+export function mentionedInAnswer(names: string[], answer: string): string[] {
+  const text = normalizeArabic(answer ?? '');
+  if (!text) return [];
+  return (names ?? []).filter((name) => {
+    const key = normalizeArabic(name);
+    return key.length >= MIN_NAME_LENGTH && text.includes(key);
+  });
+}
+
+/**
  * الأنظمة التي سمّاها المُخطِّط ولا تعرفها المنصة.
  *
  * والعناوين تُقرأ مرّة واحدة لا مرّة لكل اسم: الأسماء ثلاثة على الأكثر

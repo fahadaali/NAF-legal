@@ -9,7 +9,7 @@ import { BILINGUAL_INSTRUCTION } from '../lib/prompts';
 import { getEffectiveConfig } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
-import { findMissingRegulations } from '../lib/regulations';
+import { findMissingRegulations, mentionedInAnswer } from '../lib/regulations';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -125,7 +125,7 @@ app.post('/:conversationId', async (c) => {
       tools,
       // الحدُّ الآن سقفٌ للتفكير والنص معاً، والمخرَج صحيفةُ دعوى أو مذكرة
       // قد تطول. والبثّ مُفعَّل فلا يخشى عليه من مهلة الاتصال.
-      max_tokens: 32000,
+      max_tokens: 64000,
     });
   } catch (e: any) {
     // السبب يُسجَّل ولا يُعرض. هذه الجملة هي كل ما يراه المستخدم حين تنقطع
@@ -149,7 +149,7 @@ app.post('/:conversationId', async (c) => {
       // أرسل بيانات وصفية أولية
       controller.enqueue(
         encoder.encode(
-          `event: meta\ndata: ${JSON.stringify({ messageId: asstId, plan, citations, missing_regulations: missingRegulations })}\n\n`
+          `event: meta\ndata: ${JSON.stringify({ messageId: asstId, plan, citations })}\n\n`
         )
       );
 
@@ -181,6 +181,22 @@ app.post('/:conversationId', async (c) => {
         }
       }
 
+      /* [5أ] الأنظمة الغائبة تُصفَّى بالردّ نفسه قبل أن تُعرض.
+
+         `target_regulations` نصٌّ يكتبه المُخطِّط ولا شيء يتحقّق منه، فاسمٌ
+         يخترعه — «نظام المحاكم العمالية» ولا نظام بهذا الاسم — كان يصير
+         تنبيهاً وزرَّ طلبٍ يبعث المحامي يبحث عمّا لا وجود له. وما لم يذكره
+         الردّ لم يتوقّف عليه الإسناد، فلا وجه لمطالبة أحدٍ به. */
+      const relevantMissing = mentionedInAnswer(missingRegulations, fullText);
+      if (missingRegulations.length !== relevantMissing.length) {
+        console.error(
+          `dropped unmentioned target regulations: ${missingRegulations.filter((n) => !relevantMissing.includes(n)).join(' · ')}`
+        );
+      }
+      controller.enqueue(
+        encoder.encode(`event: regulations\ndata: ${JSON.stringify({ missing: relevantMissing })}\n\n`)
+      );
+
       // [5] طبقة التحقّق بعد التوليد (الاقتباس المُتحقَّق منه) — §2
       let verification = null;
       try {
@@ -205,7 +221,7 @@ app.post('/:conversationId', async (c) => {
               citations,
               output_format: plan.output_format,
               verification,
-              missing_regulations: missingRegulations,
+              missing_regulations: relevantMissing,
             }),
             Date.now()
           )

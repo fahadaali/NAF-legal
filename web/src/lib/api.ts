@@ -618,6 +618,8 @@ export interface StreamHandlers {
   onDelta?: (text: string) => void;
   onSearch?: () => void;
   onVerify?: (v: any) => void;
+  /** الأنظمة الغائبة — تصل بعد التوليد لا معه، فهي مصفّاة بالردّ نفسه. */
+  onRegulations?: (missing: string[]) => void;
   onDone?: () => void;
   onError?: (err: string) => void;
 }
@@ -673,6 +675,7 @@ export async function streamChat(
         else if (event === 'delta') handlers.onDelta?.(data.text ?? '');
         else if (event === 'search') handlers.onSearch?.();
         else if (event === 'verify') handlers.onVerify?.(data);
+        else if (event === 'regulations') handlers.onRegulations?.(data.missing ?? []);
         else if (event === 'error') handlers.onError?.(data.error ?? 'تعذّر التوليد');
         else if (event === 'done') finish();
       } catch {}
