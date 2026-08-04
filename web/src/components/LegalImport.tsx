@@ -37,12 +37,17 @@ export function LegalImport() {
   const [now, setNow] = useState<{ name: string; file: number; files: number; batch: number; batches: number } | null>(null);
   const [results, setResults] = useState<FileResult[]>([]);
   const [stats, setStats] = useState<LegalStats | null>(null);
-  // معطَّل افتراضياً: العقد يشترط `embed_text` في الملف، وهذا استثناءٌ يُطلَب
-  // ولا يقع من نفسه — ويُقال في التقرير كم مادة بُني نصُّ تضمينها.
-  const [buildEmbed, setBuildEmbed] = useState(false);
-  // الصرامة هي الافتراض: نظامٌ نصفه مستورد أسوأ من نظام لم يُستورَد. وهذا
-  // الخيار لمن يعرف ما يتخطّاه — والمتخطَّى معدودٌ ومذكورٌ بأسبابه.
-  const [partial, setPartial] = useState(false);
+  /* الخياران مفعَّلان افتراضياً في الشاشة، ويُنزَعان بنقرة.
+     
+     والمقصد أن يمضي إدخال الأنظمة بلا وقوفٍ عند كل خانةٍ تختلف. وما يفعله
+     كلٌّ منهما يبقى **مقروءاً في التقرير**: عمود «نصّ تضمين مبنيّ» وعمود
+     «أسطر متخطّاة» وحالة «استيراد جزئي» بشارة تحذير. فالافتراض تسهيلٌ لا
+     إخفاء، ولا يمرّ شيء صامتاً.
+     
+     وهذا في الشاشة وحدها: `/api/legal/import` يبقى صارماً افتراضياً، فلا
+     تتغيّر معه أتمتةٌ ولا سكربتٌ قائم بتغيير الشاشة. */
+  const [buildEmbed, setBuildEmbed] = useState(true);
+  const [partial, setPartial] = useState(true);
   const input = useRef<HTMLInputElement>(null);
 
   const loadStats = () => {
