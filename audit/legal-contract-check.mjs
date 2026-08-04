@@ -51,6 +51,7 @@ const lib = await (async () => {
 const sqlite = new DatabaseSync(':memory:');
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0001_init.sql'), 'utf8'));
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0012_legal_corpus.sql'), 'utf8'));
+sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0013_legal_versions.sql'), 'utf8'));
 
 /** بديل D1 بواجهته نفسها فوق node:sqlite. */
 class Prepared {
@@ -370,6 +371,72 @@ await check('١ · `upsert` على `id`: إعادة رفع نظام محدَّث
   assert.match(q('SELECT text FROM legal_chunks WHERE id = ?', 'labor:77')[0].text, /محدَّث/);
 });
 
+// ═══ إعادة رفع نظام: مقارنةٌ قبل الكتابة، وأرشفةٌ عند الاعتماد ═══
+//
+// بمادةٍ تخصّ هذه الفحوص وحدها: مادةٌ يشترك فيها فحصان يجعل أحدهما يُفشل
+// الآخر بترتيبٍ لا علاقة له بما يقيسه.
+
+const V1 = {
+  id: 'labor:200', law_id: 'labor', article_no: '200', status: 'active', law_title: 'نظام العمل',
+  instrument_no: 'م/51', issue_date: '2005-09-27', issue_date_hijri: '1426/08/23هـ',
+  text: 'النصّ الأوّل للمادة 200 قبل التعديل.', embed_text: 'نظام العمل — المادة 200 — النصّ الأوّل.',
+};
+const V2 = { ...V1, article_no: '200 مكرر', text: 'النصّ الثاني للمادة 200 بعد التعديل.',
+             embed_text: 'نظام العمل — المادة 200 — النصّ الثاني.' };
+
+await lib.upsertLegalChunks(env, lib.parseJsonl(line(V1)).rows, { importId: 'imp-seed' });
+
+await check('٢ · المقارنة تقول ما سيقع قبل أن يقع، ولا تكتب شيئاً', async () => {
+  const incoming = lib.parseJsonl(
+    [
+      line(V2),                    // تغيّر نصُّها ورقمها
+      CORPUS[4],                   // لم يتغيّر فيها شيء
+      line({ ...V1, id: 'labor:201', article_no: '201', text: 'مادة مستحدَثة.', embed_text: 'مادة مستحدَثة.' }),
+    ].join('\n')
+  );
+  assert.deepEqual(incoming.errors, []);
+
+  const diff = await lib.diffChunks(env, incoming.rows);
+  assert.equal(diff.added, 1, 'الجديدة لم تُعَدّ');
+  assert.equal(diff.changed, 1, 'المتغيّرة لم تُعَدّ');
+  assert.equal(diff.unchanged, 1, 'التي لم تتغيّر عُدَّت تغييراً');
+  assert.deepEqual(diff.changes[0].fields.sort(), ['article_no', 'text']);
+  assert.equal(diff.changes[0].old_text, V1.text);
+  assert.equal(diff.changes[0].new_text, V2.text);
+  // الغائب عن الملف يُحصى ولا يُحذف: ملفٌّ جزئيّ يجعل سائر النظام «غائباً».
+  assert.ok(diff.missing > 0, 'الغائب عن الملف لم يُحصَ');
+  assert.equal(q('SELECT text FROM legal_chunks WHERE id = ?', V1.id)[0].text, V1.text, 'المقارنة كتبت في القاعدة');
+});
+
+await check('٢ · الاعتماد يؤرشف القديم ويعتمد الجديد', async () => {
+  const totalBefore = (await lib.listLawChanges(env, 'labor')).total;
+  const result = await lib.upsertLegalChunks(env, lib.parseJsonl(line(V2)).rows, { importId: 'imp-1' });
+  assert.equal(result.archived, 1, 'لم تُؤرشَف النسخة القديمة');
+  assert.equal(result.updated, 1);
+
+  // الجاري هو الجديد
+  const now = q('SELECT text, article_no FROM legal_chunks WHERE id = ?', V1.id)[0];
+  assert.equal(now.text, V2.text);
+  assert.equal(now.article_no, V2.article_no);
+
+  // والقديم محفوظٌ كما كان، ومعه ما تغيّر
+  const { changes, total } = await lib.listLawChanges(env, 'labor');
+  assert.equal(total, totalBefore + 1, 'السجلّ لم يزد نسخةً واحدة');
+  const entry = changes.find((v) => v.chunk_id === V1.id);
+  assert.ok(entry, 'النسخة المؤرشفة غير موجودة في السجلّ');
+  assert.equal(entry.text, V1.text, 'النصّ القديم لم يُحفظ كما كان');
+  assert.equal(entry.article_no, V1.article_no);
+  assert.deepEqual(entry.changed_fields.split(',').sort(), ['article_no', 'text']);
+  assert.equal(entry.current_text, V2.text, 'السجلّ لا يعرض الجاري بجانب القديم');
+});
+
+await check('٢ · إعادة رفعٍ بلا تغيير لا تُنشئ نسخةً في السجلّ', async () => {
+  const totalBefore = (await lib.listLawChanges(env, 'labor')).total;
+  const result = await lib.upsertLegalChunks(env, lib.parseJsonl(line(V2)).rows, { importId: 'imp-2' });
+  assert.equal(result.archived, 0, 'أُرشِفت مادة لم تتغيّر');
+  assert.equal((await lib.listLawChanges(env, 'labor')).total, totalBefore, 'السجلّ زاد بلا تغيير');
+});
+
 // ═══ ٢) الفهرسة: حقلان بدورين مختلفين ═══
 
 await check('٢ · `embed_text` وحده يُحوَّل إلى متجه — ولا يمرّ `text` بنموذج التضمين', async () => {
@@ -521,10 +588,11 @@ await check('٤ · مسار المحادثة (`retrieve`) يرث التصفية 
 
 await check('٤ · إحصاءات المحتوى تفصل السارية عن المنسوخة', async () => {
   const stats = await lib.legalStats(env);
-  assert.equal(stats.chunks, 5);
-  assert.equal(stats.repealed, 1);
-  assert.equal(stats.effective, 4);
-  assert.equal(stats.pending_embeddings, 0);
+  const inDb = q('SELECT COUNT(*) AS n FROM legal_chunks')[0].n;
+  assert.equal(stats.chunks, inDb);
+  assert.equal(stats.repealed, q("SELECT COUNT(*) AS n FROM legal_chunks WHERE is_repealed = 1 OR status = 'repealed'")[0].n);
+  assert.equal(stats.effective, stats.chunks - stats.repealed);
+  assert.equal(stats.repealed, 1, 'المنسوخة الوحيدة في المجموعة');
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');

@@ -9,6 +9,8 @@ import { uuid } from '../lib/crypto';
 import {
   parseJsonl,
   summarizeErrors,
+  diffChunks,
+  listLawChanges,
   upsertLegalChunks,
   embedPending,
   searchLegal,
@@ -48,6 +50,9 @@ app.post('/import', requireAdmin, async (c) => {
   const partial = c.req.query('partial') === '1';
   // بناء نصّ التضمين عند غيابه — بطلبٍ صريح وحده، ومعدودٌ في التقرير.
   const buildEmbedText = c.req.query('build_embed_text') === '1';
+  // مقارنةٌ لا كتابة: يُقرأ الملف ويُقابَل بما في القاعدة ويُردّ الفرق.
+  // ويُرسَل الملف كاملاً لا مقطّعاً، وإلا عُدَّ سائرُ النظام غائباً عنه.
+  const dryRun = c.req.query('dry_run') === '1';
   const contentType = c.req.header('content-type') ?? '';
 
   let bytes: ArrayBuffer;
@@ -84,6 +89,13 @@ app.post('/import', requireAdmin, async (c) => {
     embed_text_built: parsed.builtEmbedText,
   };
 
+  if (dryRun) {
+    if (!parsed.rows.length) {
+      return c.json({ ...report, ok: false, written: false, dry_run: true, error: 'لا سطر صالح في الملف' }, 422);
+    }
+    return c.json({ ...report, ok: true, written: false, dry_run: true, diff: await diffChunks(c.env, parsed.rows) });
+  }
+
   if (parsed.errors.length && !partial) {
     return c.json({ ...report, ok: false, written: false, error: 'أسطر غير صالحة — لم يُكتب شيء' }, 422);
   }
@@ -91,18 +103,18 @@ app.post('/import', requireAdmin, async (c) => {
     return c.json({ ...report, ok: false, written: false, error: 'لا سطر صالح في الملف' }, 422);
   }
 
-  // استبدال لا إضافة: المفتاح `id`.
-  const { inserted, updated } = await upsertLegalChunks(c.env, parsed.rows);
-
+  // استبدال لا إضافة: المفتاح `id`. وما تغيّر يُؤرشَف قبل أن يُكتب فوقه.
   const importId = uuid();
-  const full = { ...report, inserted, updated, mode: partial ? 'partial' : 'strict' };
+  const { inserted, updated, archived } = await upsertLegalChunks(c.env, parsed.rows, { importId });
+
+  const full = { ...report, inserted, updated, archived, mode: partial ? 'partial' : 'strict' };
   await c.env.DB.prepare(
     `INSERT INTO legal_imports (id, actor_id, filename, lines, inserted, updated, failed, report_json, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(importId, c.get('user').id, filename || null, parsed.total, inserted, updated, parsed.errors.length, JSON.stringify(full), Date.now())
     .run();
-  await audit(c, 'legal.import', importId, { filename, lines: parsed.total, inserted, updated, failed: parsed.errors.length });
+  await audit(c, 'legal.import', importId, { filename, lines: parsed.total, inserted, updated, archived, failed: parsed.errors.length });
 
   // التضمين بعد الردّ: الكتابة إلى D1 هي العقد، والتضمين يلحق بها. وما لم
   // يلحق في هذا الطلب يبقى معلَّقاً ويصرّفه الـCron.
@@ -191,6 +203,15 @@ app.get('/laws/:lawId/articles', async (c) => {
     includeRepealed: c.req.query('include_repealed') !== '0',
   });
   return c.json({ articles, total });
+});
+
+/** سجلّ تحديث نظام: ما أُزيح من مواده ومتى وبأيّ حقل. */
+app.get('/laws/:lawId/changes', async (c) => {
+  const { changes, total } = await listLawChanges(c.env, c.req.param('lawId'), {
+    offset: Number(c.req.query('offset') ?? 0),
+    limit: Number(c.req.query('limit') ?? 25),
+  });
+  return c.json({ changes, total });
 });
 
 /** نظامٌ مع لوائحه — العلاقة عبر `parent_law_id`. */

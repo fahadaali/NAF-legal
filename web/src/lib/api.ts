@@ -219,6 +219,43 @@ export interface LegalArticle {
   text: string;
 }
 
+/** مادةٌ تغيّر فيها شيء — القديم والجديد جنباً إلى جنب. */
+export interface LegalChunkChange {
+  id: string;
+  fields: string[];
+  old_article_no: string | null;
+  new_article_no: string | null;
+  old_status: string;
+  new_status: string;
+  old_text: string;
+  new_text: string;
+}
+
+/** فرقُ ملفٍ عن القاعدة قبل أن يُكتب منه شيء. */
+export interface LegalImportDiff {
+  added: number;
+  changed: number;
+  unchanged: number;
+  missing: number;
+  missing_ids: string[];
+  changes: LegalChunkChange[];
+  changes_truncated: number;
+  law_ids: string[];
+}
+
+/** نسخةٌ أُزيحت من مادة، ومعها الجاري اليوم. */
+export interface LegalChunkVersion {
+  id: string;
+  chunk_id: string;
+  article_no: string | null;
+  status: string;
+  text: string;
+  changed_fields: string;
+  archived_at: number;
+  current_text: string | null;
+  current_article_no: string | null;
+}
+
 /** دفعة استيراد كما سُجّلت. */
 export interface LegalImportRecord {
   id: string;
@@ -261,6 +298,10 @@ export interface LegalImportReport {
   errors?: LegalLineError[];
   errors_truncated?: number;
   warnings?: string[];
+  /** مواد أُرشِفت نسخُها القديمة قبل الكتابة فوقها. */
+  archived?: number;
+  /** المقارنة: يُملأ في وضع `dry_run` وحده. */
+  diff?: LegalImportDiff;
   embed_text_truncated?: number;
   embed_text_built?: number;
   pending_embeddings?: number;
@@ -363,6 +404,10 @@ export const api = {
     req<{ articles: LegalArticle[]; total: number }>(
       `/legal/laws/${encodeURIComponent(lawId)}/articles?offset=${offset}&limit=${limit}`
     ),
+  legalLawChanges: (lawId: string, offset = 0, limit = 25) =>
+    req<{ changes: LegalChunkVersion[]; total: number }>(
+      `/legal/laws/${encodeURIComponent(lawId)}/changes?offset=${offset}&limit=${limit}`
+    ),
   legalImports: () => req<{ imports: LegalImportRecord[] }>('/legal/imports'),
   legalEmbedPending: (limit = 1000) =>
     req<{ embedded: number; remaining: number; skipped?: string }>(`/legal/embed-pending?limit=${limit}`, {
@@ -377,12 +422,13 @@ export const api = {
   importLegal: async (
     lines: string[],
     filename: string,
-    opts: { buildEmbed?: boolean; partial?: boolean } = {}
+    opts: { buildEmbed?: boolean; partial?: boolean; dryRun?: boolean } = {}
   ): Promise<LegalImportReport> => {
     const query = new URLSearchParams({
       filename,
       ...(opts.buildEmbed ? { build_embed_text: '1' } : {}),
       ...(opts.partial ? { partial: '1' } : {}),
+      ...(opts.dryRun ? { dry_run: '1' } : {}),
     });
     const res = await fetch(`/api/legal/import?${query}`, {
       method: 'POST',
