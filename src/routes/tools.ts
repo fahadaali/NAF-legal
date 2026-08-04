@@ -40,7 +40,8 @@ app.post('/compare', async (c) => {
         content: `النسخة (أ):\n${textA.slice(0, 20000)}\n\n=====\n\nالنسخة (ب):\n${textB.slice(0, 20000)}`,
       },
     ],
-    max_tokens: 8192,
+    // بلا بثّ، فالحدّ دون سقف المهلة — والتفكير يقتسمه مع النص.
+    max_tokens: 16000,
   });
   await logUsage(c.env, { userId: user.id, kind: 'generation', model: c.env.GENERATION_MODEL, ...usageFromRaw(raw), consultationType: 'compare' });
   return c.json({ result: text });
@@ -63,7 +64,7 @@ app.post('/deadlines', async (c) => {
     model: c.env.GENERATION_MODEL,
     system: DEADLINE_SYSTEM,
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 3000,
+    max_tokens: 8000,
   });
   await logUsage(c.env, { userId: user.id, kind: 'generation', model: c.env.GENERATION_MODEL, ...usageFromRaw(raw), consultationType: 'deadlines' });
   return c.json({ result: text });
@@ -86,7 +87,7 @@ app.post('/proofread', async (c) => {
     model: c.env.GENERATION_MODEL,
     system,
     messages: [{ role: 'user', content: text.slice(0, 40000) }],
-    max_tokens: 8192,
+    max_tokens: 16000,
   });
   await logUsage(c.env, { userId: user.id, kind: 'generation', model: c.env.GENERATION_MODEL, ...usageFromRaw(raw), consultationType: 'proofread' });
   return c.json({ result: out });

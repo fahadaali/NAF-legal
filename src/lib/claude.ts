@@ -4,10 +4,32 @@ import type { Env } from '../types';
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
 
+/**
+ * البديل التلقائي عند رفض المصنّف — تجريبيّ، ويُحذف السطران معاً إن لم يكن
+ * مفعَّلاً للحساب.
+ *
+ * Opus 5 يحمل ضوابط أمنية مشدَّدة، ومصنّفاتها قد تردّ طلباً مشروعاً بـ200
+ * و `stop_reason: "refusal"` لا بخطأ. والقيمة `default` تجعل الخادم يعيد
+ * الطلب على النموذج المناسب حسب صنف الرفض بدل أن يعود الرفض إلينا.
+ *
+ * وترويسة التجربة تُرسل مع كل طلب، فإن لم تكن مفعَّلة للحساب رُدّت الطلبات
+ * كلها بـ400 — وهو الصنف نفسه الذي عطّل المنصة. لذلك: **اضغط «فحص Claude»
+ * في لوحة الإدارة أولَ نشرة**؛ إن قال «غير مربوط» مع ذكر البديل أو الترويسة،
+ * فاحذف هذين السطرين وحدهما ويعود كل شيء إلى عمله.
+ */
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+const FALLBACK_MODE = 'default';
+
 export interface ClaudeMessage {
   role: 'user' | 'assistant';
   content: string | any[];
 }
+
+/**
+ * مستوى الجهد — يضبط عمق التفكير وحجم الإنفاق (§GA، بلا ترويسة تجربة).
+ * الإغفال يعني `high`، وهو الافتراضي في الـAPI.
+ */
+export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /**
  * لا معامِلات عيّنة هنا ولا في أي مستدعٍ لهذا الملف — لا `temperature` ولا
@@ -21,15 +43,36 @@ export interface ClaudeMessage {
  *
  * وحذفها آمن على أي نموذج: الإغفال يعني القيمة الافتراضية لا قيمة شاذّة.
  * التوجيه يكون بالبرومبت لا بمعامِل عيّنة.
+ *
+ * **والتفكير مُفعَّل على Opus 5 بإغفال الحقل، لا مُعطَّل.** هذا انقلابٌ عن
+ * Opus 4.8 حيث كان الإغفال يعني «بلا تفكير». وأثره أن `max_tokens` صار
+ * سقفاً للتفكير **والنص معاً**، فحدٌّ ضيّق يبتلعه التفكير ويعود الردّ مقتطعاً
+ * أو فارغاً — وفي استدعاءات JSON (المُخطِّط، التصنيف، التحقّق) يعني ذلك
+ * تحليلاً فاشلاً وخطةً احتياطية صامتة. ومن هنا `MIN_MAX_TOKENS` أدناه.
+ *
+ * ولا يُعطَّل التفكير لتوفير الحدّ: تعطيله على Opus 5 يُخرج نداءَ الأداة
+ * نصّاً عادياً فلا يُنفَّذ ولا يُبلَّغ عنه، ويُسرّب وسوم `<thinking>` إلى
+ * الردّ. الضبط يكون بـ`effort` لا بتعطيل التفكير.
  */
 export interface ClaudeCallOptions {
   model: string;
   system?: string;
   messages: ClaudeMessage[];
   max_tokens?: number;
+  /** الإغفال يعني `high`. */
+  effort?: ClaudeEffort;
   tools?: any[];
   tool_choice?: any;
 }
+
+/**
+ * أرضيّةُ حدّ المخرَج.
+ *
+ * `max_tokens` سقفٌ لا حجز — لا يُدفع إلا عمّا وُلِّد فعلاً — فرفعُه مجّاني،
+ * وخفضُه إلى ما دون هذا الحدّ مع تفكيرٍ مُفعَّل يعني ردّاً مقتطعاً. والأرضيّة
+ * هنا لا في كل مستدعٍ: مستدعٍ جديد يُكتب غداً بحدٍّ صغير لا يُسقط نفسه بصمت.
+ */
+const MIN_MAX_TOKENS = 4096;
 
 /** رسالة بلا محتوى يردّها الـAPI بـ400، والفراغ يقع من نصٍّ مقتطع أو حقل ناقص. */
 function hasContent(m: ClaudeMessage): boolean {
@@ -59,12 +102,14 @@ function buildBody(opts: ClaudeCallOptions, defaultMaxTokens: number, stream: bo
 
   const body: Record<string, unknown> = {
     model: opts.model,
-    max_tokens: opts.max_tokens ?? defaultMaxTokens,
+    max_tokens: Math.max(opts.max_tokens ?? defaultMaxTokens, MIN_MAX_TOKENS),
     messages,
+    fallbacks: FALLBACK_MODE,
   };
   // الحقول الاختيارية تُحذف ولا تُرسل فارغة: `system` فارغ و`tools` فارغة
   // كلاهما 400، والإغفال هو ما يعنيه غيابُها أصلاً.
   if (opts.system?.trim()) body.system = opts.system;
+  if (opts.effort) body.output_config = { effort: opts.effort };
   if (opts.tools?.length) body.tools = opts.tools;
   if (opts.tool_choice) body.tool_choice = opts.tool_choice;
   if (stream) body.stream = true;
@@ -76,6 +121,7 @@ function headers(env: Env): Record<string, string> {
     'content-type': 'application/json',
     'x-api-key': env.ANTHROPIC_API_KEY,
     'anthropic-version': API_VERSION,
+    'anthropic-beta': FALLBACK_BETA,
   };
 }
 
@@ -106,6 +152,15 @@ export async function callClaude(env: Env, opts: ClaudeCallOptions): Promise<{ t
     .filter((b: any) => b.type === 'text')
     .map((b: any) => b.text)
     .join('');
+
+  /* رفضُ المصنّف ليس خطأ HTTP: يعود بـ200 و `content` فارغة أو ناقصة.
+     ولولا هذا الفحص لعاد نصٌّ فارغ يفشل تحليله فتمضي المنصة بخطة احتياطية
+     صامتة — وهو الصنف نفسه الذي أخفى الانقطاع السابق. */
+  if (!text.trim() && data.stop_reason === 'refusal') {
+    const category = data.stop_details?.category ?? 'unknown';
+    console.error(`claude call refused (${category})`);
+    throw new Error(`Claude refused the request (${category})`);
+  }
   return { text, raw: data };
 }
 

@@ -142,7 +142,9 @@ async function scanOfficialNewRegulations(env: Env): Promise<number> {
       system,
       messages: [{ role: 'user', content: 'ما أحدث الأنظمة واللوائح الجديدة أو المحدَّثة من هيئة الخبراء والمركز الوطني للوثائق؟' }],
       tools: [webSearchTool(['boe.gov.sa', 'laws.boe.gov.sa', 'ncar.gov.sa'])],
-      max_tokens: 2000,
+      // مسحٌ ليليّ يجمع عناوين ما صدر — الحكم على كل نظام يأتي بعده.
+      effort: 'medium',
+      max_tokens: 4096,
     });
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return 0;
@@ -217,7 +219,9 @@ async function checkRegulation(env: Env, title: string): Promise<{ changed: bool
     system,
     messages: [{ role: 'user', content: `النظام: ${title}\nهل صدر تعديل أو تحديث رسمي حديث عليه؟` }],
     tools: [webSearchTool(TRACKING_DOMAINS)],
-    max_tokens: 1024,
+    // «هل عُدِّل هذا النظام؟» حكمٌ يُبنى عليه تنبيهُ مراجعةٍ لمحامٍ.
+    effort: 'medium',
+    max_tokens: 4096,
   });
 
   const m = text.match(/\{[\s\S]*\}/);

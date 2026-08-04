@@ -55,7 +55,10 @@ ${userMessage}`;
       model: env.PLANNER_MODEL,
       system: PLANNER_SYSTEM,
       messages: [{ role: 'user', content: context }],
-      max_tokens: 1024,
+      // توجيهٌ لا اجتهاد: خرجُه JSON قصير، وهو على مسار كل دور محادثة.
+      // و`low` على Opus 5 قويٌّ لهذا الصنف، وأقلُّ زمناً قبل بدء التوليد.
+      effort: 'low',
+      max_tokens: 4096,
     });
     await logUsage(env, { userId, kind: 'planner', model: env.PLANNER_MODEL, ...usageFromRaw(raw) });
     const plan = extractJson(text);

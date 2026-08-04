@@ -274,12 +274,17 @@ app.get('/claude-check', async (c) => {
     models.map(async (model) => {
       const t0 = Date.now();
       try {
-        const { text } = await callClaude(c.env, {
+        // الحدّ ليس ضيّقاً عمداً: التفكير يقتسمه مع النص على Opus 5، وحدٌّ
+        // صغير يجعل الفحصَ يفشل على نموذجٍ سليم فيقود التشخيص إلى لا شيء.
+        const { text, raw } = await callClaude(c.env, {
           model,
           messages: [{ role: 'user', content: 'أجب بكلمة واحدة: جاهز' }],
-          max_tokens: 16,
+          effort: 'low',
+          max_tokens: 4096,
         });
-        return { model, ok: true, ms: Date.now() - t0, sample: text.trim().slice(0, 40) };
+        if (!text.trim()) return { model, ok: false, ms: Date.now() - t0, error: `ردٌّ بلا نص (${raw?.stop_reason ?? '—'})` };
+        // النموذج الذي خدم الطلب قد يخالف المطلوب إن تدخّل البديل التلقائي.
+        return { model, ok: true, ms: Date.now() - t0, served_by: raw?.model ?? model, sample: text.trim().slice(0, 40) };
       } catch (e: any) {
         return { model, ok: false, ms: Date.now() - t0, error: String(e?.message ?? e) };
       }

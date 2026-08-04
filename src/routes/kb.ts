@@ -269,7 +269,8 @@ async function classifyDocument(env: Env, filename: string, sample: string) {
       model: env.PLANNER_MODEL,
       system,
       messages: [{ role: 'user', content: `اسم الملف: ${filename}\n\nعيّنة من المحتوى:\n${sample}` }],
-      max_tokens: 512,
+      effort: 'low', // تصنيفُ وثيقةٍ من عيّنتها — خرجُه JSON قصير
+      max_tokens: 4096,
     });
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : { title: filename };

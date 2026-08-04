@@ -112,7 +112,7 @@ app.post('/:messageId/alternative', async (c) => {
         content: `${instruction ? `توجيه إضافي: ${instruction}\n\n` : ''}المسودّة الحالية:\n\n${msg.content.slice(0, 40000)}`,
       },
     ],
-    max_tokens: 8192,
+    max_tokens: 16000,
   });
   await logUsage(c.env, {
     userId: user.id,

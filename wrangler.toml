@@ -86,9 +86,14 @@ crons = ["0 3 * * *"]
 [vars]
 # القيم غير السرّية فقط. الأسرار عبر: wrangler secret put
 APP_NAME = "مستشار ناف"
-# مُوحَّد على Opus 4.8 لكل مراحل Claude (التخطيط/التصنيف/الاستخراج/التحقّق/التوليد)
-PLANNER_MODEL = "claude-opus-4-8"
-GENERATION_MODEL = "claude-opus-4-8"
+# مُوحَّد على Opus 5 لكل مراحل Claude (التخطيط/التصنيف/الاستخراج/التحقّق/التوليد)
+#
+# ورفعُ هذين السطرين وحدهما لا يكفي حين تتغيّر العائلة: عقد الطلب يتغيّر معها.
+# على Opus 5 يُفعَّل التفكير بإغفال حقله — عكسَ Opus 4.8 — فيصير `max_tokens`
+# سقفاً للتفكير والنص معاً. تفصيل ذلك وأرضيّة الحدّ في `src/lib/claude.ts`،
+# ومستوى الجهد لكل استدعاء عند موضعه.
+PLANNER_MODEL = "claude-opus-5"
+GENERATION_MODEL = "claude-opus-5"
 EMBEDDING_MODEL = "@cf/baai/bge-m3"
 DATA_REGION = "auto"
 

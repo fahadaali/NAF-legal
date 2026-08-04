@@ -4,6 +4,7 @@ import type { Env } from '../types';
 
 // تسعير تقريبي بالدولار لكل مليون رمز (input/output). يُحدَّث حسب أسعار Anthropic.
 const PRICING: Record<string, { in: number; out: number }> = {
+  'claude-opus-5': { in: 5, out: 25 },
   'claude-opus-4-8': { in: 5, out: 25 },
   'claude-sonnet-5': { in: 3, out: 15 },
   'claude-haiku-4-5-20251001': { in: 0.8, out: 4 },
@@ -11,7 +12,7 @@ const PRICING: Record<string, { in: number; out: number }> = {
 
 function priceFor(model: string): { in: number; out: number } {
   if (PRICING[model]) return PRICING[model];
-  if (model.includes('opus')) return PRICING['claude-opus-4-8'];
+  if (model.includes('opus')) return PRICING['claude-opus-5'];
   if (model.includes('haiku')) return PRICING['claude-haiku-4-5-20251001'];
   return PRICING['claude-sonnet-5'];
 }

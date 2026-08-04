@@ -884,7 +884,9 @@ function AiCheck() {
  */
 function ClaudeCheck() {
   const [busy, setBusy] = useState(false);
-  const [checks, setChecks] = useState<{ model: string; ok: boolean; ms: number; error?: string }[] | null>(null);
+  const [checks, setChecks] = useState<
+    { model: string; ok: boolean; ms: number; served_by?: string; error?: string }[] | null
+  >(null);
   const run = async () => {
     setBusy(true);
     setChecks(null);
@@ -905,7 +907,11 @@ function ClaudeCheck() {
       {checks?.map((r) => (
         <p key={r.model} className="source-note">
           {r.ok ? (
-            <>مربوط — النموذج <bdi>{r.model}</bdi> · <bdi>{r.ms}ms</bdi></>
+            <>
+              مربوط — النموذج <bdi>{r.model}</bdi> · <bdi>{r.ms}ms</bdi>
+              {/* البديل التلقائي يخدم الطلب عند رفض المصنّف، فيُذكر متى اختلف. */}
+              {r.served_by && r.served_by !== r.model && <> · خدمه <bdi>{r.served_by}</bdi></>}
+            </>
           ) : (
             <>غير مربوط — النموذج <bdi>{r.model}</bdi> · <bdi>{r.error}</bdi></>
           )}

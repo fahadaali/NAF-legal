@@ -91,6 +91,7 @@ async function extractViaClaude(env: Env, buf: ArrayBuffer, mediaType: string, k
 
   const { text } = await callClaude(env, {
     model: env.PLANNER_MODEL,
+    effort: 'low', // نقلٌ حرفيّ للنص، لا تحليل — فلا وجه لإنفاق تفكيرٍ عليه
     max_tokens: 8192,
     messages: [
       {

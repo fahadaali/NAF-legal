@@ -46,7 +46,9 @@ export async function verifyGrounding(
       messages: [
         { role: 'user', content: `السياق النظامي:\n${ragContext.slice(0, 12000)}\n\n---\n\nالمخرَج:\n${generated.slice(0, 12000)}` },
       ],
-      max_tokens: 800,
+      // حكمٌ على سند المواد لا نقلٌ لها، فلا يُنزَل به إلى `low`.
+      effort: 'medium',
+      max_tokens: 4096,
     });
     const u = usageFromRaw(raw);
     await logUsage(env, { userId, kind: 'verify', model: env.PLANNER_MODEL, ...u, consultationType });

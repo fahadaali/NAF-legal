@@ -489,9 +489,10 @@ export const api = {
   aiCheck: () => req<{ ok: boolean; model: string; dimensions?: number; ms?: number; error?: string }>('/admin/ai-check'),
   /** فحص Claude — يردّ ٢٠٠ ولو فشل، فالتقرير هو المطلوب لا رمز الخطأ. */
   claudeCheck: () =>
-    req<{ ok: boolean; checks: { model: string; ok: boolean; ms: number; sample?: string; error?: string }[] }>(
-      '/admin/claude-check'
-    ),
+    req<{
+      ok: boolean;
+      checks: { model: string; ok: boolean; ms: number; served_by?: string; sample?: string; error?: string }[];
+    }>('/admin/claude-check'),
   analytics: () => req<any>('/admin/analytics'),
   settings: () => req<{ settings: Record<string, string> }>('/admin/settings'),
   saveSettings: (s: Record<string, string>) => req('/admin/settings', { method: 'POST', body: JSON.stringify(s) }),
