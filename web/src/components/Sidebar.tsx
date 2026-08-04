@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api, Conversation, Folder, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
 import { ConsultationIcon, Icon, ICON_SM } from '../lib/icons';
-import { formatDate, formatTime } from '../lib/format';
+import { formatDayHeading, formatTime } from '../lib/format';
 import NafMark from './NafMark';
 
 interface Props {
@@ -21,6 +21,20 @@ interface Props {
   onOpenSearch: (q: string) => void;
   onOpenCase: () => void;
   onOpenSupport: () => void;
+}
+
+/**
+ * عنوان اليوم إن بدأت به مجموعة جديدة، وإلا فلا عنوان.
+ *
+ * القائمة مرتَّبة بـ`updated_at` تنازلياً، فتبدّلُ العنوان بين صفٍّ وسابقه
+ * هو حدُّ اليوم. والمحادثة بلا وقت — صفٌّ اصطناعيّ من نتيجة بحث — لا تحمل
+ * عنواناً ولا تكسر مجموعةَ ما قبلها.
+ */
+function dayHeadingFor(conv: Conversation, previous?: Conversation): string | null {
+  if (!conv.updated_at) return null;
+  const heading = formatDayHeading(conv.updated_at);
+  if (previous?.updated_at && formatDayHeading(previous.updated_at) === heading) return null;
+  return heading;
 }
 
 export default function Sidebar(props: Props) {
@@ -173,21 +187,25 @@ export default function Sidebar(props: Props) {
 
       <div className="conv-list">
         {convs.length === 0 && <div className="empty-state" style={{ fontSize: '0.875rem' }}>لم تبدأ أي محادثة بعد. ابدأ بأول استشارة.</div>}
-        {convs.map((c) => (
+        {convs.map((c, i) => (
+          <Fragment key={c.id}>
+            {/* عنوان المجموعة يظهر عند تبدّل اليوم فقط — القائمة مرتَّبة
+                بـ`updated_at` تنازلياً، فتبدّلُه هو حدُّ اليوم. */}
+            {dayHeadingFor(c, convs[i - 1]) && (
+              <div className="conv-day">{dayHeadingFor(c, convs[i - 1])}</div>
+            )}
           <div
-            key={c.id}
             className={`conv-item ${props.activeConv === c.id && props.view === 'chat' ? 'active' : ''}`}
             onClick={() => props.onSelectConv(c.id)}
           >
             <span className="conv-icon"><ConsultationIcon option={optionFor(c.consultation_type)} size={ICON_SM} /></span>
             <span className="conv-main">
               <span className="conv-title">{c.title || 'محادثة'}</span>
-              {/* الصيغتان من `naf-format` لا من هنا، وكلٌّ في `bdi`: تاريخٌ
-                  أو وقتٌ عارٍ داخل نصّ عربي ينقلب ترتيبه (§٥). */}
+              {/* الوقت وحده: يومُه في عنوان المجموعة فوقه، وتكراره في كل
+                  صفٍّ حشوٌ يزاحم العنوان. والصيغة من `naf-format` لا من هنا،
+                  وفي `bdi`: وقتٌ عارٍ داخل نصّ عربي ينقلب ترتيبه (§٥). */}
               {c.updated_at > 0 && (
-                <span className="conv-time">
-                  <bdi>{formatDate(c.updated_at)}</bdi> <bdi>{formatTime(c.updated_at)}</bdi>
-                </span>
+                <span className="conv-time"><bdi>{formatTime(c.updated_at)}</bdi></span>
               )}
             </span>
             <button className="conv-del" onClick={(e) => rename(e, c)} title="إعادة تسمية">
@@ -197,6 +215,7 @@ export default function Sidebar(props: Props) {
               <Icon.delete size={ICON_SM} aria-hidden />
             </button>
           </div>
+          </Fragment>
         ))}
       </div>
 

@@ -68,6 +68,28 @@ export function formatTime(value: Date | string | number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+/**
+ * عنوان تجميع قائمة زمنية: "اليوم" · "أمس" · "2026/07/26"
+ *
+ * تسميةُ واجهةٍ لا قيمةُ تاريخ — المسجَّل في naf-terms.md §٥ «عناوين تجميع
+ * القوائم الزمنية». والتاريخ داخل الصفّ يبقى على `formatDate` ولا يُستبدل
+ * بهذا العنوان.
+ *
+ * واثنان لا ثالث لهما: «قبل يومين» وأخواتها تفرض على قارئها حساباً ليعرف
+ * اليوم المقصود، وما بعد الأمس يُكتب تاريخاً صريحاً.
+ *
+ * والمقارنة بحدود اليوم المحلّي لا بفارق ٢٤ ساعة: رسالةٌ عند منتصف الليل
+ * وأخرى بعده بدقيقة يومان مختلفان وإن لم يفصل بينهما إلا دقيقة.
+ */
+export function formatDayHeading(value: Date | string | number, now: Date = new Date()): string {
+  const date = toDate(value)
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000)
+  if (days === 0) return "اليوم"
+  if (days === 1) return "أمس"
+  return formatDate(date)
+}
+
 /** الجوال السعودي: "+966 5X XXX XXXX" */
 export function formatPhone(value: string): string {
   const digits = value.replace(/\D/g, "").replace(/^00966|^966|^0/, "")
