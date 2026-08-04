@@ -648,6 +648,14 @@ export async function streamChat(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
+  // حدث `done` يصل من الخادم، ويُستدعى ثانيةً عند انتهاء المجرى. والنداءان
+  // معاً كانا يعيدان كتابة الفقاعة مرّتين على مصفوفةٍ قد تكون تغيّرت بينهما.
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    handlers.onDone?.();
+  };
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -666,9 +674,9 @@ export async function streamChat(
         else if (event === 'search') handlers.onSearch?.();
         else if (event === 'verify') handlers.onVerify?.(data);
         else if (event === 'error') handlers.onError?.(data.error ?? 'تعذّر التوليد');
-        else if (event === 'done') handlers.onDone?.();
+        else if (event === 'done') finish();
       } catch {}
     }
   }
-  handlers.onDone?.();
+  finish();
 }

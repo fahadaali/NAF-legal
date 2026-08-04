@@ -60,11 +60,25 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     api.folders().then((r) => setFolders(r.folders)).catch(() => {});
   }, []);
 
+  /* بثٌّ جارٍ الآن، ورمزُ آخر طلب تحميل.
+
+     الرسائل تُبنى من مصدرين: القاعدة عند فتح المحادثة، والبثّ أثناء التوليد.
+     وكانا يتسابقان بلا حَكَم — يُفتح الحوار فيُطلَق الجلبُ والإرسال معاً،
+     فيعود الجلبُ بعد أن رُسمت فقاعتا المستخدم والمساعد فيمحوهما ويضع مكانهما
+     ما في القاعدة. فتختفي نقاط الانتظار في المحادثة الجديدة، ثم تُكتب إجابةُ
+     المساعد على رسالة المستخدم نفسها. */
+  const streaming = useRef(false);
+  const loadToken = useRef(0);
+
   useEffect(() => {
+    const token = ++loadToken.current;
     if (conversationId) {
       api.getConversation(conversationId).then((r) => {
         setConvType(r.conversation.consultation_type);
         setConvFolder((r.conversation as any).folder_id ?? '');
+        // استجابةٌ تخصّ محادثةً غادرها القارئ، أو بثٌّ سبقها: لا تُبنى
+        // الرسائل فوقه. وما في القاعدة يظهر عند فتح المحادثة من جديد.
+        if (token !== loadToken.current || streaming.current) return;
         const msgs = r.messages.map((m) => {
           let citations, clarifying, verification, missingRegulations;
           try {
@@ -88,7 +102,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           for (const [id, r] of pairs) if (r) map[id] = r;
           setFeedback(map);
         });
-      });
+      }).catch(() => {});
     } else {
       setConvType(null);
       setMessages([]);
@@ -151,15 +165,28 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     }
   };
 
+  /* تعديلُ رسالةٍ بعينها لا بموضعها.
+
+     الكتابة بالموضع (`copy[copy.length - 1]`) تفترض أن المصفوفة لم تتغيّر
+     منذ رُسمت الفقاعة. وهي تتغيّر — يعود جلبُ المحادثة فيعيد بناءها من
+     القاعدة — فيصير آخرُها رسالةَ المستخدم، وتُكتب عليها إجابةُ المساعد،
+     فيرى صاحبُ الرسالة سؤالَه وقد مُحي. */
+  const patchMessage = (id: string, patch: (m: UiMessage) => UiMessage) =>
+    setMessages((msgs) => msgs.map((m) => (m.id === id ? patch(m) : m)));
+
   const send = async (explicit?: string) => {
     const text = (explicit ?? input).trim();
     if (!text || !conversationId || sending) return;
     if (!explicit) setInput('');
     if (textarea.current) textarea.current.style.height = 'auto';
 
+    // معرّفٌ محليّ يثبت طوال البثّ. ولا يُستبدل بمعرّف الخادم إلا عند
+    // الانتهاء: تبديله أثناء البثّ يقطع الخيط بين التحديث وصاحبه.
+    const localId = 'a' + Date.now();
     const userMsg: UiMessage = { id: 'u' + Date.now(), role: 'user', content: text, created_at: Date.now() };
-    const asstMsg: UiMessage = { id: 'a' + Date.now(), role: 'assistant', content: '', created_at: Date.now(), streaming: true };
+    const asstMsg: UiMessage = { id: localId, role: 'assistant', content: '', created_at: Date.now(), streaming: true };
     setMessages((m) => [...m, userMsg, asstMsg]);
+    streaming.current = true;
     setSending(true);
     setSearching(false);
 
@@ -167,53 +194,62 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     let meta: any = {};
     let verification: any = null;
     let failed = false; // حتى لا يمحو حدث done رسالة الخطأ
-    await streamChat(conversationId, text, internet, bilingual, {
-      onMeta: (m) => {
-        meta = m;
-        if (m.messageId) asstMsg.id = m.messageId;
-      },
-      onSearch: () => setSearching(true),
-      onVerify: (v) => {
-        verification = v;
-      },
-      onDelta: (t) => {
-        acc += t;
-        setSearching(false);
-        setMessages((msgs) => {
-          const copy = [...msgs];
-          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: true, citations: meta.citations, clarifying: meta.clarifying, missingRegulations: meta.missing_regulations };
-          return copy;
-        });
-      },
-      onDone: () => {
-        if (failed) return; // أُبلِغ الخطأ سابقًا
-        setMessages((msgs) => {
-          const copy = [...msgs];
-          copy[copy.length - 1] = { ...asstMsg, id: meta.messageId ?? asstMsg.id, content: acc, streaming: false, citations: meta.citations, clarifying: meta.clarifying, verification, missingRegulations: meta.missing_regulations };
-          return copy;
-        });
-        setSending(false);
-        setSearching(false);
-        onConversationChange(conversationId);
-        // نظام يتطلّبه الإسناد وغير موجود: تُعرض النافذة مرّة واحدة لكل نظام،
-        // ويبقى التنبيه أسفل الرد لفتحها متى شاء المستخدم بعد إغلاقها.
-        const pending: string[] = (meta.missing_regulations ?? []).filter((n: string) => !autoAsked.current.has(n));
-        if (pending.length) {
-          autoAsked.current.add(pending[0]);
-          setRegRequest(pending[0]);
-        }
-      },
-      onError: (err) => {
-        failed = true;
-        setMessages((msgs) => {
-          const copy = [...msgs];
-          copy[copy.length - 1] = { ...asstMsg, content: err, streaming: false };
-          return copy;
-        });
-        setSending(false);
-        setSearching(false);
-      },
-    });
+    try {
+      await streamChat(conversationId, text, internet, bilingual, {
+        onMeta: (m) => {
+          meta = m;
+        },
+        onSearch: () => setSearching(true),
+        onVerify: (v) => {
+          verification = v;
+        },
+        onDelta: (t) => {
+          acc += t;
+          setSearching(false);
+          patchMessage(localId, (m) => ({
+            ...m, content: acc, streaming: true,
+            citations: meta.citations, clarifying: meta.clarifying, missingRegulations: meta.missing_regulations,
+          }));
+        },
+        onDone: () => {
+          if (failed) return; // أُبلِغ الخطأ سابقًا
+          patchMessage(localId, (m) => ({
+            ...m, id: meta.messageId ?? m.id, content: acc, streaming: false,
+            citations: meta.citations, clarifying: meta.clarifying, verification, missingRegulations: meta.missing_regulations,
+          }));
+          onConversationChange(conversationId);
+          // نظام يتطلّبه الإسناد وغير موجود: تُعرض النافذة مرّة واحدة لكل نظام،
+          // ويبقى التنبيه أسفل الرد لفتحها متى شاء المستخدم بعد إغلاقها.
+          const pending: string[] = (meta.missing_regulations ?? []).filter((n: string) => !autoAsked.current.has(n));
+          if (pending.length) {
+            autoAsked.current.add(pending[0]);
+            setRegRequest(pending[0]);
+          }
+        },
+        onError: (err) => {
+          failed = true;
+          patchMessage(localId, (m) => ({ ...m, content: err, streaming: false }));
+        },
+      });
+    } catch {
+      // انقطاعٌ قبل أن يصل أي حدث — لا يُترك القارئ أمام فقاعةٍ تنبض بلا نهاية.
+      failed = true;
+      patchMessage(localId, (m) => ({
+        ...m,
+        content: m.content || 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة',
+        streaming: false,
+      }));
+    } finally {
+      /* الصندوق يُفتح مهما كان المآل.
+
+         كان رفعُ `sending` يُنزَل في `onDone` و`onError` وحدهما، فأيُّ
+         انقطاعٍ قبلهما — شبكةٌ تسقط، أو جلسةٌ تنتهي فيُحوَّل الطلب — يتركه
+         مرفوعاً إلى الأبد: زرّ الإرسال معطَّل، ولا سبيل إلى الكتابة إلا
+         بإعادة تحميل الصفحة. وهو ما يُقرأ «شللاً». */
+      streaming.current = false;
+      setSending(false);
+      setSearching(false);
+    }
   };
 
   // تسجيل صوتي للوقائع ثم تفريغه عربيًا (§3)

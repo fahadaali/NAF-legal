@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, Conversation, Folder, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
 import { ConsultationIcon, Icon, ICON_SM } from '../lib/icons';
+import { formatDate, formatTime } from '../lib/format';
 import NafMark from './NafMark';
 
 interface Props {
@@ -179,7 +180,16 @@ export default function Sidebar(props: Props) {
             onClick={() => props.onSelectConv(c.id)}
           >
             <span className="conv-icon"><ConsultationIcon option={optionFor(c.consultation_type)} size={ICON_SM} /></span>
-            <span className="conv-title">{c.title || 'محادثة'}</span>
+            <span className="conv-main">
+              <span className="conv-title">{c.title || 'محادثة'}</span>
+              {/* الصيغتان من `naf-format` لا من هنا، وكلٌّ في `bdi`: تاريخٌ
+                  أو وقتٌ عارٍ داخل نصّ عربي ينقلب ترتيبه (§٥). */}
+              {c.updated_at > 0 && (
+                <span className="conv-time">
+                  <bdi>{formatDate(c.updated_at)}</bdi> <bdi>{formatTime(c.updated_at)}</bdi>
+                </span>
+              )}
+            </span>
             <button className="conv-del" onClick={(e) => rename(e, c)} title="إعادة تسمية">
               <Icon.edit size={ICON_SM} aria-hidden />
             </button>
