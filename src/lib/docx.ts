@@ -274,16 +274,13 @@ function para(text: string, t: DocTemplate, o: RunOpts): string {
 }
 
 /**
- * `w:jc w:val="right"` لا `start`: الفقرة `bidi` فجهةُ البداية هي اليمين،
- * و`start` لا يعرفها Word 2007 ولا كل قارئ. القيمة فيزيائية هنا بحكم صيغة
- * الملف لا اختياراً — والمستند عربيّ الاتجاه كلّه.
- *
- * والعنوان الرئيس وحده في الوسط: هو أول ما تحت الرأسية، فيقع في وسط أعلى
- * الصفحة. وعناوين الأقسام تبقى على جهة البداية — عنوانٌ متوسّطٌ في كل قسم
- * يُفقد القارئَ خيط التسلسل.
+ * العنوان الرئيس وحده في الوسط: هو أول ما تحت الرأسية، فيقع في وسط أعلى
+ * الصفحة. وعناوين الأقسام تُضبط بالكشيدة كالمتن — عنوانٌ يمتدّ سطرين يستوي
+ * طرفاه مع ما حوله، والقصيرُ سطرٌ أخير فيبقى على جهة البداية. وعنوانٌ
+ * متوسّطٌ في كل قسم يُفقد القارئَ خيط التسلسل، فلا يُعمَّم التوسيط.
  */
 function headingPara(text: string, sizePt: number, t: DocTemplate, o: { center?: boolean } = {}): string {
-  const jc = o.center ? 'center' : 'right';
+  const jc = o.center ? 'center' : 'lowKashida';
   const spacing = o.center
     ? '<w:spacing w:before="0" w:after="360" w:line="300" w:lineRule="auto"/>'
     : '<w:spacing w:before="240" w:after="120" w:line="300" w:lineRule="auto"/>';

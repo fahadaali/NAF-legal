@@ -95,18 +95,19 @@ export function buildPrintHtml(doc: PrintDoc): string {
   const sizes = headingSizes(t);
   const font = cssFontStack(t.fontFamily);
 
-  /* الرأسية خلفيةٌ للجذر تتكرّر بارتفاع الورقة، لا عنصراً مثبَّتاً.
-     `position: fixed` في الطباعة يُقاس داخل صندوق المحتوى — داخل هوامش
-     `@page` — فينزلق عن حافة الورقة ولا يتكرّر في الصفحة الثانية. وبهامشٍ
-     صفريّ يصير أصلُ الخلفية حافةَ الورقة نفسها، فتقع كل بلاطةٍ على صفحة. */
-  const sheet = doc.letterheadUrl
-    ? `background-image: url("${escapeAttr(doc.letterheadUrl)}");
-  background-size: ${A4_WIDTH_MM}mm ${A4_HEIGHT_MM}mm;
-  background-repeat: repeat-y;
-  background-position: top center;
-  /* خلفيات CSS لا تُطبع إلا بإذن القارئ، وهذا يفرضها */
-  print-color-adjust: exact;
-  -webkit-print-color-adjust: exact;`
+  /* الرأسية صورةٌ مثبَّتة لا خلفيةٌ مبلَّطة.
+
+     كانت خلفيةً للجذر بارتفاع الورقة تتكرّر (`repeat-y`)، فيرسم المتصفّح
+     بلاطةً واحدة ويعيد استعمالها في بقية الصفحات — فتخرج الأولى حادّة والباقي
+     ضبابياً. قياسُه على رأسيةٍ بخطوطٍ رفيعة: حدّةُ الرأس ٠٫٨١ في الصفحة
+     الأولى و٠٫٦٠ فيما بعدها.
+
+     والعنصر المثبَّت يُرسم في كل صفحة من الأصل بدقّتها كاملة. وكان يفشل قبلُ
+     لأن `position: fixed` يُقاس داخل صندوق المحتوى — داخل هوامش `@page` —
+     فينزلق عن حافة الورقة؛ والآن الهامش صفرٌ ونطاقُ الكتابة من جدول الصفحة،
+     فالصندوق هو الورقة نفسها. */
+  const letterhead = doc.letterheadUrl
+    ? `<img class="naf-letterhead" src="${escapeAttr(doc.letterheadUrl)}" alt="">`
     : '';
 
   return `<!doctype html>
@@ -123,9 +124,17 @@ ${fontFaces()}
   margin: 0;
 }
 * { box-sizing: border-box; }
-html {
-  background-color: #FFFFFF;
-  ${sheet}
+html { background-color: #FFFFFF; }
+.naf-letterhead {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  width: ${A4_WIDTH_MM}mm;
+  height: ${A4_HEIGHT_MM}mm;
+  z-index: -1;
+  /* الصور تُطبع، وخلفيات CSS لا تُطبع إلا بإذن القارئ */
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
 }
 html, body {
   margin: 0;
@@ -158,14 +167,16 @@ table.naf-sheet > tbody > tr > td {
 h1, h2, h3, h4 {
   font-weight: 600;
   line-height: 1.5;
-  text-align: start;
+  /* العناوين تُضبط كالمتن: عنوانٌ يمتدّ سطرين يستوي طرفاه مع ما حوله.
+     والسطر الأخير — وهو كل العنوان القصير — يبقى على جهة البداية. */
+  text-align: justify;
   margin: 1.1em 0 0.5em;
   page-break-after: avoid;
   break-after: avoid;
 }
 h1 { font-size: ${sizes[0]}pt; margin-top: 0; }
 /* العنوان الرئيس وحده في الوسط: هو أول ما تحت الرأسية، فيقع في وسط أعلى
-   الصفحة. وعناوين الأقسام على جهة البداية كما هي. */
+   الصفحة. وعناوين الأقسام تُضبط كالمتن. */
 h1.naf-doc-title { text-align: center; margin-bottom: 1.2em; }
 h2 { font-size: ${sizes[1]}pt; }
 h3 { font-size: ${sizes[2]}pt; }
@@ -208,6 +219,7 @@ bdi { unicode-bidi: isolate; }
 </style>
 </head>
 <body>
+${letterhead}
 <table class="naf-sheet">
 <thead><tr><td></td></tr></thead>
 <tfoot><tr><td></td></tr></tfoot>
