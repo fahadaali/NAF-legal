@@ -850,6 +850,36 @@ await check('٨ · وإعادة رفع الملف نفسه لا تكرّر ال�
   assert.equal(after, before, 'إعادة الرفع ضاعفت النصّ السابق في السجلّ');
 });
 
+await check('٨ · والنصّ المُزاح لا يُكتب مرّتين حين يعود في `text_superseded`', async () => {
+  // الحال الشائعة: الملف الجديد يحمل نصَّ المادة الجاري اليوم في
+  // `text_superseded` ونصّاً نافذاً في `text`. فالمُزاح والسابق شيء واحد،
+  // وكتابته مرّتين تجعل سجلّ التحديث يقول إن المادة عُدِّلت مرّتين.
+  const first = lib.parseJsonl(
+    line({
+      id: 'نظام-العمل/art-500', law_id: 'labor', doc_type: 'law', article_no: 500, law_title: 'نظام العمل',
+      text: 'مدة الاختبار لا تزيد على تسعين يوماً.',
+      embed_text: 'نظام العمل — المادة 500 — مدة الاختبار.',
+    })
+  );
+  await lib.upsertLegalChunks(env, first.rows, { importId: 'imp-500-a' });
+
+  const second = lib.parseJsonl(
+    line({
+      id: 'نظام-العمل/art-500', law_id: 'labor', doc_type: 'law', article_no: 500, law_title: 'نظام العمل',
+      text: 'مدة الاختبار لا تزيد على مائة وثمانين يوماً.',
+      text_superseded: 'مدة الاختبار لا تزيد على تسعين يوماً.',
+      has_amendments: true, amendment_applied: true, amendment_instrument: 'م/46', amended_on: '1447/02/10',
+      embed_text: 'نظام العمل — المادة 500 — مدة الاختبار.',
+    })
+  );
+  await lib.upsertLegalChunks(env, second.rows, { importId: 'imp-500-b' });
+
+  const rows = q("SELECT origin, amended_on FROM legal_chunk_versions WHERE chunk_id = 'نظام-العمل/art-500'");
+  assert.equal(rows.length, 1, 'النصّ الواحد دخل السجلّ مرّتين: مرّةً لأنه أُزيح ومرّةً لأنه ورد سابقاً');
+  assert.equal(rows[0].origin, 'displaced');
+  assert.equal(rows[0].amended_on, '1447/02/10');
+});
+
 await check('٨ · ووسم «تصحيح بيانات» يميّز خطأ السحب عن التعديل النظامي', async () => {
   const fixed = lib.parseJsonl(
     line({

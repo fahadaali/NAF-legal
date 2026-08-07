@@ -980,6 +980,10 @@ export async function upsertLegalChunks(
       const fields = differingFields(old, row);
       if (fields.length) {
         archived++;
+        // بصمةُ ما أُزيح تدخل المعروف في الحال: الملف الجديد يحمل غالباً
+        // النصَّ المُزاح نفسه في `text_superseded`، فبلا هذا يُكتب مرّتين —
+        // مرّةً لأنه أُزيح ومرّةً لأنه ورد سابقاً.
+        archivedHashes.get(row.id)?.add(hashText(old.text));
         archiveStatements.push(
           archiveVersion(env, {
             chunkId: old.id,
@@ -1591,7 +1595,10 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     if (exact.results?.length) {
       // استدعاءُ رقمٍ يردّ كل من يحمله: أخواتُ المادة تُضمّ هنا لا في الواجهة،
       // وإلا اختفت المادة المضافة بمرسومٍ معدِّل من نتائج كل مسار آخر.
-      const hits = await expandDuplicates(env, exact.results.map(toHit), opts);
+      //
+      // والضمّ بنطاق النظام لا بنطاق الرقم: أختُ المادة قد تُكتب «233 مكرر»
+      // فلا تطابق الرقم، وإنما يجمعها `duplicate_of` وحده.
+      const hits = await expandDuplicates(env, exact.results.map(toHit), { ...opts, articleNo: null });
       lists.push({ name: 'article', hits });
     }
   }
