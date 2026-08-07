@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw } from '../lib/api';
 import { formatDate, formatNumber } from '../lib/format';
+import { ArticleCard, ArticleFlags, ArticleNotices, groupArticleParts } from './LegalArticleView';
 
 /** أسماء الحقول التي تُقارَن، بالعربية — كما في نافذة إعادة الرفع. */
 const FIELD_LABELS: Record<string, string> = {
@@ -18,6 +19,7 @@ const FIELD_LABELS: Record<string, string> = {
   is_repealed: 'النسخ',
   instrument_no: 'رقم الأداة',
   issue_date: 'تاريخ الإصدار',
+  amendment_applied: 'تطبيق التعديل',
 };
 
 /** مواد الصفحة الواحدة في التصفّح. */
@@ -86,7 +88,12 @@ export function LegalLaws() {
               <h4>
                 <bdi>{a.lawTitle ?? ''}</bdi>
                 {a.articleNo ? <span className="pill pending">المادة <bdi>{a.articleNo}</bdi></span> : null}
+                <ArticleFlags a={a} />
               </h4>
+              {/* التنبيه يلاحق النصّ حيث عُرض: نتيجةُ بحثٍ تُنسخ إلى مذكرة
+                  كما تُنسخ من صفحة النظام، ونصٌّ أصليّ بلا تنبيهه يُستشهد به
+                  على أنه الجاري. */}
+              <ArticleNotices a={a} />
               <p>{a.text}</p>
             </article>
           ))}
@@ -272,7 +279,21 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
                 {v.changed_fields.split(',').map((f) => (
                   <span key={f} className="pill warn">{FIELD_LABELS[f] ?? f}</span>
                 ))}
-                <span className="compare-label"><bdi>{formatDate(v.archived_at)}</bdi></span>
+                {/* «تصحيح بيانات» يميّز خطأ سحبٍ ظهر اليوم عن تعديلٍ نظاميّ
+                    وقع بمرسوم — وبلا تمييزهما يبدو النظام معدَّلاً هذا العام
+                    وهو معدَّل قبل سنوات. */}
+                {v.change_kind === 'correction' ? <span className="pill pending">تصحيح بيانات</span> : null}
+                {v.amendment_instrument ? (
+                  <span className="compare-label">
+                    أداة التعديل <bdi>{v.amendment_instrument}</bdi>
+                  </span>
+                ) : null}
+                {/* التاريخ من `amended_on` حين وُجد: المادة عُدِّلت بمرسومها في
+                    تاريخه، وإنما استوردناه اليوم. ووقتُ الأرشفة يبقى بديلاً
+                    حين لا يقول الملف تاريخ التعديل. */}
+                <span className="compare-label">
+                  <bdi>{v.amended_on ?? formatDate(v.archived_at)}</bdi>
+                </span>
               </h4>
               {v.article_no !== v.current_article_no ? (
                 <p>
@@ -297,14 +318,11 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
       )}
 
       <div className="kb-section">المواد</div>
-      {articles.map((a) => (
-        <article key={a.id} className="legal-article">
-          <h4>
-            {a.articleNo ? <>المادة <bdi>{a.articleNo}</bdi></> : <bdi>{a.id}</bdi>}
-            {a.isRepealed || a.status === 'repealed' ? <span className="pill error">منسوخة</span> : null}
-          </h4>
-          <p>{a.text}</p>
-        </article>
+      {/* أجزاء المادة الواحدة تُعرض متتابعةً تحت عنوانٍ واحد: `#a` و`#b` مادةٌ
+          واحدة قُسّمت لطولها، وعرضُها مادتين يجعل النظام يبدو ذا مادتين
+          برقمٍ واحد. */}
+      {groupArticleParts(articles).map((group) => (
+        <ArticleCard key={group[0].id} group={group} />
       ))}
 
       {total > PAGE && (

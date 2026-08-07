@@ -4,6 +4,7 @@ import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import { LegalImport } from './LegalImport';
 import { LegalLaws } from './LegalLaws';
+import { LegalReview } from './LegalReview';
 import ClauseLibrary from './ClauseLibrary';
 import { RequestStatusPill } from './Support';
 import { formatDate, formatTime } from '../lib/format';
@@ -91,7 +92,7 @@ function KbTab() {
   // «استيراد» مسارٌ ثالث لا صيغةُ ملفٍ رابعة: المستورَد مقطوعٌ سلفاً بحدود
   // مواده فلا يمرّ بالاستخراج ولا بالتقطيع ولا بالتصنيف. ولذلك هو وضعٌ قائم
   // بذاته لا خانةٌ تُضاف إلى `accept` في رفع الملفات.
-  const [mode, setMode] = useState<'file' | 'text' | 'import'>('file');
+  const [mode, setMode] = useState<'file' | 'text' | 'import' | 'review'>('file');
   const [pasteTitle, setPasteTitle] = useState('');
   const [pasteText, setPasteText] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -169,9 +170,14 @@ function KbTab() {
         <button className={`seg ${mode === 'file' ? 'on' : ''}`} onClick={() => setMode('file')}>رفع ملف</button>
         <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق النص</button>
         <button className={`seg ${mode === 'import' ? 'on' : ''}`} onClick={() => setMode('import')}>استيراد</button>
+        {/* المراجعة وضعٌ رابع لا خانةٌ في الاستيراد: المحجوب يبقى محجوباً بعد
+            أن ينتهي الاستيراد بأيام، ومن يراجعه غير من رفع الملف. */}
+        <button className={`seg ${mode === 'review' ? 'on' : ''}`} onClick={() => setMode('review')}>مراجعة المواد</button>
       </div>
 
-      {mode === 'import' ? (
+      {mode === 'review' ? (
+        <LegalReview />
+      ) : mode === 'import' ? (
         <LegalImport />
       ) : mode === 'file' ? (
         <div className="dropzone" onClick={() => fileInput.current?.click()}>

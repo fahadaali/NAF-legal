@@ -203,6 +203,10 @@ export interface LegalStats {
   laws: number;
   pending_embeddings: number;
   vectorize: boolean;
+  /** محجوبٌ عن الاسترجاع حتى يعتمده إنسان. */
+  needs_review: number;
+  /** مادةٌ عُدِّلت ونصُّها المعروض أصليّ — تُعرض مع تنبيهها. */
+  amendment_pending: number;
 }
 
 /** نتيجة البحث في المنصة، مقسّمةً بمواضعها. */
@@ -252,14 +256,56 @@ export interface LegalArticle {
   id: string;
   lawId: string | null;
   articleNo: string | null;
+  /** «المادة الخامسة والأربعون» — كما تُكتب في النظام. */
+  articleLabel: string | null;
+  /** عنوان المادة إن وُجد: «التعريفات». */
+  articleTitle: string | null;
+  book: string | null;
+  chapter: string | null;
+  section: string | null;
   lawTitle: string | null;
+  instrument: string | null;
   instrumentNo: string | null;
+  authority: string | null;
   status: string;
   isRepealed: boolean;
   issueDate: string | null;
   issueDateHijri: string | null;
+  effectiveFrom: string | null;
+  effectiveFromHijri: string | null;
+  /** نفاذٌ مؤجَّل: تاريخ النفاذ لم يحلّ بعد، فالنصّ سابقٌ لأوانه. */
+  effectivePending: boolean;
   sourceUrl: string | null;
   text: string;
+  /** جزء المادة المقسّمة — أجزاءُ مادةٍ واحدة لا موادّ. */
+  part: string | null;
+  partsTotal: number | null;
+  isDuplicate: boolean;
+  duplicateOf: string | null;
+  duplicateIndex: number | null;
+  hasAmendments: boolean;
+  amendmentKind: string | null;
+  /** هل النصّ المعروض نافذ؟ `false` يعني أنه الأصلي رغم وجود تعديل. */
+  amendmentApplied: boolean;
+  needsReview: boolean;
+  reviewedAt: number | null;
+  amendmentInstrument: string | null;
+  amendedOn: string | null;
+  amendmentsCount: number | null;
+  amendNote: string | null;
+}
+
+/** نافذة التعديلات الخام — تُقرأ بطلبٍ صريح ولا تأتي مع نتائج البحث. */
+export interface LegalAmendment {
+  id: string;
+  amendment_kind: string | null;
+  amendment_applied: number;
+  amendment_instrument: string | null;
+  amended_on: string | null;
+  amendments_count: number | null;
+  amendments_raw: string | null;
+  amend_note: string | null;
+  text_superseded: string | null;
 }
 
 /** مادةٌ تغيّر فيها شيء — القديم والجديد جنباً إلى جنب. */
@@ -295,6 +341,12 @@ export interface LegalChunkVersion {
   text: string;
   changed_fields: string;
   archived_at: number;
+  /** تاريخ التعديل الهجري كما ورد — لا وقتُ اكتشافنا له. */
+  amended_on: string | null;
+  amendment_instrument: string | null;
+  /** `amendment` تعديلٌ نظاميّ · `correction` تصحيحُ خطأٍ في سحبٍ سابق. */
+  change_kind: string | null;
+  origin: string | null;
   current_text: string | null;
   current_article_no: string | null;
 }
@@ -308,6 +360,8 @@ export interface LegalImportRecord {
   updated: number;
   failed: number;
   created_at: number;
+  /** `correction` دفعةُ تصحيح بيانات · `import` استيرادٌ عاديّ. */
+  kind: string | null;
 }
 
 /** سطرٌ رُفض، برقمه في الملف وسببه. */
@@ -343,10 +397,16 @@ export interface LegalImportReport {
   warnings?: string[];
   /** مواد أُرشِفت نسخُها القديمة قبل الكتابة فوقها. */
   archived?: number;
+  /** نسخٌ دخلت سجلّ التحديث من `text_superseded` بتاريخ تعديلها. */
+  superseded?: number;
   /** المقارنة: يُملأ في وضع `dry_run` وحده. */
   diff?: LegalImportDiff;
   embed_text_truncated?: number;
   embed_text_built?: number;
+  /** موادّ ستُحجب عن الاسترجاع حتى تُراجَع. */
+  needs_review?: number;
+  /** موادّ عُدِّلت ونصُّها المعروض أصليّ. */
+  amendment_pending?: number;
   pending_embeddings?: number;
   error?: string;
 }
@@ -461,6 +521,20 @@ export const api = {
       `/legal/laws/${encodeURIComponent(lawId)}/changes?offset=${offset}&limit=${limit}`
     ),
   legalImports: () => req<{ imports: LegalImportRecord[] }>('/legal/imports'),
+  /** ما ينتظر المراجعة — هذا المسار وحده يراه، والبحث لا يصله. */
+  legalReviewQueue: (lawId?: string | null, offset = 0, limit = 25) =>
+    req<{ articles: LegalArticle[]; total: number }>(
+      `/legal/review?offset=${offset}&limit=${limit}${lawId ? `&law_id=${encodeURIComponent(lawId)}` : ''}`
+    ),
+  /** اعتماد مادةٍ محجوبة أو ردُّها إلى الحجب. */
+  legalSetReviewed: (id: string, reviewed: boolean) =>
+    req<{ ok: true; id: string; reviewed: boolean }>(
+      `/legal/review/${encodeURIComponent(id)}?reviewed=${reviewed ? '1' : '0'}`,
+      { method: 'POST' }
+    ),
+  /** نافذة التعديلات الخام — تُطلب عند فتحها لا مع كل نتيجة. */
+  legalAmendment: (id: string) =>
+    req<{ amendment: LegalAmendment }>(`/legal/articles/${encodeURIComponent(id)}/amendment`),
   legalEmbedPending: (limit = 1000) =>
     req<{ embedded: number; remaining: number; skipped?: string }>(`/legal/embed-pending?limit=${limit}`, {
       method: 'POST',
@@ -474,13 +548,14 @@ export const api = {
   importLegal: async (
     lines: string[],
     filename: string,
-    opts: { buildEmbed?: boolean; partial?: boolean; dryRun?: boolean } = {}
+    opts: { buildEmbed?: boolean; partial?: boolean; dryRun?: boolean; correction?: boolean } = {}
   ): Promise<LegalImportReport> => {
     const query = new URLSearchParams({
       filename,
       ...(opts.buildEmbed ? { build_embed_text: '1' } : {}),
       ...(opts.partial ? { partial: '1' } : {}),
       ...(opts.dryRun ? { dry_run: '1' } : {}),
+      ...(opts.correction ? { correction: '1' } : {}),
     });
     const res = await fetch(`/api/legal/import?${query}`, {
       method: 'POST',
