@@ -666,7 +666,8 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
   background: var(--muted); border-radius: var(--radius-md);
 }
 .legal-amendment > * + * { margin-top: var(--space-3); }
-.law-pager { display: flex; align-items: center; gap: var(--space-3); margin-block: var(--space-4); color: var(--muted-foreground); font-size: 0.875rem; }
+/* يلتفّ: السابق والتالي والعدّاد وسطرُ الاختصارات لا تسع سطراً عند 375px. */
+.law-pager { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-block: var(--space-4); color: var(--muted-foreground); font-size: 0.875rem; }
 /* عنوان قسمٍ داخل التبويب: يفصل المستورَد عن المرفوع فلا يُقرأ أحدهما مكان الآخر. */
 .kb-section { margin-block: var(--space-6) var(--space-2); font-size: 0.875rem; font-weight: 700; color: var(--muted-foreground); }
 /* ── مقارنة إعادة الرفع: القديم والجديد جنباً إلى جنب ── */
@@ -678,6 +679,37 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .compare-pair { display: grid; gap: var(--space-3); grid-template-columns: 1fr; }
 @media (min-width: 720px) { .compare-pair { grid-template-columns: 1fr 1fr; } }
 .compare-label { font-size: 0.875rem; font-weight: 700; color: var(--muted-foreground); margin-bottom: var(--space-1); }
+/* ── شاشة مراجعة المواد ── */
+.review-filters { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-block: var(--space-4); }
+.review-filters .import-option { margin-bottom: 0; }
+/* البطاقة تُركَّز بالمفاتيح، فحلقتها تظهر كما تظهر على أي عنصر تفاعلي. */
+.review-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); margin-block: var(--space-4); }
+.review-card .law-head { margin-top: 0; }
+.review-card .law-head h3 { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+/* الاختصارات تُقال في السطر ولا تُخمَّن. */
+.review-keys { color: var(--muted-foreground); font-size: 0.875rem; }
+/* ثلاثة أعمدة على الشاشة الواسعة، وواحدٌ تحت الآخر على الضيّقة: ثلاثة نصوص
+   طويلة في أعمدةٍ ضيّقة لا تُقرأ. */
+.review-panes { display: grid; gap: var(--space-3); grid-template-columns: 1fr; margin-block: var(--space-3); }
+@media (min-width: 960px) { .review-panes { grid-template-columns: 1fr 1fr 1fr; } }
+.review-panes-wrap + .review-panes-wrap { border-top: 1px solid var(--border); padding-top: var(--space-3); }
+.review-text { min-height: 220px; }
+.review-note { min-height: 80px; }
+.review-raw {
+  margin: 0; white-space: pre-wrap; line-height: var(--leading-relaxed, 1.9);
+  background: var(--muted); border-radius: var(--radius-md); padding: var(--space-3);
+  max-height: 320px; overflow-y: auto;
+}
+/* الفرق يُقرأ بالشكل كما يُقرأ باللون: خطٌّ على المحذوف وتسطيرٌ للمضاف،
+   فمن لا يميّز الأحمر عن الأخضر يرى ما تغيّر. */
+.review-raw del { background: var(--destructive-soft); color: var(--destructive-strong); text-decoration: line-through; }
+.review-raw ins { background: var(--success-soft); color: var(--success-strong); text-decoration: underline; }
+.review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block: var(--space-3); }
+.review-actions .compare-label { margin-bottom: 0; }
+/* قيمةُ القيد قد تكون مادةً كاملة: تُقصّ في الجدول ولا تمدّه، ويُقرأ كاملُها
+   في اللوح فوقها. */
+.audit-value { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ── شاشة البحث في المنصة ── */
 .page-title { font-size: 1.5rem; margin-top: 0; }
 .search-page-box { margin-bottom: var(--space-3); }

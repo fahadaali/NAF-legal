@@ -56,16 +56,43 @@ function ArticleHeading({ a, shown }: { a: LegalArticle; shown: number }) {
   );
 }
 
-/** شارات حال المادة — لا تُقرأ باللون وحده: لكلٍّ لفظُها، وللمراجعة أيقونتها. */
+/**
+ * حالُ المادة عند المراجع — لفظاً وأيقونةً ولوناً، كما في `naf-icons.md`.
+ *
+ * والمعتمدة والمحرَّرة تشتركان في `success` عن قصد: كلتاهما داخلةٌ في
+ * الاسترجاع، واللون يقول العائلة والأيقونة تقول أيّهما.
+ */
+const REVIEW_STATUS: Record<string, { label: string; cls: string; icon: keyof typeof Icon } | undefined> = {
+  pending: { label: 'بانتظار المراجعة', cls: 'warn', icon: 'pendingReview' },
+  approved: { label: 'معتمدة', cls: 'ready', icon: 'approved' },
+  edited: { label: 'محرَّرة', cls: 'ready', icon: 'reviewEdited' },
+  rejected: { label: 'مستبعدة', cls: 'error', icon: 'reviewExcluded' },
+  deferred: { label: 'مؤجَّلة', cls: 'pending', icon: 'reviewDeferred' },
+};
+
+/** شارة الحال وحدها — تُستعمل في الطابور وفي سطر المادة. */
+export function ReviewStatusPill({ status }: { status: string }) {
+  const s = REVIEW_STATUS[status];
+  if (!s) return null;
+  const Glyph = Icon[s.icon];
+  return (
+    <span className={`pill ${s.cls}`}>
+      <Glyph size={ICON_SM} aria-hidden /> {s.label}
+    </span>
+  );
+}
+
+/**
+ * شارات حال المادة — لا تُقرأ باللون وحده: لكلٍّ لفظُها وأيقونتها.
+ *
+ * وحالُ المراجعة تُقرأ من `reviewStatus` لا من `needsReview`: الأول قرارُ
+ * المراجع والثاني ما قاله الملف، ومادةٌ اعتُمدت يبقى وسمُها كما ورد.
+ */
 export function ArticleFlags({ a }: { a: LegalArticle }) {
   return (
     <>
       {a.isRepealed || a.status === 'repealed' ? <span className="pill error">منسوخة</span> : null}
-      {a.needsReview && !a.reviewedAt ? (
-        <span className="pill warn">
-          <Icon.pendingReview size={ICON_SM} aria-hidden /> بانتظار المراجعة
-        </span>
-      ) : null}
+      {a.needsReview ? <ReviewStatusPill status={a.reviewStatus} /> : null}
       {a.duplicateOf ? <span className="pill pending">رقم مكرّر</span> : null}
     </>
   );
@@ -164,10 +191,10 @@ export function AmendmentPanel({ id }: { id: string }) {
   return (
     <div className="legal-amendment">
       {data.amend_note ? (
-        <p>
-          <span className="compare-label">سبب الإحالة للمراجعة</span>
-          <bdi>{data.amend_note}</bdi>
-        </p>
+        <div>
+          <div className="compare-label">سبب الإحالة للمراجعة</div>
+          <p><bdi>{data.amend_note}</bdi></p>
+        </div>
       ) : null}
       {data.amendments_raw ? (
         <div>

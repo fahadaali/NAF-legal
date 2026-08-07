@@ -24,6 +24,7 @@
 
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -1210,6 +1211,31 @@ await check('١٨ · واستيراد نظامٍ جديد تدخل مواده ا
   await lib.upsertLegalChunks(env, fresh.rows, { importId: 'imp-new' });
   const after = (await lib.reviewQueueCounts(env)).find((c) => c.key === 'unclassified').pending;
   assert.equal(after, before + 1, 'مواد نظامٍ جديد لم تدخل الطابور بلا تعديلٍ في الشاشة');
+});
+
+await check('١٩ · الاعتماد لا يحذف نافذة التعديلات ولا النصّ السابق — هما أثرُ القرار', async () => {
+  const before = q("SELECT amendments_raw, text_superseded FROM legal_chunks WHERE id = 'مراجعة/جماعي'")[0];
+  await lib.reviewChunk(env, 'مراجعة/جماعي', 'approve', 'مراجع');
+  await lib.reviewChunk(env, 'مراجعة/جماعي', 'edit', 'مراجع', { text: 'صياغةٌ يعتمدها المراجع.' });
+  const after = q("SELECT amendments_raw, text_superseded FROM legal_chunks WHERE id = 'مراجعة/جماعي'")[0];
+  assert.equal(after.amendments_raw, before.amendments_raw, 'نافذة التعديلات ضاعت بعد الاعتماد');
+  assert.equal(after.text_superseded, before.text_superseded, 'النصّ السابق ضاع بعد التحرير');
+});
+
+await check('١٩ · ولا اعتماد بالجملة: القرار يقع على مادةٍ بعينها بمعرّفها', async () => {
+  // الاعتماد الجماعي بلا قراءة يُفرغ المراجعة من معناها. والمنع في المسار
+  // نفسه: معرّفٌ واحد في العنوان، ولا مسار يقبل قائمة ولا شاشةَ تعرض زرّاً
+  // يعتمد الطابور كلَّه.
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  // كلُّ ما يكتب في المراجعة مسارٌ واحد على معرّفٍ واحد. و`/review/batches`
+  // قراءةٌ لدفعات الاستيراد للترشيح، لا كتابةً على دفعة.
+  const writers = [...routes.matchAll(/app\.post\('(\/review[^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(writers, ['/review/:id'], 'ظهر مسارُ كتابةٍ ثانٍ في المراجعة');
+  const screen = readFileSync(path.join(ROOT, 'web', 'src', 'components', 'LegalReview.tsx'), 'utf8');
+  assert.ok(!/اعتماد الكل|اعتماد الطابور|approveAll/.test(screen), 'ظهر زرُّ اعتمادٍ جماعي في الشاشة');
+  // ومادةٌ لا تُعتمد بمرور الوقت: لا مسار ولا مهمّة تُغيّر الحال بلا فاعل.
+  const cron = readFileSync(path.join(ROOT, 'src', 'cron.ts'), 'utf8');
+  assert.ok(!/review_status/.test(cron), 'الـCron يمسّ حال المراجعة');
 });
 
 await check('١٩ · أخوات الرقم تُعرض مجتمعة في الطابور لا فرادى', async () => {
