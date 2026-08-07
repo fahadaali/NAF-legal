@@ -1778,7 +1778,11 @@ export interface LawSummary {
   law_title: string | null;
   parent_law_id: string | null;
   doc_type: string | null;
+  /** نوع أداة الإصدار: مرسوم ملكي، قرار مجلس الوزراء… */
+  instrument: string | null;
   instrument_no: string | null;
+  /** الجهة صاحبة النظام. */
+  authority: string | null;
   issue_date: string | null;
   issue_date_hijri: string | null;
   source_url: string | null;
@@ -1799,7 +1803,9 @@ export async function listLaws(env: Env): Promise<LawSummary[]> {
             MAX(c.law_title) AS law_title,
             MAX(c.parent_law_id) AS parent_law_id,
             MAX(c.doc_type) AS doc_type,
+            MAX(c.instrument) AS instrument,
             MAX(c.instrument_no) AS instrument_no,
+            MAX(c.authority) AS authority,
             MAX(c.issue_date) AS issue_date,
             MAX(c.issue_date_hijri) AS issue_date_hijri,
             MAX(c.source_url) AS source_url,

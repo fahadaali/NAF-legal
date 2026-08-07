@@ -242,7 +242,11 @@ export interface LegalLaw {
   law_title: string | null;
   parent_law_id: string | null;
   doc_type: string | null;
+  /** نوع أداة الإصدار: مرسوم ملكي، قرار مجلس الوزراء… */
+  instrument: string | null;
   instrument_no: string | null;
+  /** الجهة صاحبة النظام. */
+  authority: string | null;
   issue_date: string | null;
   issue_date_hijri: string | null;
   source_url: string | null;

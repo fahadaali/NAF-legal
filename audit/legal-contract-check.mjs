@@ -703,6 +703,63 @@ await check('٩ · نفاذٌ مؤجَّل بتاريخ هجري يُحفظ هج
   assert.equal(part.effective_from_hijri, '1448/01/01');
 });
 
+await check('٩ · سطرٌ بصيغة المواصفة كما هي: `law_name` ونوعٌ عربيّ ورقمٌ عدداً وبنيةُ النظام', async () => {
+  const spec = lib.parseJsonl(
+    line({
+      id: 'نظام-الشركات/art-001', law_id: 'companies', law_name: 'نظام الشركات', doc_type: 'نظام',
+      instrument: 'مرسوم ملكي', instrument_no: 'م/132', authority: 'وزارة التجارة',
+      date_hijri: '1443/01/18هـ', date_gregorian: '2022-08-26', captured_at: '2026-08-01T09:00:00Z',
+      book: 'الباب الأول: أحكام عامة', chapter: 'الفصل الأول', section: 'التمهيد',
+      article_no: 1, article_label: 'المادة الأولى', article_title: 'التعريفات',
+      text: 'يُقصد بالألفاظ الآتية المعاني المبيَّنة أمامها ما لم يقتضِ السياق غير ذلك.',
+      embed_text: 'نظام الشركات — المادة 1 — التعريفات.',
+    })
+  );
+  assert.equal(spec.errors.length, 0, JSON.stringify(spec.errors));
+  const r = spec.rows[0];
+  assert.equal(r.law_title, 'نظام الشركات', '`law_name` لم يُقرأ اسماً للنظام');
+  assert.equal(r.doc_type, 'نظام', 'النوع العربيّ يُخزَّن كما ورد — لا يُترجَم ولا يُرفض');
+  assert.equal(r.article_no, '1', 'الرقم عدداً في الملف يبقى رقماً في القاعدة');
+  assert.equal(r.article_no_norm, '1');
+  assert.equal(r.issue_date, '2022-08-26');
+  assert.equal(r.issue_date_hijri, '1443/01/18هـ');
+  assert.equal(r.instrument, 'مرسوم ملكي');
+  assert.equal(r.authority, 'وزارة التجارة');
+  assert.equal(r.captured_at, '2026-08-01T09:00:00Z');
+  assert.equal(r.book, 'الباب الأول: أحكام عامة');
+  assert.equal(r.chapter, 'الفصل الأول');
+  assert.equal(r.section, 'التمهيد');
+  assert.equal(r.article_title, 'التعريفات');
+  // ما عُرِف لا يتسرّب إلى `meta_json`: هناك ما زاد عن العقد وحده.
+  assert.equal(r.meta_json, null, 'حقلٌ معروف سقط في `meta_json` فلا يُصفّى عليه');
+
+  await lib.upsertLegalChunks(env, spec.rows, { importId: 'imp-spec' });
+  const laws = await lib.listLaws(env);
+  const companies = laws.find((l) => l.law_id === 'companies');
+  assert.equal(companies.instrument, 'مرسوم ملكي', 'أداة الإصدار لا تصل ترويسة النظام');
+  assert.equal(companies.authority, 'وزارة التجارة', 'الجهة لا تصل ترويسة النظام');
+});
+
+await check('٩ · واستدعاء رقمٍ في نظامٍ لا يردّ مادةً تحمل الرقم نفسه من نظامٍ آخر', async () => {
+  // نظام الشركات فيه المادة 1، ونظام العمل فيه مواد بأرقام أخرى. والمصيدة
+  // أن يُستدعى رقمٌ موجودٌ في نظامين، فيُردّ أوّل ما يُطابق الرقم أياً كان نظامه.
+  const clash = lib.parseJsonl(
+    line({
+      id: 'نظام-الشركات/art-074', law_id: 'companies', law_name: 'نظام الشركات', doc_type: 'نظام', article_no: 74,
+      text: 'تُحلّ الشركة بانقضاء المدة المحدَّدة في عقد تأسيسها.',
+      embed_text: 'نظام الشركات — المادة 74 — حلّ الشركة بانقضاء مدتها.',
+    })
+  );
+  await lib.upsertLegalChunks(env, clash.rows, { importId: 'imp-clash' });
+
+  const labor = await lib.getArticle(env, { lawId: 'labor', articleNo: '74' });
+  assert.deepEqual(labor.map((h) => h.id), ['labor:74'], 'مادةُ نظامٍ آخر تسرّبت إلى استدعاءٍ محصور');
+  const companies = await lib.getArticle(env, { lawId: 'companies', articleNo: '74' });
+  assert.deepEqual(companies.map((h) => h.id), ['نظام-الشركات/art-074']);
+  const hits = await lib.searchLegal(env, 'المادة 74', { lawId: 'labor', limit: 10 });
+  assert.ok(!hits.some((h) => h.lawId === 'companies'), 'حصرُ النظام لم يمنع تسرّب مادةٍ من نظامٍ آخر');
+});
+
 await check('٩ · والنفاذ المؤجَّل يُحسب في طبقة الاسترجاع فيبلغ الشاشة والبرومبت معاً', async () => {
   const deferred = lib.parseJsonl(
     [

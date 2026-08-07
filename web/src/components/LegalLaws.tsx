@@ -6,7 +6,7 @@
 // وهي **للاطّلاع لا للتحرير**: المصدر ملفُّ الاستيراد، وتعديلُ مادةٍ هنا
 // يضيع عند أوّل إعادة رفع للنظام — الاستبدال على `id` يكتب فوقها. فما
 // يُصحَّح يُصحَّح في الملف ثم يُعاد استيراده.
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw } from '../lib/api';
 import { formatDate, formatNumber } from '../lib/format';
 import { ArticleCard, ArticleFlags, ArticleNotices, groupArticleParts } from './LegalArticleView';
@@ -40,6 +40,14 @@ const DOC_TYPE_LABELS: Record<string, string> = {
 };
 
 const docTypeLabel = (t: string | null) => (t ? (DOC_TYPE_LABELS[t] ?? t) : '—');
+
+/**
+ * موضع المادة من نظامها: الباب والفصل والعنوان الحرّ.
+ *
+ * نصُّها من الملف كما ورد — «الباب الخامس: علاقات العمل» — فلا لفظَ من عندنا
+ * ولا ترجمة. وفارغُها لا يُنتج عنواناً فارغاً.
+ */
+const sectionHeading = (a: LegalArticle) => [a.book, a.chapter, a.section].filter(Boolean).join(' — ');
 
 export function LegalLaws() {
   const [laws, setLaws] = useState<LegalLaw[] | null>(null);
@@ -196,7 +204,9 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
           <p>
             {[
               docTypeLabel(law.doc_type) === '—' ? null : docTypeLabel(law.doc_type),
-              law.instrument_no,
+              // نوع الأداة ورقمها معاً: «مرسوم ملكي م/51» أداةٌ واحدة لا سطران.
+              [law.instrument, law.instrument_no].filter(Boolean).join(' '),
+              law.authority,
               // التاريخ ميلاديّ يتبعه الهجريّ بين قوسين — تاريخ أداةٍ نظامية.
               law.issue_date && law.issue_date_hijri
                 ? `${law.issue_date} (${law.issue_date_hijri})`
@@ -321,9 +331,22 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
       {/* أجزاء المادة الواحدة تُعرض متتابعةً تحت عنوانٍ واحد: `#a` و`#b` مادةٌ
           واحدة قُسّمت لطولها، وعرضُها مادتين يجعل النظام يبدو ذا مادتين
           برقمٍ واحد. */}
-      {groupArticleParts(articles).map((group) => (
-        <ArticleCard key={group[0].id} group={group} />
-      ))}
+      {groupArticleParts(articles).map((group, i, all) => {
+        /* الباب والفصل عنوانٌ يظهر عند تغيّره لا مع كل مادة: تكرارُه على
+           مئتَي مادة ضجيج، وغيابُه يجعل المواد قائمةً بلا بنية. ونصُّه من
+           الملف كما ورد — لا لفظَ من عندنا. ويظهر في رأس كل صفحة ولو لم
+           يتغيّر عن سابقتها، فقارئُ الصفحة الثانية لم يرَ الأولى. */
+        const heading = sectionHeading(group[0]);
+        const previous = i > 0 ? sectionHeading(all[i - 1][0]) : null;
+        return (
+          <Fragment key={group[0].id}>
+            {heading && (i === 0 || heading !== previous) ? (
+              <div className="kb-section"><bdi>{heading}</bdi></div>
+            ) : null}
+            <ArticleCard group={group} />
+          </Fragment>
+        );
+      })}
 
       {total > PAGE && (
         <div className="law-pager">
