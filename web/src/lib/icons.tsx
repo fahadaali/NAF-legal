@@ -8,6 +8,7 @@
 import {
   Activity,
   ArrowDown,
+  Ban,
   ArrowLeft,
   ArrowUp,
   BadgeCheck,
@@ -31,6 +32,7 @@ import {
   FileType,
   Folder,
   Globe,
+  Hourglass,
   Library,
   LifeBuoy,
   Link2,
@@ -56,6 +58,7 @@ import {
   SlidersHorizontal,
   SpellCheck,
   Square,
+  SquarePen,
   Stamp,
   Sun,
   Swords,
@@ -122,6 +125,11 @@ export const Icon = {
   changesRequested: MessageSquareWarning, // مطلوب تعديلات — وليست CircleX (مرفوض)
   awaitingClarification: CircleHelp,      // بانتظار توضيح — وليست Clock
   accessDenied: ShieldX,   // الوصول مرفوض — وليست CircleX (مرفوض: حكمٌ على مستند)
+  // حالات مراجعة المادة المستوردة — مسجَّلة في naf-icons.md تحت
+  // «مراجعة المحتوى النظامي». والمعتمدة تأخذ `approved` أعلاه فلا صفّ لها.
+  reviewEdited: SquarePen,  // محرَّرة — حالُ نصٍّ بعد التحرير، وليست Pencil (فعل التعديل)
+  reviewExcluded: Ban,      // مستبعدة — مقطعٌ يُخرَج، وليست CircleX (مرفوض: مستند عاد بحكم)
+  reviewDeferred: Hourglass, // مؤجَّلة — وليست Clock (بانتظار المراجعة: الحال التي خرجت منها)
   // الأعضاء والصلاحيات
   permissions: ShieldCheck, // صلاحيات
   members: Users,          // مستخدمو النظام جمعاً — وليست User (عميل فرد)

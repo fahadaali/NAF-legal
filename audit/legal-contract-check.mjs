@@ -24,6 +24,7 @@
 
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -60,6 +61,7 @@ sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0001_init.sql'), 'utf8
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0012_legal_corpus.sql'), 'utf8'));
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0013_legal_versions.sql'), 'utf8'));
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0014_legal_amendments.sql'), 'utf8'));
+sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0015_legal_review.sql'), 'utf8'));
 
 /** بديل D1 بواجهته نفسها فوق node:sqlite. */
 class Prepared {
@@ -813,17 +815,17 @@ await check('٥ · وتُرى في طابور المراجعة وفي تصفّح
 });
 
 await check('٥ · الاعتماد يفتحها للاسترجاع، والتراجع يعيدها إلى الحجب', async () => {
-  assert.equal(await lib.setChunkReviewed(env, 'نظام-العمل/art-240', true, 'مراجع'), true);
+  assert.equal((await lib.reviewChunk(env, 'نظام-العمل/art-240', 'approve', 'مراجع')).ok, true);
   const after = await lib.searchLegal(env, 'عقوبة مخالفة أحكام تشغيل الأحداث', { limit: 10 });
   assert.ok(after.some((h) => h.id === 'نظام-العمل/art-240'), 'الاعتماد لم يرفع الحجب');
-  await lib.setChunkReviewed(env, 'نظام-العمل/art-240', false, 'مراجع');
+  await lib.reviewChunk(env, 'نظام-العمل/art-240', 'undo', 'مراجع');
   const back = await lib.searchLegal(env, 'عقوبة مخالفة أحكام تشغيل الأحداث', { limit: 10 });
   assert.ok(!back.some((h) => h.id === 'نظام-العمل/art-240'), 'التراجع لم يُعِد الحجب');
-  assert.equal(await lib.setChunkReviewed(env, 'مادةٌ لا وجود لها', true, 'مراجع'), false);
+  assert.equal((await lib.reviewChunk(env, 'مادةٌ لا وجود لها', 'approve', 'مراجع')).ok, false);
 });
 
 await check('٥ · واعتمادُ نصٍّ لم يعد هو النصّ ليس اعتماداً: إعادةُ رفعه تُسقطه', async () => {
-  await lib.setChunkReviewed(env, 'نظام-العمل/art-240', true, 'مراجع');
+  await lib.reviewChunk(env, 'نظام-العمل/art-240', 'approve', 'مراجع');
   const changed = lib.parseJsonl(
     line({
       id: 'نظام-العمل/art-240', law_id: 'labor', doc_type: 'law', article_no: 240,
@@ -834,9 +836,10 @@ await check('٥ · واعتمادُ نصٍّ لم يعد هو النصّ ليس 
     })
   );
   await lib.upsertLegalChunks(env, changed.rows, { importId: 'imp-again' });
-  const row = q('SELECT reviewed_at, reviewed_by FROM legal_chunks WHERE id = ?', 'نظام-العمل/art-240')[0];
+  const row = q('SELECT reviewed_at, reviewed_by, review_status FROM legal_chunks WHERE id = ?', 'نظام-العمل/art-240')[0];
   assert.equal(row.reviewed_at, null, 'الاعتماد بقي على نصٍّ تغيّر');
   assert.equal(row.reviewed_by, null);
+  assert.equal(row.review_status, 'pending', 'المادة لم تعد إلى الطابور بعد تغيّر نصّها');
 });
 
 await check('٦ · التنبيه الإلزامي يرافق النتيجة ويبلغ البرومبت لا الشاشة وحدها', async () => {
@@ -860,8 +863,8 @@ await check('٦ · ولا تنبيه على مادةٍ طُبِّق تعديله
 });
 
 await check('٧ · استدعاء رقمٍ مكرّر يردّ كل سجلاته مرتّبةً لا الأول وحده', async () => {
-  await lib.setChunkReviewed(env, 'نظام-العمل/art-121', true, 'مراجع');
-  await lib.setChunkReviewed(env, 'نظام-العمل/art-121--dup2', true, 'مراجع');
+  await lib.reviewChunk(env, 'نظام-العمل/art-121', 'approve', 'مراجع');
+  await lib.reviewChunk(env, 'نظام-العمل/art-121--dup2', 'approve', 'مراجع');
   const hits = await lib.getArticle(env, { lawId: 'labor', articleNo: '121' });
   assert.equal(hits.length, 2, 'المادة المضافة بمرسومٍ معدِّل اختفت من النتائج');
   assert.deepEqual(hits.map((h) => h.id), ['نظام-العمل/art-121', 'نظام-العمل/art-121--dup2']);
@@ -877,10 +880,10 @@ await check('٧ · ولاحقة `--dup` سجلٌّ مستقلّ لا نسخةٌ 
 });
 
 await check('٧ · والمحجوب لا يدخل مع أخواته: الضمّ يمرّ بالتصفية نفسها', async () => {
-  await lib.setChunkReviewed(env, 'نظام-العمل/art-121--dup2', false, 'مراجع');
+  await lib.reviewChunk(env, 'نظام-العمل/art-121--dup2', 'undo', 'مراجع');
   const hits = await lib.getArticle(env, { lawId: 'labor', articleNo: '121' });
   assert.deepEqual(hits.map((h) => h.id), ['نظام-العمل/art-121']);
-  await lib.setChunkReviewed(env, 'نظام-العمل/art-121--dup2', true, 'مراجع');
+  await lib.reviewChunk(env, 'نظام-العمل/art-121--dup2', 'approve', 'مراجع');
 });
 
 await check('٨ · سجلّ التحديث يأخذ تاريخه من `amended_on` وينسب التغيير إلى أداته', async () => {
@@ -989,7 +992,7 @@ await check('٩ · ونافذة التعديلات تُقرأ بطلبٍ صري�
   // تُعاد المادة إلى صورتها في الملف ثم تُعتمد: الفحص السابق أعاد رفعها بنصٍّ
   // آخر بلا نافذة تعديل، فأسقط النافذة والاعتماد معاً — وهو الصواب.
   await lib.upsertLegalChunks(env, lib.parseJsonl(AMEND[2]).rows, { importId: 'imp-restore' });
-  await lib.setChunkReviewed(env, 'نظام-العمل/art-240', true, 'مراجع');
+  await lib.reviewChunk(env, 'نظام-العمل/art-240', 'approve', 'مراجع');
   const amendment = await lib.getChunkAmendment(env, 'نظام-العمل/art-240');
   assert.match(amendment.amendments_raw, /مرسومٌ واحد يعدّل عدة مواد/);
   assert.match(amendment.amend_note, /تعديل جماعي/);
@@ -998,6 +1001,248 @@ await check('٩ · ونافذة التعديلات تُقرأ بطلبٍ صري�
   assert.ok(hit, 'المادة اعتُمدت فينبغي أن تظهر');
   assert.equal('amendments_raw' in hit, false, 'النصّ الخام تسرّب إلى نتيجة البحث');
   assert.equal('text_superseded' in hit, false, 'النصّ المنسوخ تسرّب إلى نتيجة البحث');
+});
+
+// ── وحدة مراجعة المواد ──
+//
+// مواصفةٌ مستقلّة تُبنى فوق الاستيراد بلا تعديل عليه. ومبدؤها الحاكم الفصل
+// التام: المراجعة لا توقف شيئاً — الجاهز يعمل والطابور ينتظر.
+
+const REVIEW = [
+  // ملغاة وموسومة للمراجعة معاً: **لا تدخل الطابور**. الإلغاء قرارٌ نظاميّ
+  // لا اجتهادٌ يُراجَع، وإغراقُ المراجع بالملغاة يُخفي تحتها ما يستحقّ نظره.
+  line({
+    id: 'مراجعة/ملغاة', law_id: 'review', law_name: 'نظام المراجعة', doc_type: 'نظام', article_no: 1,
+    is_repealed: true, needs_review: true, amendment_kind: 'إلغاء',
+    text: 'نصٌّ ملغى بمرسومٍ لاحق ولا يُستشهد به.',
+    embed_text: 'نظام المراجعة — المادة 1 — نصّ ملغى.',
+  }),
+  // جاهزة: تدخل الاسترجاع فور الاستيراد ولا تنتظر أحداً.
+  line({
+    id: 'مراجعة/جاهزة', law_id: 'review', law_name: 'نظام المراجعة', doc_type: 'نظام', article_no: 2,
+    text: 'تسري أحكام هذا النظام على جميع منشآت القطاع الخاص.',
+    embed_text: 'نظام المراجعة — المادة 2 — نطاق سريان النظام على منشآت القطاع الخاص.',
+  }),
+  // مشبوهة الاقتطاع: نصُّها أقصر من نصف سابقه.
+  line({
+    id: 'مراجعة/مقتطعة', law_id: 'review', law_name: 'نظام المراجعة', doc_type: 'نظام', article_no: 3,
+    needs_review: true, amendment_kind: 'استبدال', captured_at: '2026-08-01T09:00:00Z',
+    text: 'يلتزم صاحب العمل.',
+    text_superseded: 'يلتزم صاحب العمل بتوفير بيئة عملٍ آمنة، وبتدريب العاملين على وسائل الوقاية، وبتوفير أدواتها كاملةً على نفقته، وبمتابعة تطبيقها متابعةً دورية.',
+    embed_text: 'نظام المراجعة — المادة 3 — التزامات صاحب العمل.',
+  }),
+  // تسرّب ديباجة المرسوم إلى متن المادة.
+  line({
+    id: 'مراجعة/ديباجة', law_id: 'review', law_name: 'نظام المراجعة', doc_type: 'نظام', article_no: 4,
+    needs_review: true, amendment_kind: 'غير مصنَّف', captured_at: '2026-08-01T09:00:00Z',
+    text: 'بموجب المرسوم الملكي رقم م/44 تُعدَّل المادة الرابعة لتكون بالنص الآتي: يُحدَّد أجر العامل بعقدٍ مكتوب.',
+    embed_text: 'نظام المراجعة — المادة 4 — تحديد أجر العامل بعقد مكتوب.',
+  }),
+  // تعديل جماعي — بالشدّة كما يكتبها المصدر.
+  line({
+    id: 'مراجعة/جماعي', law_id: 'review', law_name: 'نظام المراجعة', doc_type: 'نظام', article_no: 5,
+    needs_review: true, amendment_kind: 'تعديل جماعي', has_amendments: true, amendment_applied: false,
+    text: 'تُطبَّق العقوبات المنصوص عليها في الجدول المرفق.',
+    embed_text: 'نظام المراجعة — المادة 5 — العقوبات والجدول المرفق.',
+  }),
+  // أختا رقمٍ واحد: الحكم عليهما لا يصحّ إلا مجتمعتين.
+  line({
+    id: 'مراجعة/art-9', law_id: 'review', law_name: 'نظام المراجعة', doc_type: 'نظام', article_no: 9,
+    needs_review: true, is_duplicate: true, duplicate_of: 'مراجعة/art-9', duplicate_index: 1,
+    text: 'تُحسب مدة الخدمة من تاريخ المباشرة.',
+    embed_text: 'نظام المراجعة — المادة 9 — احتساب مدة الخدمة.',
+  }),
+  line({
+    id: 'مراجعة/art-9--dup2', law_id: 'review', law_name: 'نظام المراجعة', doc_type: 'نظام', article_no: 9,
+    needs_review: true, is_duplicate: true, duplicate_of: 'مراجعة/art-9', duplicate_index: 2,
+    text: 'لا تُحتسب مدة الانقطاع ضمن مدة الخدمة.',
+    embed_text: 'نظام المراجعة — المادة 9 مكرر — استثناء مدة الانقطاع.',
+  }),
+];
+
+const review = lib.parseJsonl(REVIEW.join('\n'));
+await lib.upsertLegalChunks(env, review.rows, { importId: 'imp-review' });
+await lib.embedPending(env, 100);
+
+await check('١٠ · الفصل التام: الجاهزة تعمل فوراً والطابور ممتلئ', async () => {
+  const hits = await lib.searchLegal(env, 'نطاق سريان النظام على منشآت القطاع الخاص', { limit: 10 });
+  assert.ok(hits.some((h) => h.id === 'مراجعة/جاهزة'), 'مادةٌ جاهزة انتظرت فراغ المراجع');
+  const { total } = await lib.listReviewQueue(env, { lawId: 'review', limit: 50 });
+  assert.ok(total > 0, 'الطابور فارغ فلا معنى للفحص');
+});
+
+await check('١٠ · والملغاة لا تدخل الطابور ولا الاسترجاع', async () => {
+  const { articles } = await lib.listReviewQueue(env, { lawId: 'review', limit: 50 });
+  assert.ok(!articles.some((a) => a.id === 'مراجعة/ملغاة'), 'ملغاةٌ أُدخلت الطابور فأغرقت المراجع');
+  const hits = await lib.searchLegal(env, 'نصّ ملغى', { limit: 10 });
+  assert.ok(!hits.some((h) => h.id === 'مراجعة/ملغاة'));
+});
+
+await check('١١ · الطوابير تُعرَّف بشروطها على الحقول، وعدّاداتها استعلامٌ حيّ', async () => {
+  const counts = await lib.reviewQueueCounts(env, { lawId: 'review' });
+  const by = Object.fromEntries(counts.map((c) => [c.key, c]));
+  assert.equal(by.truncated.pending, 1, 'شرط الاقتطاع: أقصر من نصف سابقه');
+  assert.equal(by.preamble.pending, 1, 'شرط الديباجة: «بموجب المرسوم» أو «لتكون بالنص»');
+  assert.equal(by.collective.pending, 1, '«تعديل جماعي» لم يُطابَق');
+  assert.equal(by.unclassified.pending, 1, '«غير مصنَّف» بالشدّة لم يُطابَق مطبَّعاً');
+  assert.equal(by.duplicate.pending, 2, 'أختا الرقم الواحد كلتاهما في الطابور');
+  // كلُّها تخصّ نظام المراجعة وحده — الترشيح يعمل.
+  assert.equal(by.truncated.done, 0);
+});
+
+await check('١١ · والعدّاد يتغيّر بالقرار لا يبقى على رقمه الأول', async () => {
+  const before = (await lib.reviewQueueCounts(env, { lawId: 'review' })).find((c) => c.key === 'collective');
+  await lib.reviewChunk(env, 'مراجعة/جماعي', 'defer', 'مراجع');
+  const after = (await lib.reviewQueueCounts(env, { lawId: 'review' })).find((c) => c.key === 'collective');
+  assert.equal(after.pending, before.pending - 1, 'المؤجَّلة بقيت في الطابور');
+  assert.equal(after.done, before.done + 1, 'المنجز لم يزد');
+  const hits = await lib.searchLegal(env, 'العقوبات والجدول المرفق', { limit: 10 });
+  assert.ok(!hits.some((h) => h.id === 'مراجعة/جماعي'), 'المؤجَّلة دخلت الاسترجاع');
+});
+
+await check('١٢ · الاعتماد يُدخل المادة الاسترجاع في الحال', async () => {
+  const before = await lib.searchLegal(env, 'تحديد أجر العامل بعقد مكتوب', { limit: 10 });
+  assert.ok(!before.some((h) => h.id === 'مراجعة/ديباجة'));
+  const res = await lib.reviewChunk(env, 'مراجعة/ديباجة', 'approve', 'مراجع');
+  assert.equal(res.status, 'approved');
+  const after = await lib.searchLegal(env, 'تحديد أجر العامل بعقد مكتوب', { limit: 10 });
+  assert.ok(after.some((h) => h.id === 'مراجعة/ديباجة'), 'الاعتماد لم يُدخلها الاسترجاع');
+});
+
+await check('١٣ · التحرير يعيد بناء نصّ التضمين ومتجهه، والبحث يطابق الجديد لا القديم', async () => {
+  const NEW = 'يُحدَّد أجر العامل بعقدٍ مكتوب، ويُسلَّم بالتحويل البنكي في موعدٍ ثابت.';
+  const res = await lib.reviewChunk(env, 'مراجعة/ديباجة', 'edit', 'مراجع', { text: NEW });
+  assert.equal(res.status, 'edited');
+  assert.equal(res.reembedded, true, 'التحرير لم يُعِد المقطع إلى طابور التضمين');
+
+  const row = q("SELECT text, embed_text, text_original_import, embedded_at FROM legal_chunks WHERE id = 'مراجعة/ديباجة'")[0];
+  assert.equal(row.text, NEW);
+  assert.match(row.text_original_import, /بموجب المرسوم/, 'أصلُ الاستيراد لم يُحفظ قبل التحرير');
+  assert.match(row.embed_text, /نظام المراجعة/, 'نصّ التضمين لم يُبنَ باسم النظام');
+  assert.match(row.embed_text, new RegExp('المادة 4'), 'نصّ التضمين بلا رقم المادة');
+  assert.ok(row.embed_text.endsWith(NEW), 'نصّ التضمين لا ينتهي بالنصّ المحرَّر');
+  assert.equal(row.embedded_at, null, 'المقطع لم يُعَد إلى طابور التضمين');
+
+  await lib.embedPending(env, 50);
+  // اللفظيّ: يجد الجديد ولا يجد القديم — محفّز الفهرس عمل مع الكتابة.
+  const fresh = await lib.searchLegal(env, 'التحويل البنكي في موعد ثابت', { limit: 10, lexicalOnly: true });
+  assert.ok(fresh.some((h) => h.id === 'مراجعة/ديباجة'), 'البحث لا يجد النصّ المحرَّر');
+  const stale = await lib.searchLegal(env, 'بموجب المرسوم الملكي', { limit: 10, lexicalOnly: true });
+  assert.ok(!stale.some((h) => h.id === 'مراجعة/ديباجة'), 'البحث ما زال يطابق النصّ القديم');
+});
+
+await check('١٣ · والتحرير الثاني لا يمحو أصلَ الاستيراد', async () => {
+  await lib.reviewChunk(env, 'مراجعة/ديباجة', 'edit', 'مراجع', { text: 'صياغةٌ ثالثة للمادة الرابعة.' });
+  const row = q("SELECT text_original_import FROM legal_chunks WHERE id = 'مراجعة/ديباجة'")[0];
+  assert.match(row.text_original_import, /بموجب المرسوم/, 'صار «الأصل» آخرَ ما حُرِّر لا ما جاء من المصدر');
+});
+
+await check('١٤ · التراجع يُرجع نصّ الاستيراد ويعيد المادة إلى الطابور', async () => {
+  const res = await lib.reviewChunk(env, 'مراجعة/ديباجة', 'undo', 'مراجع');
+  assert.equal(res.status, 'pending');
+  const row = q("SELECT text, text_original_import, review_status FROM legal_chunks WHERE id = 'مراجعة/ديباجة'")[0];
+  assert.match(row.text, /بموجب المرسوم/, 'التراجع لم يُرجع النصّ الأصلي');
+  assert.equal(row.text_original_import, null);
+  assert.equal(row.review_status, 'pending');
+  const hits = await lib.searchLegal(env, 'التحويل البنكي في موعد ثابت', { limit: 10, lexicalOnly: true });
+  assert.ok(!hits.some((h) => h.id === 'مراجعة/ديباجة'), 'النصّ المحرَّر بقي في الفهرس بعد التراجع');
+});
+
+await check('١٥ · كل تغيير مقيَّد في سجلّ التدقيق بصاحبه ووقته وقيمتَيه', async () => {
+  const entries = await lib.listReviewAudit(env, { chunkId: 'مراجعة/ديباجة', limit: 50 });
+  assert.ok(entries.length >= 4, 'السجلّ لا يحفظ كل قرار');
+  assert.ok(entries.every((e) => e.actor_id === 'مراجع' && e.at > 0));
+  const statuses = entries.filter((e) => e.field === 'review_status').map((e) => e.new_value);
+  assert.deepEqual(statuses, ['pending', 'edited', 'edited', 'approved'], 'تسلسل القرارات غير محفوظ');
+  const texts = entries.filter((e) => e.field === 'text');
+  assert.ok(texts.length >= 2 && texts.every((e) => e.old_value && e.new_value), 'تغيّر النصّ بلا قيمتيه');
+});
+
+await check('١٦ · الاستبعاد يبقيها محجوبة، والملاحظة تُحفظ بلا تغيير الحال', async () => {
+  await lib.reviewChunk(env, 'مراجعة/مقتطعة', 'exclude', 'مراجع', { note: 'اقتطاعٌ في السحب — يُعاد سحبها.' });
+  const row = q("SELECT review_status, review_note FROM legal_chunks WHERE id = 'مراجعة/مقتطعة'")[0];
+  assert.equal(row.review_status, 'rejected');
+  assert.match(row.review_note, /اقتطاع/);
+  const hits = await lib.searchLegal(env, 'التزامات صاحب العمل', { limit: 10 });
+  assert.ok(!hits.some((h) => h.id === 'مراجعة/مقتطعة'), 'المستبعدة دخلت الاسترجاع');
+
+  await lib.reviewChunk(env, 'مراجعة/مقتطعة', 'note', 'مراجع', { note: 'روجعت مع المصدر.' });
+  const after = q("SELECT review_status, review_note FROM legal_chunks WHERE id = 'مراجعة/مقتطعة'")[0];
+  assert.equal(after.review_status, 'rejected', 'الملاحظة غيّرت الحال');
+  assert.match(after.review_note, /روجعت/);
+});
+
+await check('١٧ · لوحة الحال تقرأ الاسترجاع بشرطَيه لا بجمعٍ يدويّ', async () => {
+  const d = await lib.reviewDashboard(env);
+  const inDb = q('SELECT COUNT(*) AS n FROM legal_chunks')[0].n;
+  assert.equal(d.chunks, inDb);
+  assert.equal(
+    d.retrievable,
+    q(`SELECT COUNT(*) AS n FROM legal_chunks c WHERE c.is_repealed = 0 AND c.status IN ('active','amended')
+        AND (c.needs_review = 0 OR c.review_status IN ('approved','edited'))`)[0].n
+  );
+  assert.equal(d.in_queue, q(`SELECT COUNT(*) AS n FROM legal_chunks c
+      WHERE c.needs_review = 1 AND c.review_status = 'pending' AND c.is_repealed = 0 AND c.status <> 'repealed'`)[0].n);
+  assert.ok(d.rejected >= 1 && d.deferred >= 1);
+  assert.ok(d.last_activity > 0, 'اللوحة لا تعرف آخر نشاط');
+  assert.equal(d.queues.length, 7, 'الطوابير سبعة');
+});
+
+await check('١٨ · الترشيح بنظامٍ واحد أو بدفعة استيرادٍ واحدة', async () => {
+  const byLaw = await lib.listReviewQueue(env, { lawId: 'review', limit: 50 });
+  assert.ok(byLaw.articles.every((a) => a.lawId === 'review'));
+  const byBatch = await lib.listReviewQueue(env, { capturedAt: '2026-08-01T09:00:00Z', limit: 50 });
+  assert.ok(byBatch.total >= 1, 'الترشيح بدفعة الاستيراد لا يجد شيئاً');
+  assert.ok(byBatch.articles.every((a) => a.lawId === 'review'));
+  const batches = await lib.listCaptureBatches(env);
+  assert.ok(batches.some((b) => b.captured_at === '2026-08-01T09:00:00Z'));
+});
+
+await check('١٨ · واستيراد نظامٍ جديد تدخل مواده الطوابير تلقائياً', async () => {
+  const before = (await lib.reviewQueueCounts(env)).find((c) => c.key === 'unclassified').pending;
+  const fresh = lib.parseJsonl(
+    line({
+      id: 'نظام-جديد/art-001', law_id: 'brand-new', law_name: 'نظامٌ استُورد للتوّ', doc_type: 'نظام',
+      article_no: 1, needs_review: true, amendment_kind: 'غير مصنَّف',
+      text: 'مادةٌ من نظامٍ لم يكن في القاعدة قبل لحظة.',
+      embed_text: 'نظامٌ استُورد للتوّ — المادة 1.',
+    })
+  );
+  await lib.upsertLegalChunks(env, fresh.rows, { importId: 'imp-new' });
+  const after = (await lib.reviewQueueCounts(env)).find((c) => c.key === 'unclassified').pending;
+  assert.equal(after, before + 1, 'مواد نظامٍ جديد لم تدخل الطابور بلا تعديلٍ في الشاشة');
+});
+
+await check('١٩ · الاعتماد لا يحذف نافذة التعديلات ولا النصّ السابق — هما أثرُ القرار', async () => {
+  const before = q("SELECT amendments_raw, text_superseded FROM legal_chunks WHERE id = 'مراجعة/جماعي'")[0];
+  await lib.reviewChunk(env, 'مراجعة/جماعي', 'approve', 'مراجع');
+  await lib.reviewChunk(env, 'مراجعة/جماعي', 'edit', 'مراجع', { text: 'صياغةٌ يعتمدها المراجع.' });
+  const after = q("SELECT amendments_raw, text_superseded FROM legal_chunks WHERE id = 'مراجعة/جماعي'")[0];
+  assert.equal(after.amendments_raw, before.amendments_raw, 'نافذة التعديلات ضاعت بعد الاعتماد');
+  assert.equal(after.text_superseded, before.text_superseded, 'النصّ السابق ضاع بعد التحرير');
+});
+
+await check('١٩ · ولا اعتماد بالجملة: القرار يقع على مادةٍ بعينها بمعرّفها', async () => {
+  // الاعتماد الجماعي بلا قراءة يُفرغ المراجعة من معناها. والمنع في المسار
+  // نفسه: معرّفٌ واحد في العنوان، ولا مسار يقبل قائمة ولا شاشةَ تعرض زرّاً
+  // يعتمد الطابور كلَّه.
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  // كلُّ ما يكتب في المراجعة مسارٌ واحد على معرّفٍ واحد. و`/review/batches`
+  // قراءةٌ لدفعات الاستيراد للترشيح، لا كتابةً على دفعة.
+  const writers = [...routes.matchAll(/app\.post\('(\/review[^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(writers, ['/review/:id'], 'ظهر مسارُ كتابةٍ ثانٍ في المراجعة');
+  const screen = readFileSync(path.join(ROOT, 'web', 'src', 'components', 'LegalReview.tsx'), 'utf8');
+  assert.ok(!/اعتماد الكل|اعتماد الطابور|approveAll/.test(screen), 'ظهر زرُّ اعتمادٍ جماعي في الشاشة');
+  // ومادةٌ لا تُعتمد بمرور الوقت: لا مسار ولا مهمّة تُغيّر الحال بلا فاعل.
+  const cron = readFileSync(path.join(ROOT, 'src', 'cron.ts'), 'utf8');
+  assert.ok(!/review_status/.test(cron), 'الـCron يمسّ حال المراجعة');
+});
+
+await check('١٩ · أخوات الرقم تُعرض مجتمعة في الطابور لا فرادى', async () => {
+  const { articles } = await lib.listReviewQueue(env, { queue: 'duplicate', lawId: 'review', limit: 50 });
+  const group = articles.filter((a) => a.duplicateOf === 'مراجعة/art-9');
+  assert.equal(group.length, 2, 'الحكم على أخوات الرقم لا يصحّ إلا مجتمعة');
+  assert.deepEqual(group.map((a) => a.duplicateIndex), [1, 2]);
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');

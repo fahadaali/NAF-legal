@@ -20,9 +20,14 @@ import {
   listLaws,
   listLawArticles,
   listReviewQueue,
-  setChunkReviewed,
+  listReviewAudit,
+  listCaptureBatches,
+  reviewChunk,
+  reviewDashboard,
   getLawWithRegulations,
   legalStats,
+  type ReviewAction,
+  type ReviewQueueKey,
 } from '../lib/legal';
 import type { Env, Variables } from '../types';
 
@@ -40,6 +45,14 @@ const MAX_REPORTED_ERRORS = 50;
  * ليالٍ ليعمل نصفُ بحثه.
  */
 const IMPORT_EMBED_BUDGET = 500;
+
+/**
+ * كم مقطعاً يُضمَّن بعد قرار مراجعة.
+ *
+ * التحرير يمسّ مادةً واحدة، فالسقف صغير — لكنه ليس واحداً: قد يكون في
+ * الطابور معلَّقٌ من قبل، وتصريفُه مع الحفظ أرخص من انتظار الليل.
+ */
+const REVIEW_EMBED_BUDGET = 25;
 
 /**
  * استيراد JSONL — سطر واحد = مقطع واحد.
@@ -182,33 +195,72 @@ app.get('/imports', requireAdmin, async (c) => {
  * ما ينتظر المراجعة البشرية.
  *
  * وهذا المسار وحده يراه: البحث والمحادثة والتقارير لا يصلها المحجوب، لأن
- * الحجب في SQL داخل طبقة الاسترجاع.
+ * الحجب في SQL داخل طبقة الاسترجاع. و`queue` يحصره في طابورٍ بعينه،
+ * و`law_id` و`captured_at` و`doc_type` تحصره في نظامٍ أو دفعةٍ أو نوع.
  */
 app.get('/review', requireAdmin, async (c) => {
   const { articles, total } = await listReviewQueue(c.env, {
+    queue: (c.req.query('queue') as ReviewQueueKey) || null,
     lawId: c.req.query('law_id') ?? null,
+    capturedAt: c.req.query('captured_at') ?? null,
+    docType: c.req.query('doc_type') ?? null,
     offset: Number(c.req.query('offset') ?? 0),
     limit: Number(c.req.query('limit') ?? 25),
   });
   return c.json({ articles, total });
 });
 
+/** لوحة حال المراجعة وعدّادات الطوابير — استعلامٌ حيّ لا رقمٌ محفوظ. */
+app.get('/review/dashboard', requireAdmin, async (c) =>
+  c.json(
+    await reviewDashboard(c.env, {
+      lawId: c.req.query('law_id') ?? null,
+      capturedAt: c.req.query('captured_at') ?? null,
+      docType: c.req.query('doc_type') ?? null,
+    })
+  )
+);
+
+/** دفعات الاستيراد المتاحة للترشيح. */
+app.get('/review/batches', requireAdmin, async (c) => c.json({ batches: await listCaptureBatches(c.env) }));
+
+/** سجلّ التدقيق: لمادةٍ بعينها بـ`?chunk_id=`، أو آخر ما وقع في المنصة. */
+app.get('/review/audit', requireAdmin, async (c) =>
+  c.json({
+    entries: await listReviewAudit(c.env, {
+      chunkId: c.req.query('chunk_id') ?? null,
+      limit: Number(c.req.query('limit') ?? 50),
+    }),
+  })
+);
+
 /**
- * اعتماد مادةٍ محجوبة أو ردُّها إلى الحجب.
+ * قرار المراجع على مادة: اعتماد · تحرير واعتماد · استبعاد · تأجيل · ملاحظة · تراجع.
  *
- * الاعتماد قرارُ إنسانٍ على مادةٍ بعينها: يرفع الحجب عنها وحدها، ويسقط
- * وحدَه إن تغيّر نصُّها أو نافذةُ تعديلها في استيرادٍ لاحق — فاعتمادُ نصٍّ
- * لم يعد هو النصّ ليس اعتماداً.
+ * قرارٌ على مادةٍ بعينها لا على نظامها ولا على نوعها. ويسقط وحدَه إن تغيّر
+ * نصُّها أو نافذةُ تعديلها في استيرادٍ لاحق — فاعتمادُ نصٍّ لم يعد هو النصّ
+ * ليس اعتماداً. وكلُّ تغيير يُقيَّد في سجلّ التدقيق.
  */
 app.post('/review/:id', requireAdmin, async (c) => {
   // الوسيط يُفقد Hono استنتاجَ نوع المعامل، فيُقرأ بقيمة احتياطية فارغة —
   // ومعرّفٌ فارغ لا يجد مادة، فيُردّ ٤٠٤ كما لو طُلبت مادةٌ غير موجودة.
   const id = c.req.param('id') ?? '';
-  const reviewed = c.req.query('reviewed') !== '0';
-  const ok = await setChunkReviewed(c.env, id, reviewed, c.get('user').id);
-  if (!ok) return c.json({ error: 'المادة غير موجودة' }, 404);
-  await audit(c, 'legal.review', id, { reviewed });
-  return c.json({ ok: true, id, reviewed });
+  const body = await c.req.json<{ action?: string; text?: string; note?: string }>().catch(() => ({}) as any);
+  const action = (body.action ?? 'approve') as ReviewAction;
+  if (!['approve', 'edit', 'exclude', 'defer', 'note', 'undo'].includes(action)) {
+    return c.json({ error: 'الإجراء غير معروف' }, 400);
+  }
+
+  const result = await reviewChunk(c.env, id, action, c.get('user').id, { text: body.text, note: body.note });
+  if (!result.ok) return c.json({ error: result.error }, result.error === 'المادة غير موجودة' ? 404 : 400);
+
+  await audit(c, 'legal.review', id, { action, status: result.status });
+  // التضمين بعد الردّ: الكتابة هي العقد، والمتجه يلحق بها. وما لم يلحق في
+  // هذا الطلب يبقى معلَّقاً ويصرّفه الـCron — والبحث اللفظي محدَّثٌ سلفاً
+  // لأن محفّز الفهرس يعمل مع الكتابة نفسها.
+  if (result.reembedded) c.executionCtx.waitUntil(embedPending(c.env, REVIEW_EMBED_BUDGET).then(() => {}));
+
+  return c.json({ ok: true, id, status: result.status, reembedded: !!result.reembedded });
 });
 
 /**

@@ -293,10 +293,70 @@ export interface LegalArticle {
   amendmentApplied: boolean;
   needsReview: boolean;
   reviewedAt: number | null;
+  /** `pending` · `approved` · `edited` · `rejected` · `deferred`. */
+  reviewStatus: string;
+  reviewNote: string | null;
+  /** حُرِّر نصُّها، فأصلُ الاستيراد محفوظ ويمكن الرجوع إليه. */
+  wasEdited: boolean;
   amendmentInstrument: string | null;
   amendedOn: string | null;
   amendmentsCount: number | null;
   amendNote: string | null;
+}
+
+/** قرار المراجع على مادة. */
+export type ReviewAction = 'approve' | 'edit' | 'exclude' | 'defer' | 'note' | 'undo';
+
+/** مرشّحات الطابور: نظامٌ واحد، أو دفعة استيراد، أو نوع. */
+export interface ReviewFilters {
+  queue?: string | null;
+  lawId?: string | null;
+  capturedAt?: string | null;
+  docType?: string | null;
+}
+
+function reviewQuery(f: ReviewFilters, offset?: number, limit?: number): string {
+  const p = new URLSearchParams();
+  if (f.queue) p.set('queue', f.queue);
+  if (f.lawId) p.set('law_id', f.lawId);
+  if (f.capturedAt) p.set('captured_at', f.capturedAt);
+  if (f.docType) p.set('doc_type', f.docType);
+  if (offset !== undefined) p.set('offset', String(offset));
+  if (limit !== undefined) p.set('limit', String(limit));
+  return p.toString();
+}
+
+/** عدّاد طابورٍ واحد: المنجز من الإجمالي. */
+export interface QueueCount {
+  key: string;
+  pending: number;
+  done: number;
+}
+
+/** لوحة حال المراجعة. */
+export interface ReviewDashboard {
+  chunks: number;
+  retrievable: number;
+  in_queue: number;
+  approved: number;
+  edited: number;
+  rejected: number;
+  deferred: number;
+  repealed: number;
+  last_activity: number | null;
+  queues: QueueCount[];
+}
+
+/** قيدٌ في سجلّ التدقيق: الحقل، وقيمتاه، وصاحبه، ووقته. */
+export interface ReviewAuditEntry {
+  id: string;
+  chunk_id: string;
+  law_id: string | null;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  actor_id: string | null;
+  at: number;
 }
 
 /** نافذة التعديلات الخام — تُقرأ بطلبٍ صريح ولا تأتي مع نتائج البحث. */
@@ -526,15 +586,24 @@ export const api = {
     ),
   legalImports: () => req<{ imports: LegalImportRecord[] }>('/legal/imports'),
   /** ما ينتظر المراجعة — هذا المسار وحده يراه، والبحث لا يصله. */
-  legalReviewQueue: (lawId?: string | null, offset = 0, limit = 25) =>
-    req<{ articles: LegalArticle[]; total: number }>(
-      `/legal/review?offset=${offset}&limit=${limit}${lawId ? `&law_id=${encodeURIComponent(lawId)}` : ''}`
+  legalReviewQueue: (filters: ReviewFilters = {}, offset = 0, limit = 25) =>
+    req<{ articles: LegalArticle[]; total: number }>(`/legal/review?${reviewQuery(filters, offset, limit)}`),
+  /** لوحة الحال وعدّادات الطوابير — استعلامٌ حيّ عند كل فتح. */
+  legalReviewDashboard: (filters: ReviewFilters = {}) =>
+    req<ReviewDashboard>(`/legal/review/dashboard?${reviewQuery(filters)}`),
+  /** دفعات الاستيراد المتاحة للترشيح. */
+  legalCaptureBatches: () =>
+    req<{ batches: { captured_at: string; chunks: number }[] }>('/legal/review/batches'),
+  /** سجلّ التدقيق: لمادةٍ بعينها أو لآخر ما وقع. */
+  legalReviewAudit: (chunkId?: string | null, limit = 50) =>
+    req<{ entries: ReviewAuditEntry[] }>(
+      `/legal/review/audit?limit=${limit}${chunkId ? `&chunk_id=${encodeURIComponent(chunkId)}` : ''}`
     ),
-  /** اعتماد مادةٍ محجوبة أو ردُّها إلى الحجب. */
-  legalSetReviewed: (id: string, reviewed: boolean) =>
-    req<{ ok: true; id: string; reviewed: boolean }>(
-      `/legal/review/${encodeURIComponent(id)}?reviewed=${reviewed ? '1' : '0'}`,
-      { method: 'POST' }
+  /** قرار المراجع: اعتماد · تحرير واعتماد · استبعاد · تأجيل · ملاحظة · تراجع. */
+  legalReview: (id: string, action: ReviewAction, body: { text?: string; note?: string } = {}) =>
+    req<{ ok: true; id: string; status: string; reembedded: boolean }>(
+      `/legal/review/${encodeURIComponent(id)}`,
+      { method: 'POST', body: JSON.stringify({ action, ...body }) }
     ),
   /** نافذة التعديلات الخام — تُطلب عند فتحها لا مع كل نتيجة. */
   legalAmendment: (id: string) =>
