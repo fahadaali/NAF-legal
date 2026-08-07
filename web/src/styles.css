@@ -632,8 +632,40 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .law-head p { margin: 0 0 var(--space-1); color: var(--muted-foreground); font-size: 0.875rem; }
 /* المادة كتلةُ قراءة لا صفَّ جدول: نصّها فقرةٌ تُقرأ، وسطرُها قد يطول. */
 .legal-article { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
-.legal-article h4 { margin: 0 0 var(--space-2); font-size: 0.875rem; display: flex; align-items: center; gap: var(--space-2); }
+/* الشارات تلتفّ ولا تخرج: مادةٌ منسوخة بانتظار المراجعة برقمٍ مكرّر تحمل
+   ثلاث شارات، وسطرٌ لا يلتفّ يدفعها خارج الشاشة عند 375px. */
+.legal-article h4 { margin: 0 0 var(--space-2); font-size: 0.875rem; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .legal-article p { margin: 0; line-height: var(--leading-relaxed, 1.9); white-space: pre-wrap; }
+/* أجزاء المادة الواحدة فقراتٌ متتابعة تحت عنوانٍ واحد، يفصل بينها فراغٌ
+   ولا يفصل بينها عنوان. */
+.legal-article p + p { margin-top: var(--space-3); }
+/* عنوان المادة يتبع رقمها ولا ينافسه: «التعريفات» بعد «المادة 1». */
+.legal-article-title { color: var(--muted-foreground); font-weight: 400; }
+/* ── تنبيه المادة ──
+   يُقرأ قبل النصّ لا بعده: ما يقع تحت النصّ يبلغه القارئ بعد أن ينسخه.
+   واللون وحده لا يقول شيئاً — معه أيقونة «تحذير» ونصُّ التنبيه كاملاً. */
+.legal-notice {
+  display: flex; gap: var(--space-2); align-items: flex-start;
+  margin-bottom: var(--space-3); padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft); color: var(--warning-strong);
+  font-size: 0.875rem;
+}
+/* الأيقونة تنزل عن حافة السطر بخطوةٍ واحدة: سطرُ الأمر أطول من الأيقونة
+   بفارق ارتفاع السطر، ورأسُها مع رأسه يجعلها تبدو معلّقة فوق النصّ. */
+.legal-notice svg { flex: none; margin-top: var(--space-1); }
+.legal-notice p { margin: 0; line-height: var(--leading-relaxed, 1.9); }
+.legal-notice button { margin-top: var(--space-2); }
+.legal-notice-meta { color: var(--muted-foreground); font-size: 0.875rem; }
+.legal-notice .legal-notice-meta { color: inherit; opacity: 0.85; }
+/* نافذة التعديلات الخام: نصُّ المصدر كما ورد، منفصلاً عن نصّ المادة فلا
+   يُقرأ أحدهما مكان الآخر. */
+.legal-amendment {
+  margin-block: var(--space-3); padding: var(--space-3);
+  border-inline-start: 1px solid var(--border);
+  background: var(--muted); border-radius: var(--radius-md);
+}
+.legal-amendment > * + * { margin-top: var(--space-3); }
 .law-pager { display: flex; align-items: center; gap: var(--space-3); margin-block: var(--space-4); color: var(--muted-foreground); font-size: 0.875rem; }
 /* عنوان قسمٍ داخل التبويب: يفصل المستورَد عن المرفوع فلا يُقرأ أحدهما مكان الآخر. */
 .kb-section { margin-block: var(--space-6) var(--space-2); font-size: 0.875rem; font-weight: 700; color: var(--muted-foreground); }

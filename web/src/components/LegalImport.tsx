@@ -33,6 +33,10 @@ interface FileResult {
   skipped?: number;
   /** أُرشِفت نسخُها القديمة قبل الكتابة فوقها. */
   archived?: number;
+  /** ستُحجب عن الاسترجاع حتى تُراجَع بشرياً. */
+  withheld?: number;
+  /** عُدِّلت ونصُّها المعروض أصليّ — تُعرض مع تنبيهها. */
+  amendmentPending?: number;
   /** أوقفه المستورِد بعد المقارنة. */
   cancelled?: boolean;
   report?: LegalImportReport;
@@ -54,6 +58,11 @@ export function LegalImport() {
      تتغيّر معه أتمتةٌ ولا سكربتٌ قائم بتغيير الشاشة. */
   const [buildEmbed, setBuildEmbed] = useState(true);
   const [partial, setPartial] = useState(true);
+  /* «تصحيح بيانات» معطَّلٌ افتراضياً بخلاف أختيه: هذان تسهيلان في قراءة
+     الملف، وهذا **إقرارٌ على ما وقع** — أن الفرق الذي سيظهر خطأُ سحبٍ سابق
+     لا تعديلٌ نظاميّ. ووسمُه بلا قصدٍ يُفقد سجلَّ التحديث معناه، فلا يقع إلا
+     بنقرةٍ يعرف صاحبها ما يقول. */
+  const [correction, setCorrection] = useState(false);
   const [history, setHistory] = useState<LegalImportRecord[]>([]);
   const [draining, setDraining] = useState(false);
   /* نافذة إعادة الرفع تُوقف الحلقة حتى يقرّر المستورِد. والوعد هو ما يوقفها:
@@ -125,11 +134,13 @@ export function LegalImport() {
     let built = 0;
     let skipped = 0;
     let archived = 0;
+    let withheld = 0;
+    let amendmentPending = 0;
     const summary: NonNullable<LegalImportReport['error_summary']> = [];
 
     for (let start = 0; start < lines.length; start += BATCH_LINES) {
       setNow({ name: file.name, file: index + 1, files: count, batch: Math.floor(start / BATCH_LINES) + 1, batches });
-      const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name, { buildEmbed, partial });
+      const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name, { buildEmbed, partial, correction });
       if (!batch.ok) {
         // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل دفعة
         // لا يدلّ صاحبَ الملف على شيء.
@@ -149,6 +160,8 @@ export function LegalImport() {
       updated += batch.updated ?? 0;
       built += batch.embed_text_built ?? 0;
       archived += batch.archived ?? 0;
+      withheld += batch.needs_review ?? 0;
+      amendmentPending += batch.amendment_pending ?? 0;
       // في وضع «ما صحّ»: الدفعة تنجح ومعها أسطرٌ متخطّاة. تُجمع أسبابها
       // ليُقال ما فات، فتخطٍّ صامت يجعل نظاماً ناقصاً يبدو تامّاً.
       if (batch.failed) {
@@ -157,7 +170,7 @@ export function LegalImport() {
       }
     }
     return {
-      name: file.name, ok: true, inserted, updated, built, skipped, archived,
+      name: file.name, ok: true, inserted, updated, built, skipped, archived, withheld, amendmentPending,
       report: skipped ? { ok: true, error_summary: summary } : undefined,
     };
   };
@@ -224,6 +237,10 @@ export function LegalImport() {
         <input type="checkbox" checked={partial} disabled={busy} onChange={(e) => setPartial(e.target.checked)} />
         استيراد ما صحّ وتخطّي ما رُفض — ويُذكر المتخطّى بأسبابه
       </label>
+      <label className="import-option">
+        <input type="checkbox" checked={correction} disabled={busy} onChange={(e) => setCorrection(e.target.checked)} />
+        تصحيح بيانات — الفرق عن الاستيراد السابق خطأُ سحبٍ لا تعديلٌ نظاميّ
+      </label>
 
       <div className="dropzone" onClick={() => !busy && input.current?.click()}>
         {busy && now ? (
@@ -259,6 +276,11 @@ export function LegalImport() {
                   <th>نصّ تضمين مبنيّ</th>
                   <th>أسطر متخطّاة</th>
                   <th>نسخ مؤرشفة</th>
+                  {/* ما حُجب وما سيُعرض بتنبيه: ملفٌّ نصفُ مواده محجوب يبدو
+                      مستورَداً تامّاً في العمود، ثم لا يجد المحامي أثره في
+                      البحث ولا يعرف لماذا. */}
+                  <th>بانتظار المراجعة</th>
+                  <th>تعديل غير مطبَّق</th>
                 </tr>
               </thead>
               <tbody>
@@ -275,6 +297,8 @@ export function LegalImport() {
                     <td><bdi>{formatNumber(r.built ?? 0)}</bdi></td>
                     <td><bdi>{formatNumber(r.skipped ?? 0)}</bdi></td>
                     <td><bdi>{formatNumber(r.archived ?? 0)}</bdi></td>
+                    <td><bdi>{formatNumber(r.withheld ?? 0)}</bdi></td>
+                    <td><bdi>{formatNumber(r.amendmentPending ?? 0)}</bdi></td>
                   </tr>
                 ))}
               </tbody>
@@ -344,13 +368,15 @@ export function LegalImport() {
                   <th>مواد جديدة</th>
                   <th>مواد مستبدَلة</th>
                   <th>أسطر متخطّاة</th>
-                  <th>نسخ مؤرشفة</th>
                 </tr>
               </thead>
               <tbody>
                 {history.map((h) => (
                   <tr key={h.id}>
-                    <td><bdi>{h.filename ?? '—'}</bdi></td>
+                    <td>
+                      <bdi>{h.filename ?? '—'}</bdi>
+                      {h.kind === 'correction' ? <span className="pill pending">تصحيح بيانات</span> : null}
+                    </td>
                     <td><bdi>{formatDate(h.created_at)}</bdi></td>
                     <td><bdi>{formatNumber(h.inserted)}</bdi></td>
                     <td><bdi>{formatNumber(h.updated)}</bdi></td>
@@ -375,6 +401,8 @@ export function LegalImport() {
               <th>المقاطع</th>
               <th>السارية</th>
               <th>المنسوخة</th>
+              <th>بانتظار المراجعة</th>
+              <th>تعديل غير مطبَّق</th>
               <th>ينتظر التضمين</th>
             </tr>
           </thead>
@@ -384,6 +412,8 @@ export function LegalImport() {
               <td><bdi>{formatNumber(stats.chunks)}</bdi></td>
               <td><bdi>{formatNumber(stats.effective)}</bdi></td>
               <td><bdi>{formatNumber(stats.repealed)}</bdi></td>
+              <td><bdi>{formatNumber(stats.needs_review)}</bdi></td>
+              <td><bdi>{formatNumber(stats.amendment_pending)}</bdi></td>
               <td>
                 <bdi>{formatNumber(stats.pending_embeddings)}</bdi>
                 {/* الفهرس المتجهي غير مهيّأ: البحث اللفظي يعمل والدلاليّ لا.

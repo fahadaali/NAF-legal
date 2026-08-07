@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { api, type PlatformSearch } from '../lib/api';
 import { formatDate } from '../lib/format';
+import { ArticleFlags, ArticleNotices } from './LegalArticleView';
 
 type Scope = 'all' | 'chats' | 'outputs' | 'kb';
 
@@ -76,7 +77,11 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
                 <h4>
                   <bdi>{a.lawTitle ?? ''}</bdi>
                   {a.articleNo ? <span className="pill pending">المادة <bdi>{a.articleNo}</bdi></span> : null}
+                  <ArticleFlags a={a} />
                 </h4>
+                {/* التنبيه يلاحق النصّ حيث عُرض: هذه شاشةُ كل مستخدم، ونصٌّ
+                    أصليّ بلا تنبيهه يُنسخ إلى مذكّرةٍ على أنه الجاري. */}
+                <ArticleNotices a={a} />
                 <p>{a.text}</p>
               </article>
             ))}

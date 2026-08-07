@@ -16,9 +16,13 @@
 //   --batch   عدد الأسطر في الدفعة (الافتراضي 500)
 //   --partial قبول الأسطر الصالحة وتخطّي الفاسدة (الافتراضي: صارم)
 //   --build-embed-text  بناء `embed_text` عند غيابه من اسم النظام ورقم المادة
+//   --correction        وسمُ «تصحيح بيانات»: الفرق عن الاستيراد السابق خطأُ
+//                       سحبٍ لا تعديلٌ نظاميّ، فلا يقول السجلّ إن النظام
+//                       عُدِّل اليوم وهو عُدِّل بمرسومه قبل سنوات
 //
 // وهاتان مطفأتان هنا وإن كانتا مفعَّلتين في شاشة الإدارة: أمرٌ في طرفية
 // يُكتب مرّة ويُعاد ألف مرّة في أتمتة، فتغييرُ افتراضه يغيّر ما لا يُراجَع.
+// و«تصحيح بيانات» مطفأةٌ في الموضعين: هي إقرارٌ على ما وقع لا تسهيل.
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -47,6 +51,7 @@ const cookie = args.get('cookie') ?? process.env.NAF_COOKIE ?? '';
 const batchSize = Math.max(1, Number(args.get('batch') ?? 500));
 const partial = args.has('partial');
 const buildEmbedText = args.has('build-embed-text');
+const correction = args.has('correction');
 
 if (!cookie) {
   console.error('المطلوب: --cookie "naf_session=…" أو متغيّر البيئة NAF_COOKIE');
@@ -67,16 +72,18 @@ const endpoint = `${origin}/api/legal/import?${new URLSearchParams({
   filename: path.basename(file),
   ...(partial ? { partial: '1' } : {}),
   ...(buildEmbedText ? { build_embed_text: '1' } : {}),
+  ...(correction ? { correction: '1' } : {}),
 })}`;
 
 console.log(`الملف: ${file}`);
 console.log(
   `الأسطر: ${lines.length} · الدفعة: ${batchSize} سطراً · الوضع: ${partial ? 'قبول الصالح' : 'صارم'}` +
-    (buildEmbedText ? ' · بناء نصّ التضمين عند غيابه' : '')
+    (buildEmbedText ? ' · بناء نصّ التضمين عند غيابه' : '') +
+    (correction ? ' · تصحيح بيانات' : '')
 );
 console.log(`الوجهة: ${endpoint}\n`);
 
-const totals = { inserted: 0, updated: 0, failed: 0, pending: 0 };
+const totals = { inserted: 0, updated: 0, failed: 0, pending: 0, withheld: 0, amendmentPending: 0, superseded: 0 };
 
 for (let start = 0; start < lines.length; start += batchSize) {
   const slice = lines.slice(start, start + batchSize);
@@ -113,6 +120,9 @@ for (let start = 0; start < lines.length; start += batchSize) {
   totals.updated += report.updated ?? 0;
   totals.failed += report.failed ?? 0;
   totals.pending = report.pending_embeddings ?? totals.pending;
+  totals.withheld += report.needs_review ?? 0;
+  totals.amendmentPending += report.amendment_pending ?? 0;
+  totals.superseded += report.superseded ?? 0;
   for (const w of report.warnings ?? []) console.log(`  تنبيه: ${w}`);
   if (report.embed_text_truncated) {
     console.log(`  ${report.embed_text_truncated} مقطعاً قُصَّ مدخل متجهه (النصّ المعروض كامل)`);
@@ -123,6 +133,17 @@ for (let start = 0; start < lines.length; start += batchSize) {
 console.log(
   `\nاكتمل: جديد ${totals.inserted} · مستبدَل ${totals.updated} · مرفوض ${totals.failed} · ينتظر التضمين ${totals.pending}`
 );
+// ما حُجب وما سيُعرض بتنبيه يُقالان: ملفٌّ نصفُ مواده محجوب يبدو مستورَداً
+// تامّاً في السطر الأخير، ثم لا يجد المحامي أثره في البحث ولا يعرف لماذا.
+if (totals.withheld) {
+  console.log(`${totals.withheld} مادةً بانتظار المراجعة — محجوبة عن الاسترجاع حتى تُعتمد في شاشة مراجعة المواد`);
+}
+if (totals.amendmentPending) {
+  console.log(`${totals.amendmentPending} مادةً عُدِّلت ونصُّها المعروض أصليّ — تُعرض مع تنبيهها`);
+}
+if (totals.superseded) {
+  console.log(`${totals.superseded} نصّاً سابقاً دخل سجلّ التحديث بتاريخ تعديله`);
+}
 if (totals.pending) {
   console.log('التضمين المتبقّي يصرّفه الـCron الليلي، أو: POST /api/legal/embed-pending');
 }

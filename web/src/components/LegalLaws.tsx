@@ -6,9 +6,10 @@
 // وهي **للاطّلاع لا للتحرير**: المصدر ملفُّ الاستيراد، وتعديلُ مادةٍ هنا
 // يضيع عند أوّل إعادة رفع للنظام — الاستبدال على `id` يكتب فوقها. فما
 // يُصحَّح يُصحَّح في الملف ثم يُعاد استيراده.
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw } from '../lib/api';
 import { formatDate, formatNumber } from '../lib/format';
+import { ArticleCard, ArticleFlags, ArticleNotices, groupArticleParts } from './LegalArticleView';
 
 /** أسماء الحقول التي تُقارَن، بالعربية — كما في نافذة إعادة الرفع. */
 const FIELD_LABELS: Record<string, string> = {
@@ -18,6 +19,7 @@ const FIELD_LABELS: Record<string, string> = {
   is_repealed: 'النسخ',
   instrument_no: 'رقم الأداة',
   issue_date: 'تاريخ الإصدار',
+  amendment_applied: 'تطبيق التعديل',
 };
 
 /** مواد الصفحة الواحدة في التصفّح. */
@@ -38,6 +40,14 @@ const DOC_TYPE_LABELS: Record<string, string> = {
 };
 
 const docTypeLabel = (t: string | null) => (t ? (DOC_TYPE_LABELS[t] ?? t) : '—');
+
+/**
+ * موضع المادة من نظامها: الباب والفصل والعنوان الحرّ.
+ *
+ * نصُّها من الملف كما ورد — «الباب الخامس: علاقات العمل» — فلا لفظَ من عندنا
+ * ولا ترجمة. وفارغُها لا يُنتج عنواناً فارغاً.
+ */
+const sectionHeading = (a: LegalArticle) => [a.book, a.chapter, a.section].filter(Boolean).join(' — ');
 
 export function LegalLaws() {
   const [laws, setLaws] = useState<LegalLaw[] | null>(null);
@@ -86,7 +96,12 @@ export function LegalLaws() {
               <h4>
                 <bdi>{a.lawTitle ?? ''}</bdi>
                 {a.articleNo ? <span className="pill pending">المادة <bdi>{a.articleNo}</bdi></span> : null}
+                <ArticleFlags a={a} />
               </h4>
+              {/* التنبيه يلاحق النصّ حيث عُرض: نتيجةُ بحثٍ تُنسخ إلى مذكرة
+                  كما تُنسخ من صفحة النظام، ونصٌّ أصليّ بلا تنبيهه يُستشهد به
+                  على أنه الجاري. */}
+              <ArticleNotices a={a} />
               <p>{a.text}</p>
             </article>
           ))}
@@ -189,7 +204,9 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
           <p>
             {[
               docTypeLabel(law.doc_type) === '—' ? null : docTypeLabel(law.doc_type),
-              law.instrument_no,
+              // نوع الأداة ورقمها معاً: «مرسوم ملكي م/51» أداةٌ واحدة لا سطران.
+              [law.instrument, law.instrument_no].filter(Boolean).join(' '),
+              law.authority,
               // التاريخ ميلاديّ يتبعه الهجريّ بين قوسين — تاريخ أداةٍ نظامية.
               law.issue_date && law.issue_date_hijri
                 ? `${law.issue_date} (${law.issue_date_hijri})`
@@ -272,7 +289,21 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
                 {v.changed_fields.split(',').map((f) => (
                   <span key={f} className="pill warn">{FIELD_LABELS[f] ?? f}</span>
                 ))}
-                <span className="compare-label"><bdi>{formatDate(v.archived_at)}</bdi></span>
+                {/* «تصحيح بيانات» يميّز خطأ سحبٍ ظهر اليوم عن تعديلٍ نظاميّ
+                    وقع بمرسوم — وبلا تمييزهما يبدو النظام معدَّلاً هذا العام
+                    وهو معدَّل قبل سنوات. */}
+                {v.change_kind === 'correction' ? <span className="pill pending">تصحيح بيانات</span> : null}
+                {v.amendment_instrument ? (
+                  <span className="compare-label">
+                    أداة التعديل <bdi>{v.amendment_instrument}</bdi>
+                  </span>
+                ) : null}
+                {/* التاريخ من `amended_on` حين وُجد: المادة عُدِّلت بمرسومها في
+                    تاريخه، وإنما استوردناه اليوم. ووقتُ الأرشفة يبقى بديلاً
+                    حين لا يقول الملف تاريخ التعديل. */}
+                <span className="compare-label">
+                  <bdi>{v.amended_on ?? formatDate(v.archived_at)}</bdi>
+                </span>
               </h4>
               {v.article_no !== v.current_article_no ? (
                 <p>
@@ -297,15 +328,25 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
       )}
 
       <div className="kb-section">المواد</div>
-      {articles.map((a) => (
-        <article key={a.id} className="legal-article">
-          <h4>
-            {a.articleNo ? <>المادة <bdi>{a.articleNo}</bdi></> : <bdi>{a.id}</bdi>}
-            {a.isRepealed || a.status === 'repealed' ? <span className="pill error">منسوخة</span> : null}
-          </h4>
-          <p>{a.text}</p>
-        </article>
-      ))}
+      {/* أجزاء المادة الواحدة تُعرض متتابعةً تحت عنوانٍ واحد: `#a` و`#b` مادةٌ
+          واحدة قُسّمت لطولها، وعرضُها مادتين يجعل النظام يبدو ذا مادتين
+          برقمٍ واحد. */}
+      {groupArticleParts(articles).map((group, i, all) => {
+        /* الباب والفصل عنوانٌ يظهر عند تغيّره لا مع كل مادة: تكرارُه على
+           مئتَي مادة ضجيج، وغيابُه يجعل المواد قائمةً بلا بنية. ونصُّه من
+           الملف كما ورد — لا لفظَ من عندنا. ويظهر في رأس كل صفحة ولو لم
+           يتغيّر عن سابقتها، فقارئُ الصفحة الثانية لم يرَ الأولى. */
+        const heading = sectionHeading(group[0]);
+        const previous = i > 0 ? sectionHeading(all[i - 1][0]) : null;
+        return (
+          <Fragment key={group[0].id}>
+            {heading && (i === 0 || heading !== previous) ? (
+              <div className="kb-section"><bdi>{heading}</bdi></div>
+            ) : null}
+            <ArticleCard group={group} />
+          </Fragment>
+        );
+      })}
 
       {total > PAGE && (
         <div className="law-pager">

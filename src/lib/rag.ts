@@ -9,7 +9,7 @@
 //
 // والتصفية على السريان تُطبَّق على المصدرين هنا — في طبقة الاسترجاع — لا في
 // الواجهة. فأيّ مسار: محادثة أو تقرير أو أتمتة أو واجهة برمجية، يمرّ بها.
-import { searchLegal, EFFECTIVE_STATUSES, type LegalHit } from './legal';
+import { searchLegal, AMENDMENT_NOTICE, DEFERRED_NOTICE, EFFECTIVE_STATUSES, type LegalHit } from './legal';
 import { embed } from './embed';
 import type { Env } from '../types';
 
@@ -70,6 +70,13 @@ export interface RagResult {
   issueDate?: string;
   issueDateHijri?: string;
   sourceUrl?: string;
+  /** مادةٌ عُدِّلت ونصُّها المعروض أصليّ — يُذكر تنبيهها مع المقطع. */
+  amendmentPending?: boolean;
+  amendmentInstrument?: string;
+  amendedOn?: string;
+  /** تاريخ نفاذها لم يحلّ بعد — نصُّها سابقٌ لأوانه. */
+  effectivePending?: boolean;
+  effectiveFrom?: string;
 }
 
 /** ثابت دمج الرتب — كما في `lib/legal.ts`. */
@@ -145,6 +152,11 @@ function fromLegalHit(h: LegalHit): RagResult {
     issueDate: h.issueDate ?? undefined,
     issueDateHijri: h.issueDateHijri ?? undefined,
     sourceUrl: h.sourceUrl ?? undefined,
+    amendmentPending: h.hasAmendments && !h.amendmentApplied,
+    amendmentInstrument: h.amendmentInstrument ?? undefined,
+    amendedOn: h.amendedOn ?? undefined,
+    effectivePending: h.effectivePending,
+    effectiveFrom: h.effectiveFrom ?? h.effectiveFromHijri ?? undefined,
   };
 }
 
@@ -259,8 +271,29 @@ export async function searchConversations(env: Env, userId: string, query: strin
 // تنسيق سياق RAG لإدراجه في البرومبت مع الإسناد
 export function formatRagContext(results: RagResult[]): string {
   if (!results.length) return '';
-  const blocks = results.map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${r.text}`).join('\n\n---\n\n');
-  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس:\n\n${blocks}\n</سياق_نظامي>`;
+  const blocks = results
+    .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`)
+    .join('\n\n---\n\n');
+  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا حاشيةٌ عليه — انقله مع الاستشهاد:\n\n${blocks}\n</سياق_نظامي>`;
+}
+
+/**
+ * تنبيهات المادة، فوق نصّها مباشرةً.
+ *
+ * مسارُ التوليد لا يمرّ بشاشة، فلو بقيت التنبيهات في الواجهة وحدها لوصل
+ * النصُّ إلى البرومبت مجرَّداً واستُشهد به على أنه الجاري — وهو أخطر خطأ في
+ * منتج قانوني. وموضعُها قبل النصّ لا بعده: ما يُقرأ بعد النصّ يُقرأ متأخراً.
+ */
+function noticeLines(r: RagResult): string {
+  const lines: string[] = [];
+  if (r.amendmentPending) {
+    const by = [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' — ');
+    lines.push(`تنبيه: ${AMENDMENT_NOTICE}${by ? ` (${by})` : ''}`);
+  }
+  if (r.effectivePending) {
+    lines.push(`تنبيه: ${DEFERRED_NOTICE}${r.effectiveFrom ? ` (${r.effectiveFrom})` : ''}`);
+  }
+  return lines.length ? `${lines.join('\n')}\n` : '';
 }
 
 /**
