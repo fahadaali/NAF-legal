@@ -97,7 +97,18 @@ const EFFECTIVE_SQL = `c.is_repealed = 0 AND c.status IN ('active','amended')`;
  *
  * والشرطان مستقلّان: تجاوزُ أحدهما لا يفتح الآخر.
  */
-const REVIEWED_SQL = `(c.needs_review = 0 OR c.reviewed_at IS NOT NULL)`;
+/**
+ * الحالات التي تُدخل المادة الاسترجاع.
+ *
+ * اثنتان لا خمس: المعتمدة والمحرَّرة. والمستبعدة والمؤجَّلة تخرجان من الطابور
+ * ولا تدخلان الاسترجاع — الأولى بقرارٍ نهائي والثانية بأجلٍ لم يُضرَب له موعد.
+ */
+export const REVIEW_CLEARED = ['approved', 'edited'] as const;
+
+/** الحالة التي تُبقي المادة في الطابور. */
+const REVIEW_PENDING = 'pending';
+
+const REVIEWED_SQL = `(c.needs_review = 0 OR c.review_status IN (${REVIEW_CLEARED.map((s) => `'${s}'`).join(',')}))`;
 
 /**
  * أعمدة النتيجة.
@@ -115,6 +126,7 @@ const HIT_COLUMNS = `c.seq, c.id, c.law_id, c.parent_law_id, c.doc_type, c.artic
     c.source_url, c.text, c.part, c.parts_total,
     c.is_duplicate, c.duplicate_of, c.duplicate_index,
     c.has_amendments, c.amendment_kind, c.amendment_applied, c.needs_review, c.reviewed_at,
+    c.review_status, c.review_note, c.text_original_import IS NOT NULL AS was_edited,
     c.amendment_instrument, c.amended_on, c.amendments_count, c.amend_note,
     c.meta_json`;
 
@@ -191,8 +203,13 @@ export interface LegalHit {
   /** هل `text` نافذ؟ إن كان `false` فالنصّ أصليّ رغم وجود تعديل. */
   amendmentApplied: boolean;
   needsReview: boolean;
-  /** وقت اعتماد المراجع البشري — `null` يعني أن الحجب ما زال قائماً. */
+  /** وقت قرار المراجع البشري. */
   reviewedAt: number | null;
+  /** `pending` · `approved` · `edited` · `rejected` · `deferred`. */
+  reviewStatus: string;
+  reviewNote: string | null;
+  /** حُرِّر نصُّها، فأصلُ الاستيراد محفوظ ويمكن الرجوع إليه. */
+  wasEdited: boolean;
   amendmentInstrument: string | null;
   amendedOn: string | null;
   amendmentsCount: number | null;
@@ -238,6 +255,8 @@ export interface PreparedChunk {
   duplicate_index: number | null;
   has_amendments: number;
   amendment_kind: string | null;
+  /** نوع التعديل مطبَّعاً — عليه تقوم طوابير التصنيف. */
+  amendment_kind_norm: string | null;
   amendment_applied: number;
   needs_review: number;
   amendment_instrument: string | null;
@@ -589,6 +608,7 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     duplicate_index: num(o.duplicate_index),
     has_amendments: hasAmendments,
     amendment_kind: str(o.amendment_kind) || null,
+    amendment_kind_norm: normalizeArabic(str(o.amendment_kind)) || null,
     amendment_applied: truthy(o.amendment_applied) ? 1 : 0,
     needs_review: truthy(o.needs_review) ? 1 : 0,
     amendment_instrument: str(o.amendment_instrument) || null,
@@ -890,10 +910,10 @@ const UPSERT_SQL = `
     issue_date, issue_date_hijri, effective_from, effective_from_hijri, effective_to,
     source_url, text, text_superseded, part, parts_total,
     is_duplicate, duplicate_of, duplicate_index,
-    has_amendments, amendment_kind, amendment_applied, needs_review,
+    has_amendments, amendment_kind, amendment_kind_norm, amendment_applied, needs_review,
     amendment_instrument, amended_on, amendments_count, amendments_raw, amend_note,
     embed_text, text_norm, handle_norm, meta_json, embed_hash, embedded_at, imported_at, updated_at
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)
   ON CONFLICT(id) DO UPDATE SET
     law_id = excluded.law_id,
     parent_law_id = excluded.parent_law_id,
@@ -927,6 +947,7 @@ const UPSERT_SQL = `
     duplicate_index = excluded.duplicate_index,
     has_amendments = excluded.has_amendments,
     amendment_kind = excluded.amendment_kind,
+    amendment_kind_norm = excluded.amendment_kind_norm,
     amendment_applied = excluded.amendment_applied,
     needs_review = excluded.needs_review,
     amendment_instrument = excluded.amendment_instrument,
@@ -946,6 +967,11 @@ const UPSERT_SQL = `
     -- تُراجَع من جديد.
     reviewed_at = CASE WHEN ${REVIEW_UNCHANGED} THEN legal_chunks.reviewed_at ELSE NULL END,
     reviewed_by = CASE WHEN ${REVIEW_UNCHANGED} THEN legal_chunks.reviewed_by ELSE NULL END,
+    review_status = CASE WHEN ${REVIEW_UNCHANGED} THEN legal_chunks.review_status ELSE '${REVIEW_PENDING}' END,
+    review_note = CASE WHEN ${REVIEW_UNCHANGED} THEN legal_chunks.review_note ELSE NULL END,
+    -- أصلُ الاستيراد يسقط مع النصّ الذي كان أصلاً له: نصٌّ جديد وصل من
+    -- المصدر، فالأصل هو هو لا ما حُرِّر قبله.
+    text_original_import = CASE WHEN ${REVIEW_UNCHANGED} THEN legal_chunks.text_original_import ELSE NULL END,
     updated_at = excluded.updated_at`;
 
 /** حجم دفعة الكتابة إلى D1 — دون سقف العبارات والمعاملات المربوطة بمراحل. */
@@ -1070,7 +1096,7 @@ export async function upsertLegalChunks(
           r.issue_date, r.issue_date_hijri, r.effective_from, r.effective_from_hijri, r.effective_to,
           r.source_url, r.text, r.text_superseded, r.part, r.parts_total,
           r.is_duplicate, r.duplicate_of, r.duplicate_index,
-          r.has_amendments, r.amendment_kind, r.amendment_applied, r.needs_review,
+          r.has_amendments, r.amendment_kind, r.amendment_kind_norm, r.amendment_applied, r.needs_review,
           r.amendment_instrument, r.amended_on, r.amendments_count, r.amendments_raw, r.amend_note,
           r.embed_text, r.text_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now
         )
@@ -1352,6 +1378,7 @@ interface HitRow {
   is_duplicate: number; duplicate_of: string | null; duplicate_index: number | null;
   has_amendments: number; amendment_kind: string | null; amendment_applied: number;
   needs_review: number; reviewed_at: number | null;
+  review_status: string; review_note: string | null; was_edited: number;
   amendment_instrument: string | null; amended_on: string | null;
   amendments_count: number | null; amend_note: string | null;
   meta_json: string | null;
@@ -1402,6 +1429,9 @@ function toHit(r: HitRow): LegalHit {
     amendmentApplied: r.amendment_applied === 1,
     needsReview: r.needs_review === 1,
     reviewedAt: r.reviewed_at,
+    reviewStatus: r.review_status,
+    reviewNote: r.review_note,
+    wasEdited: r.was_edited === 1,
     amendmentInstrument: r.amendment_instrument,
     amendedOn: r.amended_on,
     amendmentsCount: r.amendments_count,
@@ -1716,61 +1746,401 @@ export async function getChunkAmendment(env: Env, id: string): Promise<ChunkAmen
     .first<ChunkAmendment>();
 }
 
-// ── المراجعة البشرية ──
+// ── وحدة المراجعة ──
+//
+// **الفصل التام.** المواد الجاهزة تدخل الاسترجاع فور الاستيراد، والموسومة
+// تنتظر هنا. والمراجعة لا توقف شيئاً: خمسة آلاف مادة تعمل بينما الطابور
+// ممتلئ، وهو جوهر هذه الوحدة لا أثرٌ جانبيّ لها.
 
 /**
- * ما ينتظر المراجعة: المحجوب عن الاسترجاع حتى يعتمده إنسان.
+ * الطوابير — كلٌّ يُعرَّف بشرطه على الحقول لا بقائمة موادّ ثابتة.
  *
- * وهي الشاشة الوحيدة التي تراه. أمّا البحث والمحادثة والتقارير فلا يصلها،
- * لأن `needs_review` تُصفّى في SQL لا في الواجهة.
+ * ولذلك يتوسّع بلا حدّ: نظامٌ يُستورد غداً تدخل مواده الموسومة طوابيرها
+ * تلقائياً، وعدّادُ كل طابور استعلامٌ حيّ يُحسب عند فتح الصفحة لا رقمٌ
+ * مكتوب. والترتيب هنا هو ترتيب الأولوية: ما يُفسد الاسترجاع أوّلاً.
+ *
+ * والطوابير غير متنافية: مادةٌ مكرّرة الرقم قد تكون «غير مصنَّفة» أيضاً،
+ * فتظهر في الطابورين وتخرج منهما معاً بأوّل قرار. وحصرُها في طابورٍ واحد
+ * يُخفي عن المراجع أحدَ سببَي إحالتها.
+ */
+export const REVIEW_QUEUES = [
+  { key: 'duplicate', sql: 'c.is_duplicate = 1' },
+  {
+    key: 'truncated',
+    // نصٌّ أقصر من نصف سابقه: اقتطاعٌ في السحب غالباً لا اختصارٌ بمرسوم.
+    sql: 'c.text_superseded IS NOT NULL AND LENGTH(c.text) * 2 < LENGTH(c.text_superseded)',
+  },
+  {
+    key: 'preamble',
+    // ديباجةُ المرسوم تسرّبت إلى متن المادة. تُطابَق على النصّ المطبَّع، فما
+    // كُتب مشكولاً يُطابَق كما يُطابَق المجرَّد.
+    sql: `(c.text_norm LIKE '%بموجب المرسوم%' OR c.text_norm LIKE '%لتكون بالنص%')`,
+  },
+  { key: 'partial', sql: 'c.amendment_kind_norm = ?', bind: normalizeArabic('تعديل جزئي') },
+  { key: 'collective', sql: 'c.amendment_kind_norm = ?', bind: normalizeArabic('تعديل جماعي') },
+  { key: 'addition', sql: 'c.amendment_kind_norm = ?', bind: normalizeArabic('إضافة') },
+  { key: 'unclassified', sql: 'c.amendment_kind_norm = ?', bind: normalizeArabic('غير مصنَّف') },
+] as const;
+
+export type ReviewQueueKey = (typeof REVIEW_QUEUES)[number]['key'];
+
+/**
+ * شرط دخول الطابور أصلاً.
+ *
+ * **والملغاة لا تدخله.** الإلغاء قرارٌ نظاميّ موثَّق في نافذة التعديلات لا
+ * اجتهادٌ يُراجَع، وإدخالُ مئةٍ وخمسٍ وسبعين مادةً ملغاة يُغرق المراجع بما
+ * لا فائدة في مراجعته — ويُخفي تحته ما يستحقّها.
+ */
+const IN_QUEUE_SQL = `c.needs_review = 1 AND c.review_status = '${REVIEW_PENDING}'
+                      AND c.is_repealed = 0 AND c.status <> 'repealed'`;
+
+/** ما خرج من الطابور بقرار: منجَزُ العدّاد. */
+const QUEUE_DONE_SQL = `c.needs_review = 1 AND c.review_status <> '${REVIEW_PENDING}'
+                        AND c.is_repealed = 0 AND c.status <> 'repealed'`;
+
+export interface ReviewFilters {
+  /** حصر المراجعة في نظامٍ واحد — أسرع وأدقّ، فالذهن يبقى في موضوع واحد. */
+  lawId?: string | null;
+  /** دفعة الاستيراد: مراجعة ما استُورد حديثاً وحده. */
+  capturedAt?: string | null;
+  docType?: string | null;
+}
+
+function reviewFilterSql(f: ReviewFilters): { sql: string; binds: unknown[] } {
+  const clauses: string[] = [];
+  const binds: unknown[] = [];
+  if (f.lawId) {
+    clauses.push('c.law_id = ?');
+    binds.push(f.lawId);
+  }
+  if (f.capturedAt) {
+    clauses.push('c.captured_at = ?');
+    binds.push(f.capturedAt);
+  }
+  if (f.docType) {
+    clauses.push('c.doc_type = ?');
+    binds.push(f.docType);
+  }
+  return { sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', binds };
+}
+
+function queueClause(key: ReviewQueueKey): { sql: string; binds: unknown[] } {
+  const q = REVIEW_QUEUES.find((x) => x.key === key);
+  if (!q) return { sql: '', binds: [] };
+  return { sql: ` AND ${q.sql}`, binds: 'bind' in q && q.bind ? [q.bind] : [] };
+}
+
+export interface QueueCount {
+  key: string;
+  pending: number;
+  done: number;
+}
+
+/** عدّادات الطوابير — استعلامٌ حيّ عند كل فتح، لا رقمٌ محفوظ. */
+export async function reviewQueueCounts(env: Env, filters: ReviewFilters = {}): Promise<QueueCount[]> {
+  const f = reviewFilterSql(filters);
+  const out: QueueCount[] = [];
+  for (const q of REVIEW_QUEUES) {
+    const binds = 'bind' in q && q.bind ? [q.bind] : [];
+    const row = await env.DB.prepare(
+      `SELECT SUM(CASE WHEN ${IN_QUEUE_SQL} THEN 1 ELSE 0 END) AS pending,
+              SUM(CASE WHEN ${QUEUE_DONE_SQL} THEN 1 ELSE 0 END) AS done
+       FROM legal_chunks c WHERE ${q.sql}${f.sql}`
+    )
+      .bind(...binds, ...f.binds)
+      .first<{ pending: number | null; done: number | null }>();
+    out.push({ key: q.key, pending: row?.pending ?? 0, done: row?.done ?? 0 });
+  }
+  return out;
+}
+
+/**
+ * مواد طابورٍ بعينه، أو الطابور كلَّه إن لم يُسمَّ.
+ *
+ * وأخوات الرقم الواحد تُجلب معاً: الحكم عليها لا يصحّ إلا مجتمعة — أهي مادةٌ
+ * مضافة مشروعة أم خطأ تقطيع؟ لا يُعرف إلا بقراءة الاثنتين.
  */
 export async function listReviewQueue(
   env: Env,
-  opts: { lawId?: string | null; offset?: number; limit?: number } = {}
+  opts: ReviewFilters & { queue?: ReviewQueueKey | null; offset?: number; limit?: number } = {}
 ): Promise<{ articles: LegalHit[]; total: number }> {
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
   const offset = Math.max(opts.offset ?? 0, 0);
-  const where = ['c.needs_review = 1', 'c.reviewed_at IS NULL'];
-  const binds: unknown[] = [];
-  if (opts.lawId) {
-    where.push('c.law_id = ?');
-    binds.push(opts.lawId);
-  }
-  const sql = where.join(' AND ');
+  const f = reviewFilterSql(opts);
+  const q = opts.queue ? queueClause(opts.queue) : { sql: '', binds: [] };
+  const where = `${IN_QUEUE_SQL}${f.sql}${q.sql}`;
+  const binds = [...f.binds, ...q.binds];
 
-  const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_chunks c WHERE ${sql}`)
+  const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_chunks c WHERE ${where}`)
     .bind(...binds)
     .first<{ n: number }>();
 
   const rows = await env.DB.prepare(
-    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${sql} ORDER BY c.law_id, c.seq LIMIT ? OFFSET ?`
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${where} ORDER BY c.law_id, c.seq LIMIT ? OFFSET ?`
   )
     .bind(...binds, limit, offset)
     .all<HitRow>();
 
-  return { articles: (rows.results ?? []).map(toHit), total: total?.n ?? 0 };
+  // أخوات الرقم تُضمّ بلا تصفية الطابور: أختُ المادة قد تكون معتمَدةً سلفاً،
+  // والحكم على أختها لا يصحّ بغيابها.
+  const articles = await expandDuplicates(env, (rows.results ?? []).map(toHit), {
+    includeRepealed: true,
+    includeNeedsReview: true,
+  });
+
+  return { articles, total: total?.n ?? 0 };
 }
 
 /**
- * اعتمادُ مادةٍ أو ردُّها إلى الحجب.
+ * نصّ التضمين المبنيّ من بنية المادة.
  *
- * الاعتماد يرفع الحجب عن هذه المادة وحدها — لا عن نظامها ولا عن نوعها. ولا
- * يمسّ `needs_review` نفسه: ذاك ما قاله الملف، وتغييرُه اختلاقٌ لبيانات لم
- * تُرسَل، ويجعل إعادة الرفع تُعيد الحجب كأن المراجعة لم تقع.
+ * صيغةٌ واحدة للمستورَد وللمحرَّر: لو بُني المحرَّر بصيغةٍ أخرى لصار جارُه في
+ * الفهرس المتجهي مقيساً بمسطرةٍ ثانية، فتتغيّر رتبتُه لسببٍ لا علاقة له بنصّه.
  */
-export async function setChunkReviewed(
+export function buildEmbedText(a: {
+  law_title: string | null; instrument: string | null; book: string | null;
+  chapter: string | null; article_title: string | null; article_no: string | null; text: string;
+}): string {
+  const head = [
+    a.law_title,
+    a.instrument ? `(${a.instrument})` : '',
+    a.book,
+    a.chapter,
+    a.article_title,
+    a.article_no ? `المادة ${a.article_no}` : '',
+  ]
+    .filter(Boolean)
+    .join(' — ');
+  return head ? `${head}: ${a.text}` : a.text;
+}
+
+export type ReviewAction = 'approve' | 'edit' | 'exclude' | 'defer' | 'note' | 'undo';
+
+const ACTION_STATUS: Record<Exclude<ReviewAction, 'note' | 'undo'>, string> = {
+  approve: 'approved',
+  edit: 'edited',
+  exclude: 'rejected',
+  defer: 'deferred',
+};
+
+/** صفٌّ يحتاجه قرار المراجعة — ببنيته التي يُبنى منها نصّ التضمين. */
+interface ReviewRow {
+  id: string; law_id: string | null; law_title: string | null; instrument: string | null;
+  book: string | null; chapter: string | null; article_title: string | null; article_no: string | null;
+  text: string; text_original_import: string | null; review_status: string; review_note: string | null;
+  needs_review: number;
+}
+
+export interface ReviewResult {
+  ok: boolean;
+  error?: string;
+  status?: string;
+  /** أُعيد بناء نصّ التضمين فصار المقطع ينتظر تضميناً جديداً. */
+  reembedded?: boolean;
+}
+
+/**
+ * قرارُ المراجع على مادة.
+ *
+ * كل تغيير يُقيَّد في سجلّ التدقيق بقيمته قبل وبعد وصاحبه ووقته: في منتجٍ
+ * قانوني يُسأل المرء لاحقاً من أين جاء نصّ مادةٍ في استشارة ومن اعتمده.
+ *
+ * **والتحرير يُعيد بناء نصّ التضمين ومتجهه.** لولا ذلك لطابق البحثُ النصَّ
+ * القديم بينما العرض يُظهر الجديد — وهو عيبٌ خبيث لا يظهر إلا في نتائج بحثٍ
+ * غريبة يصعب تفسيرها.
+ */
+export async function reviewChunk(
   env: Env,
   id: string,
-  reviewed: boolean,
-  actorId: string
-): Promise<boolean> {
-  const found = await env.DB.prepare('SELECT 1 AS found FROM legal_chunks WHERE id = ?').bind(id).first();
-  if (!found) return false;
+  action: ReviewAction,
+  actorId: string,
+  opts: { text?: string; note?: string } = {}
+): Promise<ReviewResult> {
+  const row = await env.DB.prepare(
+    `SELECT id, law_id, law_title, instrument, book, chapter, article_title, article_no,
+            text, text_original_import, review_status, review_note, needs_review
+     FROM legal_chunks WHERE id = ?`
+  )
+    .bind(id)
+    .first<ReviewRow>();
+  if (!row) return { ok: false, error: 'المادة غير موجودة' };
+
   const now = Date.now();
-  await env.DB.prepare('UPDATE legal_chunks SET reviewed_at = ?, reviewed_by = ?, updated_at = ? WHERE id = ?')
-    .bind(reviewed ? now : null, reviewed ? actorId : null, now, id)
+  const audit: { field: string; from: string | null; to: string | null }[] = [];
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  let reembedded = false;
+
+  const setText = (text: string) => {
+    const embed = buildEmbedText({ ...row, text });
+    sets.push(
+      'text = ?', 'text_norm = ?', 'embed_text = ?', 'embed_hash = ?',
+      // `embedded_at = NULL` يعيد المقطع إلى طابور التضمين، ويصرّفه النداء
+      // الذي يلي الحفظ أو الـCron. وتحديث `text_norm` يُشغّل محفّز الفهرس
+      // اللفظي من تلقائه — فالمساران يتجدّدان معاً.
+      'embedded_at = NULL'
+    );
+    binds.push(text, normalizeArabic(text), embed, hashText(embed));
+    audit.push({ field: 'text', from: row.text, to: text });
+    reembedded = true;
+  };
+
+  if (action === 'note') {
+    const note = opts.note?.trim() ?? '';
+    sets.push('review_note = ?');
+    binds.push(note || null);
+    audit.push({ field: 'review_note', from: row.review_note, to: note || null });
+  } else if (action === 'undo') {
+    // التراجع يُرجع نصّ الاستيراد إن كان قد حُرِّر، ويُعيد المادة إلى الطابور.
+    if (row.text_original_import && row.text_original_import !== row.text) {
+      setText(row.text_original_import);
+      sets.push('text_original_import = NULL');
+    }
+    sets.push('review_status = ?', 'reviewed_at = NULL', 'reviewed_by = NULL');
+    binds.push(REVIEW_PENDING);
+    audit.push({ field: 'review_status', from: row.review_status, to: REVIEW_PENDING });
+  } else {
+    if (action === 'edit') {
+      const text = opts.text?.trim() ?? '';
+      if (!text) return { ok: false, error: 'نصّ المادة مطلوب' };
+      if (text.length > MAX_TEXT_LEN) return { ok: false, error: 'نصّ المادة أطول من الحدّ المسموح' };
+      if (text !== row.text) {
+        // أصلُ الاستيراد يُكتب مرّةً واحدة: تحريرٌ ثانٍ لا يجعل الأصلَ آخرَ ما
+        // حُرِّر، وإلا ضاع ما جاء من المصدر عند ثاني تصحيح.
+        if (!row.text_original_import) {
+          sets.push('text_original_import = ?');
+          binds.push(row.text);
+        }
+        setText(text);
+      }
+    }
+    const status = ACTION_STATUS[action];
+    sets.push('review_status = ?', 'reviewed_at = ?', 'reviewed_by = ?');
+    binds.push(status, now, actorId);
+    audit.push({ field: 'review_status', from: row.review_status, to: status });
+    // **ولا يُكتب `needs_review = 0`.** أثرُ الاعتماد — دخولُ المادة
+    // الاسترجاع — يقع بالحال وحدها، وهي وحدها ما يُصفّى به. وكتابةُ الوسم
+    // معها تُنشئ مصدرَ حقيقةٍ ثانياً لا يعرف التراجعُ كيف يردّه: يُعيد الحالَ
+    // إلى الطابور ويترك الوسمَ مرفوعاً، فتبقى المادة في الاسترجاع بعد
+    // التراجع عن اعتمادها. و`needs_review` يبقى ما قاله الملف، فإعادةُ رفعه
+    // لا تناقض قراراً وقع.
+    if (opts.note !== undefined) {
+      const note = opts.note.trim();
+      sets.push('review_note = ?');
+      binds.push(note || null);
+      if ((row.review_note ?? '') !== note) {
+        audit.push({ field: 'review_note', from: row.review_note, to: note || null });
+      }
+    }
+  }
+
+  sets.push('updated_at = ?');
+  binds.push(now);
+  await env.DB.prepare(`UPDATE legal_chunks SET ${sets.join(', ')} WHERE id = ?`)
+    .bind(...binds, id)
     .run();
-  return true;
+
+  for (let i = 0; i < audit.length; i += DB_BATCH) {
+    await env.DB.batch(
+      audit.slice(i, i + DB_BATCH).map((a) =>
+        env.DB.prepare(
+          `INSERT INTO legal_review_audit (id, chunk_id, law_id, field, old_value, new_value, actor_id, at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(uuid(), id, row.law_id, a.field, a.from, a.to, actorId, now)
+      )
+    );
+  }
+
+  const status = audit.find((a) => a.field === 'review_status')?.to ?? row.review_status;
+  return { ok: true, status: status ?? undefined, reembedded };
+}
+
+export interface ReviewAuditEntry {
+  id: string;
+  chunk_id: string;
+  law_id: string | null;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  actor_id: string | null;
+  at: number;
+}
+
+/** سجلّ التدقيق: لمادةٍ بعينها، أو لآخر ما وقع في المنصة كلّها. */
+export async function listReviewAudit(
+  env: Env,
+  opts: { chunkId?: string | null; limit?: number } = {}
+): Promise<ReviewAuditEntry[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const rows = opts.chunkId
+    ? await env.DB.prepare(
+        'SELECT * FROM legal_review_audit WHERE chunk_id = ? ORDER BY at DESC, rowid DESC LIMIT ?'
+      )
+        .bind(opts.chunkId, limit)
+        .all<ReviewAuditEntry>()
+    : await env.DB.prepare('SELECT * FROM legal_review_audit ORDER BY at DESC, rowid DESC LIMIT ?')
+        .bind(limit)
+        .all<ReviewAuditEntry>();
+  return rows.results ?? [];
+}
+
+export interface ReviewDashboard {
+  chunks: number;
+  retrievable: number;
+  in_queue: number;
+  approved: number;
+  edited: number;
+  rejected: number;
+  deferred: number;
+  repealed: number;
+  last_activity: number | null;
+  queues: QueueCount[];
+}
+
+/**
+ * لوحة الحال: أين وصلت المراجعة، وأيّ طابورٍ يستحقّ الجلسة القادمة.
+ *
+ * و«الداخلة في الاسترجاع» تُحسب بالشرطين اللذين يُصفّى بهما الاسترجاع نفسه
+ * لا بجمعٍ يدويّ — فلو تغيّر أحدهما تغيّر الرقم معه، ولا تقول اللوحة شيئاً
+ * لا يقوله البحث.
+ */
+export async function reviewDashboard(env: Env, filters: ReviewFilters = {}): Promise<ReviewDashboard> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS chunks,
+            SUM(CASE WHEN ${EFFECTIVE_SQL} AND ${REVIEWED_SQL} THEN 1 ELSE 0 END) AS retrievable,
+            SUM(CASE WHEN ${IN_QUEUE_SQL} THEN 1 ELSE 0 END) AS in_queue,
+            SUM(CASE WHEN c.review_status = 'approved' THEN 1 ELSE 0 END) AS approved,
+            SUM(CASE WHEN c.review_status = 'edited' THEN 1 ELSE 0 END) AS edited,
+            SUM(CASE WHEN c.review_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+            SUM(CASE WHEN c.review_status = 'deferred' THEN 1 ELSE 0 END) AS deferred,
+            SUM(CASE WHEN c.is_repealed = 1 OR c.status = 'repealed' THEN 1 ELSE 0 END) AS repealed
+     FROM legal_chunks c`
+  ).first<Omit<ReviewDashboard, 'last_activity' | 'queues'>>();
+
+  const last = await env.DB.prepare('SELECT MAX(at) AS at FROM legal_review_audit').first<{ at: number | null }>();
+
+  return {
+    chunks: row?.chunks ?? 0,
+    retrievable: row?.retrievable ?? 0,
+    in_queue: row?.in_queue ?? 0,
+    approved: row?.approved ?? 0,
+    edited: row?.edited ?? 0,
+    rejected: row?.rejected ?? 0,
+    deferred: row?.deferred ?? 0,
+    repealed: row?.repealed ?? 0,
+    last_activity: last?.at ?? null,
+    queues: await reviewQueueCounts(env, filters),
+  };
+}
+
+/** دفعات الاستيراد المتاحة للترشيح — من `captured_at` كما ورد. */
+export async function listCaptureBatches(env: Env): Promise<{ captured_at: string; chunks: number }[]> {
+  const rows = await env.DB.prepare(
+    `SELECT captured_at, COUNT(*) AS chunks FROM legal_chunks
+     WHERE captured_at IS NOT NULL AND captured_at <> ''
+     GROUP BY captured_at ORDER BY captured_at DESC LIMIT 50`
+  ).all<{ captured_at: string; chunks: number }>();
+  return rows.results ?? [];
 }
 
 export interface LawSummary {
@@ -1889,7 +2259,7 @@ export async function legalStats(env: Env): Promise<LegalStats> {
             SUM(CASE WHEN c.is_repealed = 1 OR c.status = 'repealed' THEN 1 ELSE 0 END) AS repealed,
             COUNT(DISTINCT c.law_id) AS laws,
             SUM(CASE WHEN c.embedded_at IS NULL THEN 1 ELSE 0 END) AS pending,
-            SUM(CASE WHEN c.needs_review = 1 AND c.reviewed_at IS NULL THEN 1 ELSE 0 END) AS needs_review,
+            SUM(CASE WHEN ${IN_QUEUE_SQL} THEN 1 ELSE 0 END) AS needs_review,
             SUM(CASE WHEN c.has_amendments = 1 AND c.amendment_applied = 0 THEN 1 ELSE 0 END) AS amendment_pending
      FROM legal_chunks c`
   ).first<{
