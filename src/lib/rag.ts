@@ -9,7 +9,7 @@
 //
 // والتصفية على السريان تُطبَّق على المصدرين هنا — في طبقة الاسترجاع — لا في
 // الواجهة. فأيّ مسار: محادثة أو تقرير أو أتمتة أو واجهة برمجية، يمرّ بها.
-import { searchLegal, EFFECTIVE_STATUSES, type LegalHit } from './legal';
+import { searchLegal, AMENDMENT_NOTICE, EFFECTIVE_STATUSES, type LegalHit } from './legal';
 import { embed } from './embed';
 import type { Env } from '../types';
 
@@ -70,6 +70,10 @@ export interface RagResult {
   issueDate?: string;
   issueDateHijri?: string;
   sourceUrl?: string;
+  /** مادةٌ عُدِّلت ونصُّها المعروض أصليّ — يُذكر تنبيهها مع المقطع. */
+  amendmentPending?: boolean;
+  amendmentInstrument?: string;
+  amendedOn?: string;
 }
 
 /** ثابت دمج الرتب — كما في `lib/legal.ts`. */
@@ -145,6 +149,9 @@ function fromLegalHit(h: LegalHit): RagResult {
     issueDate: h.issueDate ?? undefined,
     issueDateHijri: h.issueDateHijri ?? undefined,
     sourceUrl: h.sourceUrl ?? undefined,
+    amendmentPending: h.hasAmendments && !h.amendmentApplied,
+    amendmentInstrument: h.amendmentInstrument ?? undefined,
+    amendedOn: h.amendedOn ?? undefined,
   };
 }
 
@@ -259,8 +266,23 @@ export async function searchConversations(env: Env, userId: string, query: strin
 // تنسيق سياق RAG لإدراجه في البرومبت مع الإسناد
 export function formatRagContext(results: RagResult[]): string {
   if (!results.length) return '';
-  const blocks = results.map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${r.text}`).join('\n\n---\n\n');
+  const blocks = results
+    .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${amendmentLine(r)}${r.text}`)
+    .join('\n\n---\n\n');
   return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس:\n\n${blocks}\n</سياق_نظامي>`;
+}
+
+/**
+ * تنبيه المادة المعدَّلة، فوق نصّها مباشرةً.
+ *
+ * مسارُ التوليد لا يمرّ بشاشة، فلو بقي التنبيه في الواجهة وحدها لوصل النصُّ
+ * الأصليّ إلى البرومبت مجرَّداً واستُشهد به على أنه الجاري — وهو أخطر خطأ في
+ * منتج قانوني. وموضعُه قبل النصّ لا بعده: ما يُقرأ بعد النصّ يُقرأ متأخراً.
+ */
+function amendmentLine(r: RagResult): string {
+  if (!r.amendmentPending) return '';
+  const by = [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' — ');
+  return `تنبيه: ${AMENDMENT_NOTICE}${by ? ` (${by})` : ''}\n`;
 }
 
 /**

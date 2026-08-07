@@ -15,9 +15,12 @@ import {
   embedPending,
   searchLegal,
   getArticle,
+  getChunkAmendment,
   getChunkById,
   listLaws,
   listLawArticles,
+  listReviewQueue,
+  setChunkReviewed,
   getLawWithRegulations,
   legalStats,
 } from '../lib/legal';
@@ -53,6 +56,10 @@ app.post('/import', requireAdmin, async (c) => {
   // مقارنةٌ لا كتابة: يُقرأ الملف ويُقابَل بما في القاعدة ويُردّ الفرق.
   // ويُرسَل الملف كاملاً لا مقطّعاً، وإلا عُدَّ سائرُ النظام غائباً عنه.
   const dryRun = c.req.query('dry_run') === '1';
+  // «تصحيح بيانات»: الفرق الذي سيظهر بين هذا الاستيراد وسابقه خطأُ سحبٍ ظهر
+  // اليوم لا تعديلٌ نظاميّ وقع اليوم. ويُوسَم به سجلّ التحديث فلا يقول إن
+  // النظام عُدِّل هذا العام وهو عُدِّل بمرسومه قبل سنوات.
+  const correction = c.req.query('correction') === '1';
   const contentType = c.req.header('content-type') ?? '';
 
   let bytes: ArrayBuffer;
@@ -87,6 +94,11 @@ app.post('/import', requireAdmin, async (c) => {
     // ما بُني نصُّ تضمينه لغيابه. يُقال دائماً: بناءٌ صامت يجعل جودة
     // الاسترجاع تتغيّر بلا أثرٍ يدلّ عليها.
     embed_text_built: parsed.builtEmbedText,
+    // ما سيُحجب عن الاسترجاع حتى يُراجَع، وما سيُعرض بتنبيه أن نصّه أصليّ.
+    // يُقالان لأن ملفاً نصفُ مواده محجوب يبدو مستورَداً تامّاً في العمود، ثم
+    // لا يجد المحامي أثره في البحث ولا يعرف لماذا.
+    needs_review: parsed.needsReview,
+    amendment_pending: parsed.amendmentPending,
   };
 
   if (dryRun) {
@@ -105,16 +117,34 @@ app.post('/import', requireAdmin, async (c) => {
 
   // استبدال لا إضافة: المفتاح `id`. وما تغيّر يُؤرشَف قبل أن يُكتب فوقه.
   const importId = uuid();
-  const { inserted, updated, archived } = await upsertLegalChunks(c.env, parsed.rows, { importId });
+  const { inserted, updated, archived, superseded } = await upsertLegalChunks(c.env, parsed.rows, {
+    importId,
+    correction,
+  });
 
-  const full = { ...report, inserted, updated, archived, mode: partial ? 'partial' : 'strict' };
+  const full = {
+    ...report,
+    inserted,
+    updated,
+    archived,
+    // نسخٌ دخلت سجلّ التحديث من `text_superseded` بتاريخ تعديلها لا بتاريخ اليوم.
+    superseded,
+    mode: partial ? 'partial' : 'strict',
+    kind: correction ? 'correction' : 'import',
+  };
   await c.env.DB.prepare(
-    `INSERT INTO legal_imports (id, actor_id, filename, lines, inserted, updated, failed, report_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO legal_imports (id, actor_id, filename, lines, inserted, updated, failed, report_json, created_at, kind)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(importId, c.get('user').id, filename || null, parsed.total, inserted, updated, parsed.errors.length, JSON.stringify(full), Date.now())
+    .bind(
+      importId, c.get('user').id, filename || null, parsed.total, inserted, updated,
+      parsed.errors.length, JSON.stringify(full), Date.now(), correction ? 'correction' : 'import'
+    )
     .run();
-  await audit(c, 'legal.import', importId, { filename, lines: parsed.total, inserted, updated, archived, failed: parsed.errors.length });
+  await audit(c, 'legal.import', importId, {
+    filename, lines: parsed.total, inserted, updated, archived, superseded,
+    failed: parsed.errors.length, kind: correction ? 'correction' : 'import',
+  });
 
   // التضمين بعد الردّ: الكتابة إلى D1 هي العقد، والتضمين يلحق بها. وما لم
   // يلحق في هذا الطلب يبقى معلَّقاً ويصرّفه الـCron.
@@ -143,9 +173,54 @@ app.get('/stats', requireAdmin, async (c) => c.json(await legalStats(c.env)));
 
 app.get('/imports', requireAdmin, async (c) => {
   const rows = await c.env.DB.prepare(
-    'SELECT id, actor_id, filename, lines, inserted, updated, failed, created_at FROM legal_imports ORDER BY created_at DESC LIMIT 50'
+    'SELECT id, actor_id, filename, lines, inserted, updated, failed, created_at, kind FROM legal_imports ORDER BY created_at DESC LIMIT 50'
   ).all();
   return c.json({ imports: rows.results });
+});
+
+/**
+ * ما ينتظر المراجعة البشرية.
+ *
+ * وهذا المسار وحده يراه: البحث والمحادثة والتقارير لا يصلها المحجوب، لأن
+ * الحجب في SQL داخل طبقة الاسترجاع.
+ */
+app.get('/review', requireAdmin, async (c) => {
+  const { articles, total } = await listReviewQueue(c.env, {
+    lawId: c.req.query('law_id') ?? null,
+    offset: Number(c.req.query('offset') ?? 0),
+    limit: Number(c.req.query('limit') ?? 25),
+  });
+  return c.json({ articles, total });
+});
+
+/**
+ * اعتماد مادةٍ محجوبة أو ردُّها إلى الحجب.
+ *
+ * الاعتماد قرارُ إنسانٍ على مادةٍ بعينها: يرفع الحجب عنها وحدها، ويسقط
+ * وحدَه إن تغيّر نصُّها أو نافذةُ تعديلها في استيرادٍ لاحق — فاعتمادُ نصٍّ
+ * لم يعد هو النصّ ليس اعتماداً.
+ */
+app.post('/review/:id', requireAdmin, async (c) => {
+  // الوسيط يُفقد Hono استنتاجَ نوع المعامل، فيُقرأ بقيمة احتياطية فارغة —
+  // ومعرّفٌ فارغ لا يجد مادة، فيُردّ ٤٠٤ كما لو طُلبت مادةٌ غير موجودة.
+  const id = c.req.param('id') ?? '';
+  const reviewed = c.req.query('reviewed') !== '0';
+  const ok = await setChunkReviewed(c.env, id, reviewed, c.get('user').id);
+  if (!ok) return c.json({ error: 'المادة غير موجودة' }, 404);
+  await audit(c, 'legal.review', id, { reviewed });
+  return c.json({ ok: true, id, reviewed });
+});
+
+/**
+ * نافذة التعديلات الخام لمادةٍ بعينها — وما نُسخ من نصّها.
+ *
+ * تُقرأ بطلبٍ صريح لا مع كل نتيجة بحث: نصٌّ خام قد يبلغ آلاف الأحرف، ولا
+ * يُعرض مكان النصّ النافذ أبداً.
+ */
+app.get('/articles/:id/amendment', async (c) => {
+  const row = await getChunkAmendment(c.env, c.req.param('id'));
+  if (!row) return c.json({ error: 'المادة غير موجودة' }, 404);
+  return c.json({ amendment: row });
 });
 
 /**
@@ -176,12 +251,18 @@ app.get('/article', async (c) => {
   if (id) {
     const hit = await getChunkById(c.env, id, includeRepealed);
     if (hit) return c.json({ results: [hit], count: 1 });
-    // موجودةٌ لكنها منسوخة: يُقال لماذا غابت بدل «غير موجودة» المضلّلة.
-    const exists = await c.env.DB.prepare('SELECT 1 AS found FROM legal_chunks WHERE id = ?').bind(id).first();
+    // موجودةٌ لكنها محجوبة: يُقال لماذا غابت بدل «غير موجودة» المضلّلة —
+    // والسببان مختلفان، فمنسوخةٌ خرجت من النظام ومحجوبةٌ لم تُراجَع بعد.
+    const exists = await c.env.DB
+      .prepare('SELECT is_repealed, status, needs_review, reviewed_at FROM legal_chunks WHERE id = ?')
+      .bind(id)
+      .first<{ is_repealed: number; status: string; needs_review: number; reviewed_at: number | null }>();
+    if (!exists) return c.json({ error: 'المادة غير موجودة' }, 404);
+    if (exists.is_repealed === 1 || exists.status === 'repealed') {
+      return c.json({ error: 'المادة منسوخة — أضِف include_repealed=1 للاطّلاع عليها', repealed: true }, 404);
+    }
     return c.json(
-      exists
-        ? { error: 'المادة منسوخة — أضِف include_repealed=1 للاطّلاع عليها', repealed: true }
-        : { error: 'المادة غير موجودة' },
+      { error: 'المادة بانتظار المراجعة — تظهر في شاشة مراجعة المواد حتى تُعتمد', needs_review: true },
       404
     );
   }

@@ -52,6 +52,7 @@ const sqlite = new DatabaseSync(':memory:');
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0001_init.sql'), 'utf8'));
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0012_legal_corpus.sql'), 'utf8'));
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0013_legal_versions.sql'), 'utf8'));
+sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0014_legal_amendments.sql'), 'utf8'));
 
 /** بديل D1 بواجهته نفسها فوق node:sqlite. */
 class Prepared {
@@ -603,6 +604,280 @@ await check('٤ · إحصاءات المحتوى تفصل السارية عن ا
   assert.equal(stats.repealed, q("SELECT COUNT(*) AS n FROM legal_chunks WHERE is_repealed = 1 OR status = 'repealed'")[0].n);
   assert.equal(stats.effective, stats.chunks - stats.repealed);
   assert.equal(stats.repealed, 1, 'المنسوخة الوحيدة في المجموعة');
+});
+
+// ── الإصدار الثاني من المواصفة: التعديل والمراجعة وتكرار الرقم ──
+//
+// أربع قواعد تُضاف إلى العقد، وكلُّها في **طبقة الاسترجاع** لا في الواجهة:
+// حجبُ ما ينتظر المراجعة، وتنبيهُ ما لم يُطبَّق تعديله، وردُّ أخوات الرقم
+// الواحد كلِّها، وأخذُ سجلّ التحديث تاريخَه من `amended_on` لا من وقت السحب.
+
+const AMEND = [
+  // عُدِّلت وطُبِّق تعديلها، ومعها نصُّها السابق في الملف نفسه.
+  line({
+    id: 'نظام-العمل/art-233', law_id: 'labor', doc_type: 'law', article_no: 233,
+    article_label: 'المادة الثالثة والثلاثون بعد المائتين', law_title: 'نظام العمل',
+    text: 'تُنشأ في الوزارة إدارةٌ لتفتيش العمل، ويصدر بتنظيمها قرارٌ من الوزير.',
+    text_superseded: 'يتولى تفتيش العمل مفتشون يصدر بتعيينهم قرارٌ من الوزير.',
+    has_amendments: true, amendment_applied: true, amendment_kind: 'استبدال',
+    amendment_instrument: 'م/44', amended_on: '1446/05/12', amendments_count: 1,
+    embed_text: 'نظام العمل — المادة 233 — إدارة تفتيش العمل وتنظيمها بقرار من الوزير.',
+  }),
+  // عُدِّلت ولم يُطبَّق تعديلها: نصُّها المعروض أصليّ، فتُعرض بتنبيهها.
+  line({
+    id: 'نظام-العمل/art-120', law_id: 'labor', doc_type: 'law', article_no: 120,
+    law_title: 'نظام العمل',
+    text: 'للعامل الحقُّ في إجازةٍ سنوية لا تقلّ مدتها عن واحدٍ وعشرين يوماً.',
+    has_amendments: true, amendment_applied: false, amendment_kind: 'تعديل جزئي',
+    amendment_instrument: 'م/46', amended_on: '1447/01/03', amendments_count: 1,
+    amendments_raw: 'تُستبدل عبارة «واحد وعشرين يوماً» بعبارة «ثلاثين يوماً».',
+    amend_note: 'إحلال عبارةٍ داخل المادة — الدمج يدويّ.',
+    needs_review: false,
+    embed_text: 'نظام العمل — المادة 120 — الإجازة السنوية للعامل ومدتها.',
+  }),
+  // محجوبة حتى تُراجَع: تصنيفٌ آليّ لم يبتّ فيه.
+  line({
+    id: 'نظام-العمل/art-240', law_id: 'labor', doc_type: 'law', article_no: 240,
+    law_title: 'نظام العمل',
+    text: 'يُعاقَب بغرامةٍ ماليةٍ كلُّ من خالف أحكام الفصل الخاص بتشغيل الأحداث.',
+    has_amendments: true, amendment_applied: false, amendment_kind: 'تعديل جماعي',
+    amendments_raw: 'مرسومٌ واحد يعدّل عدة مواد ويعيد صياغتها.',
+    amend_note: 'تعديل جماعي — لا يُطبَّق آلياً.', needs_review: true,
+    embed_text: 'نظام العمل — المادة 240 — عقوبة مخالفة أحكام تشغيل الأحداث.',
+  }),
+  // أخوات الرقم الواحد: مادةٌ قائمة وأخرى أُضيفت بمرسومٍ معدِّل تحمل رقمها.
+  line({
+    id: 'نظام-العمل/art-121', law_id: 'labor', doc_type: 'law', article_no: 121,
+    law_title: 'نظام العمل', is_duplicate: true, duplicate_of: 'نظام-العمل/art-121', duplicate_index: 1,
+    needs_review: true, amend_note: 'رقمٌ مكرّر في المصدر — راجِع أهي مادة مضافة أم خطأ تقطيع.',
+    text: 'تُحسب مدة الإجازة السنوية من تاريخ مباشرة العامل عمله.',
+    embed_text: 'نظام العمل — المادة 121 — احتساب مدة الإجازة السنوية.',
+  }),
+  line({
+    id: 'نظام-العمل/art-121--dup2', law_id: 'labor', doc_type: 'law', article_no: 121,
+    law_title: 'نظام العمل', is_duplicate: true, duplicate_of: 'نظام-العمل/art-121', duplicate_index: 2,
+    needs_review: true, amend_note: 'رقمٌ مكرّر في المصدر — راجِع أهي مادة مضافة أم خطأ تقطيع.',
+    text: 'لا يجوز حرمان العامل من إجازته السنوية ولا التنازل عنها بمقابل.',
+    embed_text: 'نظام العمل — المادة 121 مكرر — حظر الحرمان من الإجازة السنوية والتنازل عنها.',
+  }),
+  // مادةٌ طويلة مقسّمة: جزآن من مادةٍ واحدة لا مادتان.
+  line({
+    id: 'نظام-العمل/art-300#a', law_id: 'labor', doc_type: 'law', article_no: 300, part: 'a', parts_total: 2,
+    law_title: 'نظام العمل', text: 'يلتزم صاحب العمل بتوفير وسائل الوقاية الآتية: أولاً وثانياً وثالثاً.',
+    effective_from: '1448/01/01هـ',
+    embed_text: 'نظام العمل — المادة 300 (جزء أ) — وسائل الوقاية التي يلتزم بها صاحب العمل.',
+  }),
+  line({
+    id: 'نظام-العمل/art-300#b', law_id: 'labor', doc_type: 'law', article_no: 300, part: 'b', parts_total: 2,
+    law_title: 'نظام العمل', text: 'رابعاً وخامساً، وتُحدَّد التفاصيل بقرارٍ من الوزير.',
+    effective_from: '1448/01/01هـ',
+    embed_text: 'نظام العمل — المادة 300 (جزء ب) — تتمّة وسائل الوقاية وتحديد تفاصيلها.',
+  }),
+];
+
+const amend = lib.parseJsonl(AMEND.join('\n'));
+
+await check('٥ · حقول التعديل تُقرأ كما وردت، وتُعَدّ في التقرير ولا تقع صامتة', () => {
+  assert.equal(amend.errors.length, 0, JSON.stringify(amend.errors));
+  assert.equal(amend.rows.length, 7);
+  assert.equal(amend.needsReview, 3, 'ثلاثٌ محجوبة: المادة 240 وأختا الرقم 121');
+  assert.equal(amend.amendmentPending, 2, 'مادتان عُدِّلتا ونصُّهما أصليّ');
+  assert.equal(amend.superseded, 1, 'نصٌّ سابق واحد يدخل سجلّ التحديث');
+  const pending = amend.rows.find((r) => r.id === 'نظام-العمل/art-120');
+  assert.equal(pending.has_amendments, 1);
+  assert.equal(pending.amendment_applied, 0, 'الافتراض الآمن: النصّ أصليّ حتى يُقال غير ذلك');
+  assert.equal(pending.amendment_instrument, 'م/46');
+  assert.equal(pending.amended_on, '1447/01/03');
+});
+
+await check('٩ · نفاذٌ مؤجَّل بتاريخ هجري يُحفظ هجرياً ولا يُرفض السطر لأجل علامته', () => {
+  const part = amend.rows.find((r) => r.id === 'نظام-العمل/art-300#a');
+  assert.equal(part.effective_from, null, 'ليس ميلادياً فلا يُكتب في حقل الميلادي');
+  assert.equal(part.effective_from_hijri, '1448/01/01');
+});
+
+const amendWrite = await lib.upsertLegalChunks(env, amend.rows, { importId: 'imp-amend' });
+await lib.embedPending(env, 100);
+
+await check('٥ · المحجوبة للمراجعة لا تظهر في البحث الآلي ولا تصل سياق التوليد', async () => {
+  const hits = await lib.searchLegal(env, 'عقوبة مخالفة أحكام تشغيل الأحداث', { limit: 10 });
+  assert.ok(!hits.some((h) => h.id === 'نظام-العمل/art-240'), 'مادةٌ لم تُراجَع وصلت نتائج البحث');
+  const rag = await lib.retrieve(env, ['عقوبة مخالفة أحكام تشغيل الأحداث'], 10);
+  assert.ok(!rag.some((r) => r.documentId === 'نظام-العمل/art-240'), 'مادةٌ لم تُراجَع وصلت المحادثة');
+});
+
+await check('٥ · وفتحُ الأرشيف لا يفتح المحجوب — شرطان مستقلّان لا واحد', async () => {
+  const hits = await lib.searchLegal(env, 'عقوبة مخالفة أحكام تشغيل الأحداث', { limit: 10, includeRepealed: true });
+  assert.ok(!hits.some((h) => h.id === 'نظام-العمل/art-240'), '`include_repealed` رفع الحجب عن غير المراجَع');
+});
+
+await check('٥ · وتُرى في طابور المراجعة وفي تصفّح النظام بشارتها', async () => {
+  const queue = await lib.listReviewQueue(env, { lawId: 'labor', limit: 50 });
+  assert.equal(queue.total, 3);
+  assert.ok(queue.articles.some((a) => a.id === 'نظام-العمل/art-240'));
+  assert.ok(queue.articles.every((a) => a.needsReview));
+  const browse = await lib.listLawArticles(env, 'labor', { limit: 200 });
+  const shown = browse.articles.find((a) => a.id === 'نظام-العمل/art-240');
+  assert.ok(shown, 'المحجوبة غابت عن التصفّح فقفز ترقيم المواد بلا تفسير');
+  assert.equal(shown.needsReview, true);
+});
+
+await check('٥ · الاعتماد يفتحها للاسترجاع، والتراجع يعيدها إلى الحجب', async () => {
+  assert.equal(await lib.setChunkReviewed(env, 'نظام-العمل/art-240', true, 'مراجع'), true);
+  const after = await lib.searchLegal(env, 'عقوبة مخالفة أحكام تشغيل الأحداث', { limit: 10 });
+  assert.ok(after.some((h) => h.id === 'نظام-العمل/art-240'), 'الاعتماد لم يرفع الحجب');
+  await lib.setChunkReviewed(env, 'نظام-العمل/art-240', false, 'مراجع');
+  const back = await lib.searchLegal(env, 'عقوبة مخالفة أحكام تشغيل الأحداث', { limit: 10 });
+  assert.ok(!back.some((h) => h.id === 'نظام-العمل/art-240'), 'التراجع لم يُعِد الحجب');
+  assert.equal(await lib.setChunkReviewed(env, 'مادةٌ لا وجود لها', true, 'مراجع'), false);
+});
+
+await check('٥ · واعتمادُ نصٍّ لم يعد هو النصّ ليس اعتماداً: إعادةُ رفعه تُسقطه', async () => {
+  await lib.setChunkReviewed(env, 'نظام-العمل/art-240', true, 'مراجع');
+  const changed = lib.parseJsonl(
+    line({
+      id: 'نظام-العمل/art-240', law_id: 'labor', doc_type: 'law', article_no: 240,
+      law_title: 'نظام العمل',
+      text: 'يُعاقَب بغرامةٍ ماليةٍ مضاعفةٍ كلُّ من خالف أحكام الفصل الخاص بتشغيل الأحداث.',
+      has_amendments: true, amendment_applied: false, needs_review: true,
+      embed_text: 'نظام العمل — المادة 240 — عقوبة مخالفة أحكام تشغيل الأحداث.',
+    })
+  );
+  await lib.upsertLegalChunks(env, changed.rows, { importId: 'imp-again' });
+  const row = q('SELECT reviewed_at, reviewed_by FROM legal_chunks WHERE id = ?', 'نظام-العمل/art-240')[0];
+  assert.equal(row.reviewed_at, null, 'الاعتماد بقي على نصٍّ تغيّر');
+  assert.equal(row.reviewed_by, null);
+});
+
+await check('٦ · التنبيه الإلزامي يرافق النتيجة ويبلغ البرومبت لا الشاشة وحدها', async () => {
+  const hits = await lib.searchLegal(env, 'الإجازة السنوية للعامل ومدتها', { limit: 10 });
+  const hit = hits.find((h) => h.id === 'نظام-العمل/art-120');
+  assert.ok(hit, 'المادة المعدَّلة غير المطبَّق تعديلها لا تُحجب — تُعرض بتنبيهها');
+  assert.equal(hit.hasAmendments, true);
+  assert.equal(hit.amendmentApplied, false);
+  assert.equal(hit.amendmentInstrument, 'م/46');
+  const rag = await lib.retrieve(env, ['الإجازة السنوية للعامل ومدتها'], 10);
+  const context = lib.formatRagContext(rag);
+  assert.ok(context.includes(lib.AMENDMENT_NOTICE), 'نصٌّ أصليّ وصل البرومبت بلا تنبيهه');
+  assert.ok(context.includes('م/46'), 'التنبيه بلا أداته لا يدلّ على موضع الصواب');
+});
+
+await check('٦ · ولا تنبيه على مادةٍ طُبِّق تعديلها — نصُّها هو النافذ', async () => {
+  const rag = await lib.retrieve(env, ['إدارة تفتيش العمل وتنظيمها بقرار من الوزير'], 5);
+  const context = lib.formatRagContext(rag);
+  assert.ok(context.includes('تفتيش العمل'));
+  assert.ok(!context.includes(lib.AMENDMENT_NOTICE), 'تنبيهٌ على نصٍّ نافذ يُفقد التنبيه معناه');
+});
+
+await check('٧ · استدعاء رقمٍ مكرّر يردّ كل سجلاته مرتّبةً لا الأول وحده', async () => {
+  await lib.setChunkReviewed(env, 'نظام-العمل/art-121', true, 'مراجع');
+  await lib.setChunkReviewed(env, 'نظام-العمل/art-121--dup2', true, 'مراجع');
+  const hits = await lib.getArticle(env, { lawId: 'labor', articleNo: '121' });
+  assert.equal(hits.length, 2, 'المادة المضافة بمرسومٍ معدِّل اختفت من النتائج');
+  assert.deepEqual(hits.map((h) => h.id), ['نظام-العمل/art-121', 'نظام-العمل/art-121--dup2']);
+  assert.deepEqual(hits.map((h) => h.duplicateIndex), [1, 2]);
+});
+
+await check('٧ · ولاحقة `--dup` سجلٌّ مستقلّ لا نسخةٌ معدَّلة', () => {
+  const rows = q("SELECT id, text FROM legal_chunks WHERE duplicate_of = 'نظام-العمل/art-121' ORDER BY duplicate_index");
+  assert.equal(rows.length, 2, 'الاستبدال ابتلع إحدى المادتين');
+  assert.notEqual(rows[0].text, rows[1].text);
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_chunk_versions WHERE chunk_id LIKE 'نظام-العمل/art-121%'")[0].n, 0,
+    'مادةٌ مستقلّة أُرشِفت كأنها نصٌّ أُزيح');
+});
+
+await check('٧ · والمحجوب لا يدخل مع أخواته: الضمّ يمرّ بالتصفية نفسها', async () => {
+  await lib.setChunkReviewed(env, 'نظام-العمل/art-121--dup2', false, 'مراجع');
+  const hits = await lib.getArticle(env, { lawId: 'labor', articleNo: '121' });
+  assert.deepEqual(hits.map((h) => h.id), ['نظام-العمل/art-121']);
+  await lib.setChunkReviewed(env, 'نظام-العمل/art-121--dup2', true, 'مراجع');
+});
+
+await check('٨ · سجلّ التحديث يأخذ تاريخه من `amended_on` وينسب التغيير إلى أداته', async () => {
+  assert.equal(amendWrite.superseded, 1);
+  const { changes } = await lib.listLawChanges(env, 'labor', { limit: 50 });
+  const seeded = changes.find((v) => v.chunk_id === 'نظام-العمل/art-233');
+  assert.ok(seeded, 'النصّ السابق الوارد في الملف لم يدخل سجلّ التحديث');
+  assert.equal(seeded.amended_on, '1446/05/12', 'السجلّ يقول إن التعديل وقع يوم استوردناه');
+  assert.equal(seeded.amendment_instrument, 'م/44');
+  assert.equal(seeded.change_kind, 'amendment');
+  assert.equal(seeded.origin, 'superseded');
+  assert.match(seeded.text, /مفتشون/);
+  assert.match(seeded.current_text, /إدارةٌ لتفتيش العمل/);
+});
+
+await check('٨ · ومادةٌ ذات `text_superseded` لا تولّد سجلاً ثانياً في المواد', () => {
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_chunks WHERE id LIKE 'نظام-العمل/art-233%'")[0].n, 1);
+});
+
+await check('٨ · وإعادة رفع الملف نفسه لا تكرّر النسخة في السجلّ', async () => {
+  const before = q("SELECT COUNT(*) AS n FROM legal_chunk_versions WHERE chunk_id = 'نظام-العمل/art-233'")[0].n;
+  await lib.upsertLegalChunks(env, lib.parseJsonl(AMEND[0]).rows, { importId: 'imp-repeat' });
+  const after = q("SELECT COUNT(*) AS n FROM legal_chunk_versions WHERE chunk_id = 'نظام-العمل/art-233'")[0].n;
+  assert.equal(after, before, 'إعادة الرفع ضاعفت النصّ السابق في السجلّ');
+});
+
+await check('٨ · ووسم «تصحيح بيانات» يميّز خطأ السحب عن التعديل النظامي', async () => {
+  const fixed = lib.parseJsonl(
+    line({
+      id: 'نظام-العمل/art-120', law_id: 'labor', doc_type: 'law', article_no: 120,
+      law_title: 'نظام العمل',
+      text: 'للعامل الحقُّ في إجازةٍ سنوية لا تقلّ مدتها عن واحدٍ وعشرين يوماً، تُمنح قبل استحقاقها.',
+      has_amendments: true, amendment_applied: false, amendment_instrument: 'م/46', amended_on: '1447/01/03',
+      embed_text: 'نظام العمل — المادة 120 — الإجازة السنوية للعامل ومدتها.',
+    })
+  );
+  await lib.upsertLegalChunks(env, fixed.rows, { importId: 'imp-fix', correction: true });
+  const row = q(
+    "SELECT change_kind, origin, amended_on FROM legal_chunk_versions WHERE chunk_id = 'نظام-العمل/art-120' ORDER BY rowid DESC"
+  )[0];
+  assert.equal(row.change_kind, 'correction', 'تصحيحُ سحبٍ ظهر في السجلّ تعديلاً نظامياً');
+  assert.equal(row.origin, 'displaced');
+  assert.equal(row.amended_on, '1447/01/03', 'تاريخ التعديل يبقى تاريخه ولو كان الفرق تصحيحاً');
+});
+
+await check('٩ · أجزاء المادة المقسّمة تبقى مقاطع متتابعة بترتيب الملف', async () => {
+  const { articles } = await lib.listLawArticles(env, 'labor', { limit: 200 });
+  const parts = articles.filter((a) => a.id.startsWith('نظام-العمل/art-300'));
+  assert.deepEqual(parts.map((a) => a.part), ['a', 'b'], 'الأجزاء تفرّقت أو انقلب ترتيبها');
+  assert.ok(parts.every((a) => a.partsTotal === 2));
+  const at = articles.findIndex((a) => a.id === 'نظام-العمل/art-300#a');
+  assert.equal(articles[at + 1].id, 'نظام-العمل/art-300#b', 'جزءٌ فصل بينه وبين تتمّته مادةٌ أخرى');
+});
+
+await check('٩ · وبنية النظام وعنوان المادة يصلان النتيجة ويُفهرسان لفظياً', async () => {
+  const hits = await lib.searchLegal(env, 'المادة الثالثة والثلاثون بعد المائتين', { limit: 5, lexicalOnly: true });
+  assert.ok(hits.some((h) => h.id === 'نظام-العمل/art-233'), 'لفظُ رقم المادة لا يجدها');
+  const hit = hits.find((h) => h.id === 'نظام-العمل/art-233');
+  assert.equal(hit.articleLabel, 'المادة الثالثة والثلاثون بعد المائتين');
+  assert.equal(hit.amendmentApplied, true);
+});
+
+await check('٩ · والإحصاءات تفصل المحجوب عمّا يُعرض بتنبيه', async () => {
+  const stats = await lib.legalStats(env);
+  assert.equal(
+    stats.needs_review,
+    q('SELECT COUNT(*) AS n FROM legal_chunks WHERE needs_review = 1 AND reviewed_at IS NULL')[0].n
+  );
+  assert.equal(
+    stats.amendment_pending,
+    q('SELECT COUNT(*) AS n FROM legal_chunks WHERE has_amendments = 1 AND amendment_applied = 0')[0].n
+  );
+});
+
+await check('٩ · ونافذة التعديلات تُقرأ بطلبٍ صريح ولا تظهر في نتيجة بحث', async () => {
+  // تُعاد المادة إلى صورتها في الملف ثم تُعتمد: الفحص السابق أعاد رفعها بنصٍّ
+  // آخر بلا نافذة تعديل، فأسقط النافذة والاعتماد معاً — وهو الصواب.
+  await lib.upsertLegalChunks(env, lib.parseJsonl(AMEND[2]).rows, { importId: 'imp-restore' });
+  await lib.setChunkReviewed(env, 'نظام-العمل/art-240', true, 'مراجع');
+  const amendment = await lib.getChunkAmendment(env, 'نظام-العمل/art-240');
+  assert.match(amendment.amendments_raw, /مرسومٌ واحد يعدّل عدة مواد/);
+  assert.match(amendment.amend_note, /تعديل جماعي/);
+  const hits = await lib.searchLegal(env, 'عقوبة مخالفة أحكام تشغيل الأحداث', { limit: 10 });
+  const hit = hits.find((h) => h.id === 'نظام-العمل/art-240');
+  assert.ok(hit, 'المادة اعتُمدت فينبغي أن تظهر');
+  assert.equal('amendments_raw' in hit, false, 'النصّ الخام تسرّب إلى نتيجة البحث');
+  assert.equal('text_superseded' in hit, false, 'النصّ المنسوخ تسرّب إلى نتيجة البحث');
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
