@@ -35,6 +35,7 @@
 //    مرتّبةً بـ`duplicate_index`، لا الأولى وحدها: المرسوم المعدِّل يُدخل
 //    مادةً جديدة برقم مادةٍ قائمة، وردُّ الأولى يُخفي الثانية بلا أثر.
 import { normalizeArabic, normalizeArticleNo, extractArticleNo, ftsMatchExpression } from './arabic';
+import { toHijri } from './hijri';
 import { embed, embedBatch } from './embed';
 import { uuid } from './crypto';
 import type { Env } from '../types';
@@ -129,6 +130,15 @@ const EMBED_MAX_CHARS = 8000;
  */
 export const AMENDMENT_NOTICE = 'هذه المادة عُدّلت، والنص المعروض هو الأصلي — راجع نص التعديل';
 
+/**
+ * تنبيه النفاذ المؤجَّل.
+ *
+ * نصُّه مسجَّل في `naf-terms.md` كسابقه. ومادةٌ تاريخُ نفاذها لم يحلّ نصُّها
+ * سابقٌ لأوانه: الاستشهاد به اليوم استشهادٌ بما ليس معمولاً به بعد — وهو من
+ * جنس الخطأ الأول، فيرافق النتيجةَ حيث رافقه.
+ */
+export const DEFERRED_NOTICE = 'هذه المادة نافذة من تاريخٍ لم يحل بعد — راجع تاريخ النفاذ قبل الاستشهاد';
+
 /** ثابت دمج الرتب (RRF). القيمة المعتادة، تُهدّئ أثر الرتب الأولى. */
 const RRF_K = 60;
 
@@ -162,6 +172,8 @@ export interface LegalHit {
   issueDateHijri: string | null;
   effectiveFrom: string | null;
   effectiveFromHijri: string | null;
+  /** نفاذٌ مؤجَّل: تاريخ النفاذ لم يحلّ بعد، فالنصّ سابقٌ لأوانه. */
+  effectivePending: boolean;
   effectiveTo: string | null;
   sourceUrl: string | null;
   /** النصّ كما ورد — هو ما يُعرض ويُستشهد به. */
@@ -1372,6 +1384,7 @@ function toHit(r: HitRow): LegalHit {
     issueDateHijri: r.issue_date_hijri,
     effectiveFrom: r.effective_from,
     effectiveFromHijri: r.effective_from_hijri,
+    effectivePending: isEffectivePending(r.effective_from, r.effective_from_hijri),
     effectiveTo: r.effective_to,
     sourceUrl: r.source_url,
     text: r.text,
@@ -1421,6 +1434,38 @@ async function expandDuplicates(env: Env, hits: LegalHit[], filters: LegalFilter
   const merged = new Map(hits.map((h) => [h.id, h]));
   for (const r of rows.results ?? []) if (!merged.has(r.id)) merged.set(r.id, toHit(r));
   return Array.from(merged.values()).sort(byDuplicateOrder);
+}
+
+/**
+ * هل تاريخ نفاذ المادة لم يحلّ بعد؟
+ *
+ * يُقارَن كلُّ تقويم بنظيره: الميلاديّ بالميلاديّ نصّاً (`YYYY-MM-DD` يترتّب
+ * نصّياً كما يترتّب زمنياً)، والهجريّ بهجريّ اليوم. والتحويل بين التقويمين
+ * لكل مادة أثقل من أن يُحتمل، ولا حاجة إليه: المقارنة داخل التقويم الواحد.
+ *
+ * ويُحسب هجريُّ اليوم مرّةً في اليوم لا مرّةً لكل صفّ.
+ */
+let todayHijriCache: { on: string; value: string } | null = null;
+
+function hijriToday(now: Date): string {
+  const on = now.toISOString().slice(0, 10);
+  if (todayHijriCache?.on !== on) todayHijriCache = { on, value: toHijri(now) };
+  return todayHijriCache.value;
+}
+
+/** أرقام تاريخٍ هجريّ للمقارنة: «1448/01/01هـ» ⇦ 14480101. */
+function hijriKey(value: string | null): number | null {
+  if (!value) return null;
+  const m = /(\d{3,4})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{1,2})/.exec(normalizeArabic(value));
+  if (!m) return null;
+  return Number(m[1]) * 10_000 + Number(m[2]) * 100 + Number(m[3]);
+}
+
+function isEffectivePending(gregorian: string | null, hijri: string | null, now = new Date()): boolean {
+  if (gregorian) return gregorian > now.toISOString().slice(0, 10);
+  const from = hijriKey(hijri);
+  const today = hijriKey(hijriToday(now));
+  return from !== null && today !== null && from > today;
 }
 
 /** ترتيب أخوات الرقم الواحد: `duplicate_index` ثم ترتيب الملف. */

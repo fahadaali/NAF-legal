@@ -696,6 +696,32 @@ await check('٩ · نفاذٌ مؤجَّل بتاريخ هجري يُحفظ هج
   assert.equal(part.effective_from_hijri, '1448/01/01');
 });
 
+await check('٩ · والنفاذ المؤجَّل يُحسب في طبقة الاسترجاع فيبلغ الشاشة والبرومبت معاً', async () => {
+  const deferred = lib.parseJsonl(
+    [
+      line({
+        id: 'نظام-العمل/art-401', law_id: 'labor', doc_type: 'law', article_no: 401, law_title: 'نظام العمل',
+        effective_from: '1499/01/01هـ',
+        text: 'تسري أحكام هذا الفصل على منشآت النقل البحري من تاريخ النفاذ المحدَّد.',
+        embed_text: 'نظام العمل — المادة 401 — سريان أحكام الفصل على منشآت النقل البحري.',
+      }),
+      line({
+        id: 'نظام-العمل/art-402', law_id: 'labor', doc_type: 'law', article_no: 402, law_title: 'نظام العمل',
+        effective_from: '2020-01-01',
+        text: 'تسري أحكام هذا الفصل على منشآت النقل البري من تاريخ النفاذ المحدَّد.',
+        embed_text: 'نظام العمل — المادة 402 — سريان أحكام الفصل على منشآت النقل البري.',
+      }),
+    ].join('\n')
+  );
+  await lib.upsertLegalChunks(env, deferred.rows, { importId: 'imp-deferred' });
+  const [pending] = await lib.getArticle(env, { lawId: 'labor', articleNo: '401' });
+  const [inForce] = await lib.getArticle(env, { lawId: 'labor', articleNo: '402' });
+  assert.equal(pending.effectivePending, true, 'نصٌّ سابقٌ لأوانه يُعرض كأنه جارٍ');
+  assert.equal(inForce.effectivePending, false, 'تاريخٌ حلّ من سنين يُعرض تنبيهاً بلا سبب');
+  const context = lib.formatRagContext(await lib.retrieve(env, ['سريان أحكام الفصل على منشآت النقل البحري'], 3));
+  assert.ok(context.includes(lib.DEFERRED_NOTICE), 'النفاذ المؤجَّل لم يبلغ البرومبت');
+});
+
 const amendWrite = await lib.upsertLegalChunks(env, amend.rows, { importId: 'imp-amend' });
 await lib.embedPending(env, 100);
 

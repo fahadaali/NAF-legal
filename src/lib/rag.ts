@@ -9,7 +9,7 @@
 //
 // والتصفية على السريان تُطبَّق على المصدرين هنا — في طبقة الاسترجاع — لا في
 // الواجهة. فأيّ مسار: محادثة أو تقرير أو أتمتة أو واجهة برمجية، يمرّ بها.
-import { searchLegal, AMENDMENT_NOTICE, EFFECTIVE_STATUSES, type LegalHit } from './legal';
+import { searchLegal, AMENDMENT_NOTICE, DEFERRED_NOTICE, EFFECTIVE_STATUSES, type LegalHit } from './legal';
 import { embed } from './embed';
 import type { Env } from '../types';
 
@@ -74,6 +74,9 @@ export interface RagResult {
   amendmentPending?: boolean;
   amendmentInstrument?: string;
   amendedOn?: string;
+  /** تاريخ نفاذها لم يحلّ بعد — نصُّها سابقٌ لأوانه. */
+  effectivePending?: boolean;
+  effectiveFrom?: string;
 }
 
 /** ثابت دمج الرتب — كما في `lib/legal.ts`. */
@@ -152,6 +155,8 @@ function fromLegalHit(h: LegalHit): RagResult {
     amendmentPending: h.hasAmendments && !h.amendmentApplied,
     amendmentInstrument: h.amendmentInstrument ?? undefined,
     amendedOn: h.amendedOn ?? undefined,
+    effectivePending: h.effectivePending,
+    effectiveFrom: h.effectiveFrom ?? h.effectiveFromHijri ?? undefined,
   };
 }
 
@@ -267,22 +272,28 @@ export async function searchConversations(env: Env, userId: string, query: strin
 export function formatRagContext(results: RagResult[]): string {
   if (!results.length) return '';
   const blocks = results
-    .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${amendmentLine(r)}${r.text}`)
+    .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`)
     .join('\n\n---\n\n');
   return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس:\n\n${blocks}\n</سياق_نظامي>`;
 }
 
 /**
- * تنبيه المادة المعدَّلة، فوق نصّها مباشرةً.
+ * تنبيهات المادة، فوق نصّها مباشرةً.
  *
- * مسارُ التوليد لا يمرّ بشاشة، فلو بقي التنبيه في الواجهة وحدها لوصل النصُّ
- * الأصليّ إلى البرومبت مجرَّداً واستُشهد به على أنه الجاري — وهو أخطر خطأ في
- * منتج قانوني. وموضعُه قبل النصّ لا بعده: ما يُقرأ بعد النصّ يُقرأ متأخراً.
+ * مسارُ التوليد لا يمرّ بشاشة، فلو بقيت التنبيهات في الواجهة وحدها لوصل
+ * النصُّ إلى البرومبت مجرَّداً واستُشهد به على أنه الجاري — وهو أخطر خطأ في
+ * منتج قانوني. وموضعُها قبل النصّ لا بعده: ما يُقرأ بعد النصّ يُقرأ متأخراً.
  */
-function amendmentLine(r: RagResult): string {
-  if (!r.amendmentPending) return '';
-  const by = [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' — ');
-  return `تنبيه: ${AMENDMENT_NOTICE}${by ? ` (${by})` : ''}\n`;
+function noticeLines(r: RagResult): string {
+  const lines: string[] = [];
+  if (r.amendmentPending) {
+    const by = [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' — ');
+    lines.push(`تنبيه: ${AMENDMENT_NOTICE}${by ? ` (${by})` : ''}`);
+  }
+  if (r.effectivePending) {
+    lines.push(`تنبيه: ${DEFERRED_NOTICE}${r.effectiveFrom ? ` (${r.effectiveFrom})` : ''}`);
+  }
+  return lines.length ? `${lines.join('\n')}\n` : '';
 }
 
 /**
