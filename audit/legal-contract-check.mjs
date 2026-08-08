@@ -1244,10 +1244,77 @@ await check('١٩ · الاعتماد جملةً بمعرّفاتٍ محدَّد
   assert.equal(mixed.done, 1);
   assert.deepEqual(mixed.failed.map((f) => f.id), ['لا-وجود-له']);
 
-  // السقف يقصّ ما زاد ولا يمرّره صامتاً.
+  // السقف يقف عند خمسين، وما زاد يُردّ بمعرّفه لا يُقصّ صامتاً: قصٌّ خفيّ
+  // يجعل المراجع يرى «تمّ» وقد بقي ما حدَّده بلا قرارٍ ولا خبر.
   assert.equal(lib.BULK_LIMIT, 50);
   const many = await lib.reviewChunks(env, Array.from({ length: 80 }, (_, i) => `وهم-${i}`), 'approve', 'مراجع');
-  assert.equal(many.failed.length, lib.BULK_LIMIT, 'السقف لم يُطبَّق على النداء');
+  assert.equal(many.done, 0, 'اعتُمد ما لا وجود له');
+  assert.equal(many.failed.length, 80, 'معرّفاتٌ سقطت من الردّ بلا ذكر');
+  const overflow = many.failed.filter((f) => /تجاوز سقف النداء الواحد/.test(f.error));
+  assert.equal(overflow.length, 80 - lib.BULK_LIMIT, 'الزائد على السقف لم يُردّ بسببه');
+  assert.deepEqual(
+    overflow.map((f) => f.id),
+    Array.from({ length: 80 - lib.BULK_LIMIT }, (_, i) => `وهم-${i + lib.BULK_LIMIT}`),
+    'الزائد المردود ليس هو الزائد المرسل'
+  );
+  // والسقف الذي يعرفه المتصفّح هو سقف الخادم: اختلافُهما يجعل الشاشة تقسّم
+  // على عددٍ لا يقبله المسار، فيعود نصفُ كل دفعةٍ مردوداً.
+  const webApi = readFileSync(path.join(ROOT, 'web', 'src', 'lib', 'api.ts'), 'utf8');
+  const declared = webApi.match(/REVIEW_BULK_LIMIT\s*=\s*(\d+)/);
+  assert.ok(declared, 'الشاشة لا تعرف سقف النداء');
+  assert.equal(Number(declared[1]), lib.BULK_LIMIT, 'سقف الشاشة خالف سقف الخادم');
+});
+
+await check('١٩ · وتحديد الطابور كلِّه يأتي بمعرّفاته لا بشرطٍ يُطابقها', async () => {
+  // «تحديد الكل» تحدّد صفحةً، وهذه تتجاوزها إلى ما لم يُعرض. والفرق الذي
+  // يجعلها مقبولة أنها تُحصي أوّلاً: العدد الذي يراه المراجع قبل التأكيد هو
+  // العدد الذي يقع عليه القرار، وكلُّ معرّف يعود صريحاً فيبقى قيدُه وحده.
+  const all = await lib.listReviewQueueIds(env, {});
+  const { total } = await lib.listReviewQueue(env, { limit: 1 });
+  assert.equal(all.ids.length, all.total, 'العدد المعلن غير العدد المسلَّم');
+  assert.equal(all.total, total, 'إحصاء التحديد الشامل خالف إحصاء الطابور');
+  assert.equal(all.truncated, 0);
+  assert.equal(new Set(all.ids).size, all.ids.length, 'معرّفٌ مكرّر في التحديد');
+
+  // وما يجلبه هو ما ينتظر: لا معتمَدةً ولا ملغاةً ولا خارج الطابور.
+  const stray = all.ids.filter((id) => {
+    const row = q('SELECT needs_review, review_status, is_repealed FROM legal_chunks WHERE id = ?', id)[0];
+    return !row || row.needs_review !== 1 || row.review_status !== 'pending' || row.is_repealed !== 0;
+  });
+  assert.deepEqual(stray, [], 'التحديد الشامل طال ما ليس في الطابور');
+
+  // والمرشّح يضيّقه كما يضيّق الصفحة: تحديدٌ يشمل طابوراً غير المعروض خيانةٌ
+  // للعدد المكتوب على الزرّ.
+  const dup = await lib.listReviewQueueIds(env, { queue: 'duplicate', lawId: 'review' });
+  const page = await lib.listReviewQueue(env, { queue: 'duplicate', lawId: 'review', limit: 500 });
+  assert.equal(dup.total, page.total, 'الشامل المرشَّح خالف الطابور المرشَّح');
+  assert.ok(dup.total < all.total, 'المرشّح لم يضيّق شيئاً');
+
+  // والشامل داخلٌ فيما يُعرض لا يتجاوزه.
+  const pageIds = new Set(page.articles.map((a) => a.id));
+  assert.ok(dup.ids.every((id) => pageIds.has(id)), 'الشامل جاء بما لا يُعرض');
+
+  // وما عُرض ولم يدخل التحديد أختُ رقمٍ بُتَّ فيها: تُعرض بجانب أختها ليُحكم
+  // عليهما معاً، ولا تُعتمد ثانيةً بتحديدٍ شامل — قرارٌ وقع لا يقع مرّتين.
+  const context = page.articles.filter((a) => !dup.ids.includes(a.id));
+  const missed = context.filter(
+    (a) => q('SELECT review_status FROM legal_chunks WHERE id = ?', a.id)[0]?.review_status === 'pending'
+  );
+  assert.deepEqual(missed.map((a) => a.id), [], 'الشامل أسقط مادةً منتظرة في الطابور');
+  assert.ok(context.length > 0, 'لا أختَ رقمٍ مبتوتاً فيها لفحص هذا الفرق');
+
+  // وسقف الجلب يُعلَن حين يُبلَغ لا يُقصّ صامتاً.
+  assert.equal(lib.QUEUE_IDS_MAX, 5000);
+  const source = readFileSync(path.join(ROOT, 'src', 'lib', 'legal.ts'), 'utf8');
+  assert.match(source, /truncated:\s*Math\.max\(0,\s*\(total\?\.n \?\? 0\) - ids\.length\)/);
+});
+
+await check('١٩ · ومسارُ المعرّفات قراءةٌ للمسؤول لا كتابةٌ بشرط', () => {
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /app\.get\('\/review\/ids', requireAdmin/, 'مسار المعرّفات ليس قراءةً للمسؤول');
+  // ولا يقبل مسارُ القرار شرطاً: `ids` وحدها، فلا «اعتمد كل ما يطابق».
+  const body = routes.slice(routes.indexOf("app.post('/review-selected'"));
+  assert.ok(!/\bqueue\b/.test(body.slice(0, 900)), 'مسار القرار يقبل شرطاً بدل المعرّفات');
 });
 
 await check('١٩ · وقيدُ الاعتماد جملةً يُميَّز في السجلّ عن قرارٍ فُتحت له المادة', async () => {

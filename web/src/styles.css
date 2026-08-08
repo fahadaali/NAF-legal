@@ -716,6 +716,9 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .confirm-card { width: min(32rem, 96vw); height: auto; max-height: 86vh; }
 .confirm-body { padding: var(--space-4); line-height: var(--leading-relaxed, 1.9); }
 .confirm-body p { margin: 0; }
+/* جملةٌ ثانية في السؤال تُفصل عن أولاها: «منها كذا لم تظهر على الشاشة» خبرٌ
+   قائم بنفسه، وإلصاقُه بما قبله يجعله ذيلاً يمرّ عليه الطرف. */
+.confirm-body p + p { margin-block-start: var(--space-3); }
 
 /* ── شاشة البحث في المنصة ── */
 .page-title { font-size: 1.5rem; margin-top: 0; }

@@ -326,6 +326,15 @@ function reviewQuery(f: ReviewFilters, offset?: number, limit?: number): string 
   return p.toString();
 }
 
+/**
+ * سقف المعرّفات في نداء الاعتماد الجملي الواحد.
+ *
+ * يقابل `BULK_LIMIT` في `src/lib/legal.ts`، وهو مكتوبٌ هنا ليقسّم المرسِل
+ * تحديداً أكبر منه على دفعات قبل أن يرسل. واختلافُه عن سقف الخادم لا يمرّ
+ * صامتاً: الخادم يردّ الزائد في `failed` بمعرّفه، ويردّ سقفه في `limit`.
+ */
+export const REVIEW_BULK_LIMIT = 50;
+
 /** عدّاد طابورٍ واحد: المنجز من الإجمالي. */
 export interface QueueCount {
   key: string;
@@ -602,9 +611,19 @@ export const api = {
       `/legal/review/audit?limit=${limit}${chunkId ? `&chunk_id=${encodeURIComponent(chunkId)}` : ''}`
     ),
   /**
+   * معرّفات الطابور كلِّه — لتحديدٍ يشمله لا يشمل صفحته.
+   *
+   * تُجلب لتعود صريحةً إلى مسار القرار: العدد الذي يراه المراجع قبل التأكيد
+   * هو العدد الذي يقع عليه القرار، وكلُّ اعتماد يبقى مقيَّداً وحده.
+   */
+  legalReviewQueueIds: (filters: ReviewFilters = {}) =>
+    req<{ ids: string[]; total: number; truncated: number }>(`/legal/review/ids?${reviewQuery(filters)}`),
+  /**
    * قرارٌ واحد على موادّ محدَّدة بأعيانها.
    *
-   * بمعرّفاتها لا بشرط: ما لم يظهر على الشاشة ويُؤشَّر عليه لا يُعتمد.
+   * بمعرّفاتها لا بشرط: كلُّ معرّفٍ يمرّ صريحاً، فيبقى القرار مقيَّداً وحده.
+   * وما زاد على {@link REVIEW_BULK_LIMIT} في النداء الواحد يعود في `failed`،
+   * فالمرسِل يقسّم على السقف ولا يعتمد على قصٍّ في الطرف الآخر.
    */
   legalReviewSelected: (ids: string[], action: Exclude<ReviewAction, 'edit'>, note?: string) =>
     req<{ ok: true; done: number; failed: { id: string; error: string }[]; limit: number }>(

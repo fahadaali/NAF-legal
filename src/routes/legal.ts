@@ -20,6 +20,7 @@ import {
   listLaws,
   listLawArticles,
   listReviewQueue,
+  listReviewQueueIds,
   listReviewAudit,
   listCaptureBatches,
   reviewChunk,
@@ -216,6 +217,24 @@ app.get('/review', requireAdmin, async (c) => {
 app.get('/review/dashboard', requireAdmin, async (c) =>
   c.json(
     await reviewDashboard(c.env, {
+      lawId: c.req.query('law_id') ?? null,
+      capturedAt: c.req.query('captured_at') ?? null,
+      docType: c.req.query('doc_type') ?? null,
+    })
+  )
+);
+
+/**
+ * معرّفات الطابور كلِّه — لتحديدٍ يشمله لا يشمل صفحته.
+ *
+ * قراءةٌ لا كتابة: تُجلب المعرّفات لتعود صريحةً إلى مسار القرار، فيبقى العدد
+ * الذي يراه المراجع قبل التأكيد هو العدد الذي يقع عليه القرار، ويبقى كلُّ
+ * اعتماد مقيَّداً وحده في سجلّ التدقيق.
+ */
+app.get('/review/ids', requireAdmin, async (c) =>
+  c.json(
+    await listReviewQueueIds(c.env, {
+      queue: (c.req.query('queue') as ReviewQueueKey) || null,
       lawId: c.req.query('law_id') ?? null,
       capturedAt: c.req.query('captured_at') ?? null,
       docType: c.req.query('doc_type') ?? null,
