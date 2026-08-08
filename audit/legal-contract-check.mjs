@@ -62,6 +62,7 @@ sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0012_legal_corpus.sql'
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0013_legal_versions.sql'), 'utf8'));
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0014_legal_amendments.sql'), 'utf8'));
 sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0015_legal_review.sql'), 'utf8'));
+sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0016_review_bulk.sql'), 'utf8'));
 
 /** بديل D1 بواجهته نفسها فوق node:sqlite. */
 class Prepared {
@@ -1222,20 +1223,51 @@ await check('١٩ · الاعتماد لا يحذف نافذة التعديلا�
   assert.equal(after.text_superseded, before.text_superseded, 'النصّ السابق ضاع بعد التحرير');
 });
 
-await check('١٩ · ولا اعتماد بالجملة: القرار يقع على مادةٍ بعينها بمعرّفها', async () => {
-  // الاعتماد الجماعي بلا قراءة يُفرغ المراجعة من معناها. والمنع في المسار
-  // نفسه: معرّفٌ واحد في العنوان، ولا مسار يقبل قائمة ولا شاشةَ تعرض زرّاً
-  // يعتمد الطابور كلَّه.
-  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
-  // كلُّ ما يكتب في المراجعة مسارٌ واحد على معرّفٍ واحد. و`/review/batches`
-  // قراءةٌ لدفعات الاستيراد للترشيح، لا كتابةً على دفعة.
-  const writers = [...routes.matchAll(/app\.post\('(\/review[^']*)'/g)].map((m) => m[1]);
-  assert.deepEqual(writers, ['/review/:id'], 'ظهر مسارُ كتابةٍ ثانٍ في المراجعة');
-  const screen = readFileSync(path.join(ROOT, 'web', 'src', 'components', 'LegalReview.tsx'), 'utf8');
-  assert.ok(!/اعتماد الكل|اعتماد الطابور|approveAll/.test(screen), 'ظهر زرُّ اعتمادٍ جماعي في الشاشة');
-  // ومادةٌ لا تُعتمد بمرور الوقت: لا مسار ولا مهمّة تُغيّر الحال بلا فاعل.
+await check('١٩ · الاعتماد جملةً بمعرّفاتٍ محدَّدة وبسقف، ولا يقبل «كل الطابور»', async () => {
+  // المواصفة تمنع «الاعتماد الجماعي بلا قراءة»، وقرارُ المالك أجازه على
+  // محدَّدٍ يراه المراجع. فالحدُّ الفاصل أن يأتي بمعرّفاته لا بشرطٍ يُطابقها،
+  // وأن يقف عند سقفٍ يقابل ما تراه الشاشة.
+  const before = await lib.reviewQueueCounts(env, { lawId: 'review' });
+  const { articles } = await lib.listReviewQueue(env, { lawId: 'review', limit: 50 });
+  const ids = articles.slice(0, 2).map((a) => a.id);
+  assert.equal(ids.length, 2, 'الطابور لا يحمل مادتين للفحص');
+
+  const res = await lib.reviewChunks(env, ids, 'approve', 'مراجع');
+  assert.equal(res.done, 2);
+  assert.equal(res.failed.length, 0);
+  const after = await lib.reviewQueueCounts(env, { lawId: 'review' });
+  const pending = (cs) => cs.reduce((n, c) => n + c.pending, 0);
+  assert.ok(pending(after) < pending(before), 'الاعتماد جملةً لم يُخرجها من الطابور');
+
+  // معرّفٌ لا وجود له يُردّ وحده ولا يُسقط الباقي.
+  const mixed = await lib.reviewChunks(env, ['مراجعة/art-9', 'لا-وجود-له'], 'defer', 'مراجع');
+  assert.equal(mixed.done, 1);
+  assert.deepEqual(mixed.failed.map((f) => f.id), ['لا-وجود-له']);
+
+  // السقف يقصّ ما زاد ولا يمرّره صامتاً.
+  assert.equal(lib.BULK_LIMIT, 50);
+  const many = await lib.reviewChunks(env, Array.from({ length: 80 }, (_, i) => `وهم-${i}`), 'approve', 'مراجع');
+  assert.equal(many.failed.length, lib.BULK_LIMIT, 'السقف لم يُطبَّق على النداء');
+});
+
+await check('١٩ · وقيدُ الاعتماد جملةً يُميَّز في السجلّ عن قرارٍ فُتحت له المادة', async () => {
+  const entries = await lib.listReviewAudit(env, { limit: 200 });
+  const bulk = entries.filter((e) => e.via === 'bulk');
+  const single = entries.filter((e) => e.via === 'single');
+  assert.ok(bulk.length > 0, 'لا أثر للاعتماد جملةً في السجلّ');
+  assert.ok(single.length > 0, 'ضاع تمييزُ القرار المفرد');
+  assert.ok(entries.every((e) => e.via === 'bulk' || e.via === 'single'), 'قيدٌ بلا وسمٍ لكيفيّته');
+});
+
+await check('١٩ · ولا اعتماد بمرور الوقت: لا مهمّة خلفية تمسّ حال المراجعة', () => {
   const cron = readFileSync(path.join(ROOT, 'src', 'cron.ts'), 'utf8');
   assert.ok(!/review_status/.test(cron), 'الـCron يمسّ حال المراجعة');
+  // ومسارا الكتابة اثنان لا ثالث لهما: مادةٌ بعينها، ومحدَّدٌ بمعرّفاته.
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  const writers = [...routes.matchAll(/app\.post\('(\/review[^']*)'/g)].map((m) => m[1]).sort();
+  assert.deepEqual(writers, ['/review-selected', '/review/:id'], 'ظهر مسارُ كتابةٍ ثالث في المراجعة');
+  // والتحرير خارج الجملة: نصٌّ يُحرَّر يُحرَّر مادةً مادة.
+  assert.match(routes, /\['approve', 'exclude', 'defer', 'note', 'undo'\]\.includes\(action\)/);
 });
 
 await check('١٩ · أخوات الرقم تُعرض مجتمعة في الطابور لا فرادى', async () => {

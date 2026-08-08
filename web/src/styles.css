@@ -709,6 +709,13 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 /* قيمةُ القيد قد تكون مادةً كاملة: تُقصّ في الجدول ولا تمدّه، ويُقرأ كاملُها
    في اللوح فوقها. */
 .audit-value { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* الصفّ المفتوح في البطاقة أسفل القائمة — يُعرف بلونه وبزرّه معاً. */
+.data-table tr.row-open > td { background: var(--muted); }
+/* نافذة التأكيد: نصٌّ قصير وزرّان. و`.modal-card` مبنيّةٌ لعارض المستندات
+   بارتفاعٍ ثابت `86vh` — فسؤالٌ من سطرين فيها بطاقةٌ فارغة تملأ الشاشة. */
+.confirm-card { width: min(32rem, 96vw); height: auto; max-height: 86vh; }
+.confirm-body { padding: var(--space-4); line-height: var(--leading-relaxed, 1.9); }
+.confirm-body p { margin: 0; }
 
 /* ── شاشة البحث في المنصة ── */
 .page-title { font-size: 1.5rem; margin-top: 0; }
