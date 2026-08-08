@@ -19,12 +19,17 @@
 //   --correction        وسمُ «تصحيح بيانات»: الفرق عن الاستيراد السابق خطأُ
 //                       سحبٍ لا تعديلٌ نظاميّ، فلا يقول السجلّ إن النظام
 //                       عُدِّل اليوم وهو عُدِّل بمرسومه قبل سنوات
+//   --prune             حذفُ اليتيم بعد آخر جزء: ما بقي في القاعدة من أنظمة
+//                       هذه الدفعة ولم يرد فيها. ولا يقع بغيرها — الملف
+//                       يُرفع مقسَّماً، وقياسُ الزائد على جزءٍ منه محوُ نظام
+//                       لا تنظيفُ أثر. وبلا `--prune` تُعرض الأيتام ولا تُحذف
 //
 // وهاتان مطفأتان هنا وإن كانتا مفعَّلتين في شاشة الإدارة: أمرٌ في طرفية
 // يُكتب مرّة ويُعاد ألف مرّة في أتمتة، فتغييرُ افتراضه يغيّر ما لا يُراجَع.
 // و«تصحيح بيانات» مطفأةٌ في الموضعين: هي إقرارٌ على ما وقع لا تسهيل.
 
 import { readFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 const args = new Map();
@@ -52,6 +57,9 @@ const batchSize = Math.max(1, Number(args.get('batch') ?? 500));
 const partial = args.has('partial');
 const buildEmbedText = args.has('build-embed-text');
 const correction = args.has('correction');
+const prune = args.has('prune');
+// معرّفٌ يجمع أجزاء الملف الواحد. بلا هذا لا تُعرف الدفعة التامّة عند الختام.
+const batchId = randomUUID();
 
 if (!cookie) {
   console.error('المطلوب: --cookie "naf_session=…" أو متغيّر البيئة NAF_COOKIE');
@@ -68,8 +76,14 @@ if (!lines.length) {
   process.exit(1);
 }
 
+// بصمة الملف تُرسل مع كل جزء وتُحفظ في سجلّ الدفعات: بها يُعرف أيُّ ملفٍ
+// أنتج ما في القاعدة، وتُطابَق ببصمة المُرسِل.
+const sha256 = createHash('sha256').update(raw).digest('hex');
+
 const endpoint = `${origin}/api/legal/import?${new URLSearchParams({
   filename: path.basename(file),
+  batch: batchId,
+  sha256,
   ...(partial ? { partial: '1' } : {}),
   ...(buildEmbedText ? { build_embed_text: '1' } : {}),
   ...(correction ? { correction: '1' } : {}),
@@ -81,6 +95,7 @@ console.log(
     (buildEmbedText ? ' · بناء نصّ التضمين عند غيابه' : '') +
     (correction ? ' · تصحيح بيانات' : '')
 );
+console.log(`بصمة الملف: ${sha256}`);
 console.log(`الوجهة: ${endpoint}\n`);
 
 const totals = { inserted: 0, updated: 0, failed: 0, pending: 0, withheld: 0, amendmentPending: 0, superseded: 0 };
@@ -146,4 +161,37 @@ if (totals.superseded) {
 }
 if (totals.pending) {
   console.log('التضمين المتبقّي يصرّفه الـCron الليلي، أو: POST /api/legal/embed-pending');
+}
+
+// ── ختام الدفعة: اليتيم ──
+// `upsert` تُحدّث وتُضيف ولا تحذف ما اختفى، فمادةٌ أُسقطت من المصدر تبقى في
+// النتائج إلى الأبد. والقياس هنا على الدفعة تامّةً — بعد آخر جزء — وعلى
+// أنظمتها وحدها.
+const finalize = async (apply) =>
+  fetch(`${origin}/api/legal/finalize?${new URLSearchParams({ batch: batchId, ...(apply ? { apply: '1' } : {}) })}`, {
+    method: 'POST',
+    headers: { cookie },
+  }).then((r) => r.json());
+
+try {
+  const seen = await finalize(false);
+  if (!seen.orphans?.length) {
+    console.log('\nلا يتيم: كلُّ ما في القاعدة من أنظمة هذه الدفعة ورد فيها.');
+  } else {
+    console.log(`\n${seen.count} مادةً في القاعدة لم ترد في هذه الدفعة:`);
+    for (const o of seen.orphans.slice(0, 20)) {
+      console.log(`  ${o.id}${o.was_edited ? '  (حُرِّرت بشرياً)' : ''}${o.review_status !== 'pending' ? `  (${o.review_status})` : ''}`);
+    }
+    if (seen.orphans.length > 20) console.log(`  … و${seen.orphans.length - 20} غيرها`);
+
+    if (!prune) {
+      console.log('لم تُحذف. لحذفها — السجلّ ومتجهه — أعِد التشغيل مع --prune');
+    } else {
+      const done = await finalize(true);
+      console.log(`حُذف ${done.deleted}. ونصُّ كلٍّ محفوظٌ في سجلّ التحديث قبل ذهابه.`);
+    }
+  }
+} catch (e) {
+  console.error(`\nتعذّر ختام الدفعة: ${String(e?.message ?? e)}`);
+  console.error('الاستيراد وقع، ولم يُقَس اليتيم. أعِد المحاولة بـ: POST /api/legal/finalize?batch=' + batchId);
 }

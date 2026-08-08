@@ -806,3 +806,12 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
     border: 0; border-radius: 0;
   }
 }
+
+/* سجلّ التعديلات في شاشة المراجعة — موجزٌ تحت الألواح الثلاثة. */
+.review-events { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: var(--space-2); }
+.review-events li { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.review-event-reason {
+  margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3);
+  background: var(--warning-soft); color: var(--warning-strong);
+  border-radius: var(--radius-md); line-height: var(--leading-relaxed, 1.9);
+}

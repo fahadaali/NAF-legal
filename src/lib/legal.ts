@@ -2410,7 +2410,19 @@ export async function listReviewQueue(
     .first<{ n: number }>();
 
   const rows = await env.DB.prepare(
-    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${where} ORDER BY c.law_id, c.seq LIMIT ? OFFSET ?`
+    /* الترتيب بالخطورة قبل الترتيب بالموضع.
+     *
+     * المعطوب أوّلاً — نصٌّ لا يُقرأ محجوبٌ عن الباحث حتى يُبتّ فيه، فكلُّ
+     * يومٍ يبقى فيه يومٌ تغيب فيه المادة. ثم الموسوم بتحذير — نصُّه قائم
+     * والباحث يراه، فتأخيرُه أهون. ثم البقيّة بترتيب النظام.
+     *
+     * ولولا هذا لبقي الطابور مرتَّباً بالمعرّف، فيقضي المراجع جلسته في
+     * تعديلاتٍ جماعية بينما مادةٌ تسرّبت إليها ديباجةٌ تنتظر في آخره. */
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${where}
+     ORDER BY c.has_defect DESC,
+              CASE WHEN c.retrieval_status = '${RETRIEVAL_WARNING}' THEN 0 ELSE 1 END,
+              c.law_id, c.seq
+     LIMIT ? OFFSET ?`
   )
     .bind(...binds, limit, offset)
     .all<HitRow>();
@@ -2503,6 +2515,8 @@ interface ReviewRow {
   book: string | null; chapter: string | null; article_title: string | null; article_no: string | null;
   text: string; text_original_import: string | null; review_status: string; review_note: string | null;
   needs_review: number;
+  retrieval_status: string; retrieval_warning: string | null;
+  has_amendments: number; amendment_applied: number;
 }
 
 export interface ReviewResult {
@@ -2532,7 +2546,8 @@ export async function reviewChunk(
 ): Promise<ReviewResult> {
   const row = await env.DB.prepare(
     `SELECT id, law_id, law_title, instrument, book, chapter, article_title, article_no,
-            text, text_original_import, review_status, review_note, needs_review
+            text, text_original_import, review_status, review_note, needs_review,
+            retrieval_status, retrieval_warning, has_amendments, amendment_applied
      FROM legal_chunks WHERE id = ?`
   )
     .bind(id)
@@ -2573,6 +2588,14 @@ export async function reviewChunk(
     sets.push('review_status = ?', 'reviewed_at = NULL', 'reviewed_by = NULL');
     binds.push(REVIEW_PENDING);
     audit.push({ field: 'review_status', from: row.review_status, to: REVIEW_PENDING });
+    // وما صُعِّد يعود: التراجع عن الاعتماد تراجعٌ عن دعوى أن النصّ نافذ.
+    // والحال التي يعود إليها تُشتقّ من الملف كما اشتُقّت عند الاستيراد — لا
+    // من عمودٍ ثانٍ يحفظ ما كانت عليه، فمصدرا حقيقةٍ للحال الواحدة يفترقان.
+    if (row.retrieval_status === RETRIEVAL_EFFECTIVE && row.has_amendments && !row.amendment_applied) {
+      sets.push('retrieval_status = ?', 'retrieval_warning = ?');
+      binds.push(RETRIEVAL_WARNING, AMENDMENT_NOTICE);
+      audit.push({ field: 'retrieval_status', from: RETRIEVAL_EFFECTIVE, to: RETRIEVAL_WARNING });
+    }
   } else {
     if (action === 'edit') {
       const text = opts.text?.trim() ?? '';
@@ -2592,6 +2615,22 @@ export async function reviewChunk(
     sets.push('review_status = ?', 'reviewed_at = ?', 'reviewed_by = ?');
     binds.push(status, now, actorId);
     audit.push({ field: 'review_status', from: row.review_status, to: status });
+
+    /* **وتصعيدُ الحال لمن فتح المادة وحده.**
+     *
+     * إسقاط التحذير دعوى أن النصّ المعروض هو النافذ، ولا تصحّ إلا ممّن قرأ
+     * ألواحه الثلاثة. والاعتماد جملةً يُخرج المادة من الطابور — وذاك قرارُ
+     * ترتيبِ عمل — ولا يُسقط تحذيراً يقرؤه كلُّ محامٍ بعده. وضغطةٌ واحدة على
+     * «تحديد الطابور كلَّه» كانت ستمحو مئتي تحذير بلا فتح مادة. */
+    if (
+      opts.via !== 'bulk' &&
+      (status === 'approved' || status === 'edited') &&
+      row.retrieval_status === RETRIEVAL_WARNING
+    ) {
+      sets.push('retrieval_status = ?', 'retrieval_warning = NULL');
+      binds.push(RETRIEVAL_EFFECTIVE);
+      audit.push({ field: 'retrieval_status', from: RETRIEVAL_WARNING, to: RETRIEVAL_EFFECTIVE });
+    }
     // **ولا يُكتب `needs_review = 0`.** أثرُ الاعتماد — دخولُ المادة
     // الاسترجاع — يقع بالحال وحدها، وهي وحدها ما يُصفّى به. وكتابةُ الوسم
     // معها تُنشئ مصدرَ حقيقةٍ ثانياً لا يعرف التراجعُ كيف يردّه: يُعيد الحالَ

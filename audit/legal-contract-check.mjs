@@ -1581,6 +1581,44 @@ await check('٢٠ · والملغاة لا تُفهرَس أصلاً — لا ت
   assert.match(src, /EMBEDDABLE_SQL/, 'شرط التضمين غير مصرَّح به');
 });
 
+await check('٢٠ · التصعيد لمن فتح المادة وحده — والاعتماد جملةً لا يُسقط تحذيراً', async () => {
+  // الوثيقة تجعل زرّ الاعتماد يُصعّد `نافذ_بتحذير` إلى `نافذ`، وقرارُ المالك
+  // بعدها أن يقع ذلك للقرار المفرد وحده: إسقاط تحذيرٍ عن نصٍّ لم يُقرأ دعوى
+  // بتحقّقٍ لم يقع، وضغطةٌ على «تحديد الطابور كلَّه» كانت تمحو مئتين.
+  const before = q("SELECT retrieval_status FROM legal_chunks WHERE id = 'ثالثة/art-74'")[0];
+  assert.equal(before.retrieval_status, lib.RETRIEVAL_WARNING);
+
+  await lib.reviewChunks(env, ['ثالثة/art-74'], 'approve', 'مراجع');
+  const afterBulk = q("SELECT retrieval_status, review_status FROM legal_chunks WHERE id = 'ثالثة/art-74'")[0];
+  assert.equal(afterBulk.review_status, 'approved', 'الاعتماد جملةً لم يُخرجها من الطابور');
+  assert.equal(afterBulk.retrieval_status, lib.RETRIEVAL_WARNING, 'اعتمادٌ جملةً أسقط تحذيراً بلا قراءة');
+
+  await lib.reviewChunk(env, 'ثالثة/art-74', 'undo', 'مراجع');
+  await lib.reviewChunk(env, 'ثالثة/art-74', 'approve', 'مراجع');
+  const afterSingle = q("SELECT retrieval_status, retrieval_warning FROM legal_chunks WHERE id = 'ثالثة/art-74'")[0];
+  assert.equal(afterSingle.retrieval_status, lib.RETRIEVAL_EFFECTIVE, 'القرار المفرد لم يُصعّد');
+  assert.equal(afterSingle.retrieval_warning, null, 'التحذير بقي بعد التصعيد');
+
+  // ولا يبقى في نتيجة البحث تحذيرٌ سقط.
+  const hit = (await lib.searchLegal(env, 'بانقضاء مدته المتفق عليها بين الطرفين', { limit: 10 }))
+    .find((h) => h.id === 'ثالثة/art-74');
+  assert.equal(hit?.retrievalStatus, lib.RETRIEVAL_EFFECTIVE);
+  assert.equal(hit?.retrievalWarning, null);
+});
+
+await check('٢٠ · والتراجع يُعيد التحذير كما يُعيد الحال — لا يترك دعوى نفاذٍ بلا اعتماد', async () => {
+  await lib.reviewChunk(env, 'ثالثة/art-74', 'undo', 'مراجع');
+  const row = q("SELECT retrieval_status, retrieval_warning, review_status FROM legal_chunks WHERE id = 'ثالثة/art-74'")[0];
+  assert.equal(row.review_status, 'pending');
+  assert.equal(row.retrieval_status, lib.RETRIEVAL_WARNING, 'بقيت «نافذ» بعد التراجع عن اعتمادها');
+  assert.equal(row.retrieval_warning, lib.AMENDMENT_NOTICE, 'عادت بلا نصّ تحذيرها');
+  // وقيدُ التصعيد وردُّه كلاهما في سجلّ التدقيق: من سأل لاحقاً لمَ سقط
+  // التحذير يجد الإجابة.
+  const entries = await lib.listReviewAudit(env, { chunkId: 'ثالثة/art-74', limit: 50 });
+  const moves = entries.filter((e) => e.field === 'retrieval_status');
+  assert.ok(moves.length >= 2, 'تغيّر الحال لم يُقيَّد');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

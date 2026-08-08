@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
   REVIEW_BULK_LIMIT,
+  type AmendmentEvent,
   type LegalAmendment,
   type LegalArticle,
   type LegalLaw,
@@ -339,6 +340,48 @@ export function LegalReview() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * أحداث التعديل في شاشة المراجعة — سطرٌ لكلٍّ لا بطاقة.
+ *
+ * النافذةُ في الاستعراض تُفصّل لقارئٍ يقرأ مادةً واحدة، وهذه تُوجز لمراجعٍ
+ * يمرّ على مئتين: الأداةُ والتاريخ ووصفُ العملية ووسمُ التطبيق في سطر، وسببُ
+ * التخطّي تحته لأنه ما يحتاج القرار.
+ */
+function ReviewEvents({ events }: { events: AmendmentEvent[] }) {
+  return (
+    <ol className="review-events">
+      {events.map((e, i) => (
+        <li key={e.seq ?? i}>
+          <div className="amendment-event-head">
+            <span className="amendment-seq"><bdi>{formatNumber(i + 1)}</bdi></span>
+            <span>
+              <bdi>{[e.instrument, e.instrument_no].filter(Boolean).join(' ') || '—'}</bdi>
+              {e.date_hijri ? <> · <bdi>{e.date_hijri}هـ</bdi></> : null}
+            </span>
+            <span className={`pill ${e.applied ? 'success' : 'pending'}`}>
+              {e.applied ? (
+                <><Icon.approved size={ICON_SM} aria-hidden /> مطبَّق</>
+              ) : (
+                <><Icon.warning size={ICON_SM} aria-hidden /> لم يُطبَّق</>
+              )}
+            </span>
+            {e.result || e.scope ? (
+              <span className="audit-value">
+                <bdi>{e.result || e.scope}</bdi>
+                {e.targets.length ? <> — <bdi>{e.targets.join('، ')}</bdi></> : null}
+              </span>
+            ) : null}
+          </div>
+          {e.new_text ? <p className="review-raw">{e.new_text}</p> : null}
+          {!e.applied && e.reason ? (
+            <p className="review-event-reason"><bdi>{e.reason}</bdi></p>
+          ) : null}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -799,6 +842,16 @@ function ArticlePanes({
           <p className="review-raw">{amendment?.amendments_raw || '—'}</p>
         </div>
       </div>
+
+      {/* سجلّ التعديلات مفكَّكاً تحت الألواح الثلاثة.
+          به تصير المراجعة تحقّقاً من خطوةٍ معلومة لا قراءةَ نصٍّ خام: المراجع
+          يرى ما طُبِّق وما تُخطّي وسببه، فيعرف ما عليه أن يدمجه بيده. */}
+      {amendment?.events.length ? (
+        <>
+          <div className="compare-label">سجل التعديلات</div>
+          <ReviewEvents events={amendment.events} />
+        </>
+      ) : null}
 
       <div className="review-actions">
         <button className="btn-sm primary" disabled={busy} onClick={onCommit}>
