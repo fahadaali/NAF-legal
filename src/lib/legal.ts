@@ -79,24 +79,84 @@ const STATUS_ALIASES = new Map<string, string>(
 );
 
 /**
- * التصفية الافتراضية الإلزامية.
+ * أنواع الأدوات النظامية ومقابلها العربي.
  *
- * الشرطان معاً لا أحدهما: من رفع الملف قد يكتب `is_repealed: true` وينسى
- * `status`، أو العكس. وأيّهما قال «منسوخ» كفى لإخراج المادة من النتائج —
- * الاتجاه الآمن، فمادةٌ غائبة أهون من مادة منسوخة يُستشهد بها.
+ * الملفات تكتب النوع عربياً، والمخزَّن إنجليزيٌّ واحد — كما تُخزَّن الحالة.
+ * لغتان في حقلٍ واحد تعني قيمتين لمعنىً واحد في مرشّح النوع، وهو انحرافٌ لا
+ * يظهر إلا بعد دفعتين.
+ *
+ * و«تنظيم» قيمةٌ رابعة مسجَّلة لا تُردّ إلى «لائحة»: التنظيم أداةٌ قائمة
+ * بذاتها في الصياغة السعودية، وردُّه إليها يخلط أداتين.
  */
-const EFFECTIVE_SQL = `c.is_repealed = 0 AND c.status IN ('active','amended')`;
+export const DOC_TYPES: Record<string, string> = {
+  law: 'نظام',
+  regulation: 'لائحة',
+  arrangement: 'تنظيم',
+  decision: 'قرار',
+  circular: 'تعميم',
+};
+
+const DOC_TYPE_ALIASES = new Map<string, string>(
+  (
+    [
+      ['نظام', 'law'],
+      ['أنظمة', 'law'],
+      ['لائحة', 'regulation'],
+      ['اللائحة التنفيذية', 'regulation'],
+      ['لوائح', 'regulation'],
+      ['تنظيم', 'arrangement'],
+      ['ترتيب', 'arrangement'],
+      ['قرار', 'decision'],
+      ['تعميم', 'circular'],
+    ] as [string, string][]
+  ).map(([k, v]) => [normalizeArabic(k), v] as [string, string])
+);
 
 /**
- * الحجب المشروط: مادةٌ موسومة للمراجعة لا تدخل الاسترجاع الآلي حتى يعتمدها
- * إنسان.
+ * حالُ الاسترجاع — الحقل الذي يُبنى عليه القرار وحده.
  *
- * وهو غير الاستبعاد التام أعلاه: المنسوخة خرجت من النظام فلا تُستشهد أبداً،
- * وهذه نصٌّ لم يُتحقَّق منه بعد — تبقى في القاعدة وتظهر في شاشة المراجعة
- * والتصفّح، ولا تصل إلى إجابةٍ ولا إلى تقرير.
- *
- * والشرطان مستقلّان: تجاوزُ أحدهما لا يفتح الآخر.
+ * ثلاثٌ لا رابع لها: `effective` نافذ · `effective_warning` نافذ بتحذير
+ * (نصُّه أصليٌّ وعليه تعديل تعذّر دمجه) · `repealed` ملغى.
  */
+export const RETRIEVAL_EFFECTIVE = 'effective';
+export const RETRIEVAL_WARNING = 'effective_warning';
+export const RETRIEVAL_REPEALED = 'repealed';
+const VALID_RETRIEVAL = new Set([RETRIEVAL_EFFECTIVE, RETRIEVAL_WARNING, RETRIEVAL_REPEALED]);
+
+export const RETRIEVAL_LABELS: Record<string, string> = {
+  [RETRIEVAL_EFFECTIVE]: 'نافذ',
+  [RETRIEVAL_WARNING]: 'نافذ بتحذير',
+  [RETRIEVAL_REPEALED]: 'ملغى',
+};
+
+const RETRIEVAL_ALIASES = new Map<string, string>(
+  (
+    [
+      ['نافذ', RETRIEVAL_EFFECTIVE],
+      ['نافذة', RETRIEVAL_EFFECTIVE],
+      ['ساري', RETRIEVAL_EFFECTIVE],
+      ['نافذ_بتحذير', RETRIEVAL_WARNING],
+      ['نافذ بتحذير', RETRIEVAL_WARNING],
+      ['نافذ-بتحذير', RETRIEVAL_WARNING],
+      ['ملغى', RETRIEVAL_REPEALED],
+      ['ملغاة', RETRIEVAL_REPEALED],
+      ['ملغي', RETRIEVAL_REPEALED],
+      ['منسوخ', RETRIEVAL_REPEALED],
+    ] as [string, string][]
+  ).map(([k, v]) => [normalizeArabic(k), v] as [string, string])
+);
+
+/**
+ * التصفية الافتراضية الإلزامية.
+ *
+ * ثلاثة شروطٍ لا شرط: `retrieval_status` هو حقل المواصفة، ويرافقه الحقلان
+ * القديمان لأن دفعةً لم تحمله بعدُ قد تكون في القاعدة — وأيُّها قال «منسوخ»
+ * كفى لإخراج المادة. الاتجاه الآمن: مادةٌ غائبة أهون من مادة منسوخة
+ * يُستشهد بها.
+ */
+const EFFECTIVE_SQL = `c.retrieval_status <> '${RETRIEVAL_REPEALED}'
+                       AND c.is_repealed = 0 AND c.status IN ('active','amended')`;
+
 /**
  * الحالات التي تُدخل المادة الاسترجاع.
  *
@@ -108,7 +168,22 @@ export const REVIEW_CLEARED = ['approved', 'edited'] as const;
 /** الحالة التي تُبقي المادة في الطابور. */
 const REVIEW_PENDING = 'pending';
 
-const REVIEWED_SQL = `(c.needs_review = 0 OR c.review_status IN (${REVIEW_CLEARED.map((s) => `'${s}'`).join(',')}))`;
+/**
+ * الحجب المشروط — على العطب وحده لا على وسم المراجعة كلِّه.
+ *
+ * **وهذا تغيّرٌ عن سابقه، وله سبب.** كان كلُّ ما وُسِم `needs_review` محجوباً
+ * حتى يعتمده إنسان، فكانت مادةٌ عليها تعديلٌ تعذّر دمجه تغيب عن البحث. ووثيقة
+ * الاستيراد تردّ ذلك: حجبُها يجعل المستخدم يظنّ أن لا نصّ في الموضوع أصلاً،
+ * وهو أسوأ من نصٍّ مصحوب بتحذير — والصمت في المنتج القانوني ليس حياداً.
+ *
+ * والحجّة تصدق على التحذير ولا تصدق على العطب: مادةٌ تسرّبت إلى متنها واجهةُ
+ * البوابة، أو رقمٌ مكرّر لم يُبتّ فيه، أو نصٌّ مشبوه الاقتطاع — عرضُها ليس
+ * كسراً للصمت، بل عرضُ ما لا يُقرأ. فتبقى محجوبةً حتى يبتّ فيها إنسان.
+ *
+ * والاستبعاد التام أعلاه شيءٌ آخر: المنسوخة خرجت من النظام فلا تُستشهد أبداً،
+ * وهذه نصٌّ لم يُتحقَّق منه بعد. والشرطان مستقلّان: تجاوزُ أحدهما لا يفتح الآخر.
+ */
+const SOUND_SQL = `(c.has_defect = 0 OR c.review_status IN (${REVIEW_CLEARED.map((s) => `'${s}'`).join(',')}))`;
 
 /**
  * أعمدة النتيجة.
@@ -126,6 +201,7 @@ const HIT_COLUMNS = `c.seq, c.id, c.law_id, c.parent_law_id, c.doc_type, c.artic
     c.source_url, c.text, c.part, c.parts_total,
     c.is_duplicate, c.duplicate_of, c.duplicate_index,
     c.has_amendments, c.amendment_kind, c.amendment_applied, c.needs_review, c.reviewed_at,
+    c.retrieval_status, c.retrieval_warning, c.has_defect, c.defect_kind,
     c.review_status, c.review_note, c.text_original_import IS NOT NULL AS was_edited,
     c.amendment_instrument, c.amended_on, c.amendments_count, c.amend_note,
     c.meta_json`;
@@ -203,6 +279,13 @@ export interface LegalHit {
   /** هل `text` نافذ؟ إن كان `false` فالنصّ أصليّ رغم وجود تعديل. */
   amendmentApplied: boolean;
   needsReview: boolean;
+  /** حالُ الاسترجاع كما يقرؤه القارئ: نافذ · نافذ بتحذير · ملغى. */
+  retrievalStatus: string;
+  /** نصّ التحذير جاهزاً للعرض — يرافق النتيجة من طبقة الاسترجاع لا من الشاشة. */
+  retrievalWarning: string | null;
+  /** عطبٌ يمنع القراءة — يحجب حتى يبتّ فيه إنسان. */
+  hasDefect: boolean;
+  defectKind: string | null;
   /** وقت قرار المراجع البشري. */
   reviewedAt: number | null;
   /** `pending` · `approved` · `edited` · `rejected` · `deferred`. */
@@ -264,8 +347,20 @@ export interface PreparedChunk {
   amendments_count: number | null;
   amendments_raw: string | null;
   amend_note: string | null;
+  /** حالُ الاسترجاع — الحقل الذي يُبنى عليه قرار الحجب وحده. */
+  retrieval_status: string;
+  retrieval_warning: string | null;
+  /** الخطّ الزمني نصّاً — نسخٌ تاريخية لا تُفهرَس ولا تُصفّى. */
+  text_versions: string;
+  /** سجلّ التعديلات مفكَّكاً، نصّاً. `null` إن لم يرد. */
+  amendment_events: string | null;
+  /** عطبٌ يمنع القراءة — يحجب حتى يبتّ فيه إنسان. */
+  has_defect: number;
+  defect_kind: string | null;
   embed_text: string;
   text_norm: string;
+  /** الباب مطبَّعاً — للترشيح به. */
+  book_norm: string | null;
   handle_norm: string;
   meta_json: string | null;
   embed_hash: string;
@@ -526,7 +621,10 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
   const isRepealed = status === 'repealed' || truthy(o.is_repealed) ? 1 : 0;
 
   const lawId = str(o.law_id) || null;
-  const docType = str(o.doc_type) || null;
+  const rawDocType = str(o.doc_type);
+  // النوع يُقابَل كما تُقابَل الحالة: «نظام» و`law` معنىً واحد، وتركُهما
+  // لغتين في عمودٍ واحد يجعل مرشّح النوع يعرض قيمتين له.
+  const docType = rawDocType ? (canonicalDocType(rawDocType) ?? rawDocType) : null;
   const instrumentNo = str(o.instrument_no) || null;
 
   const issue = parseDate(o.issue_date ?? o.issue_date_g ?? o.date_gregorian, 'issue_date');
@@ -547,6 +645,53 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
   // الآمن: الامتناع عند الشكّ أسلم من تطبيقٍ خاطئ يبدو صحيحاً.
   const amendmentsRaw = str(o.amendments_raw) || null;
   const hasAmendments = truthy(o.has_amendments) ? 1 : 0;
+  const amendmentApplied = truthy(o.amendment_applied) ? 1 : 0;
+  const needsReview = truthy(o.needs_review) ? 1 : 0;
+
+  // ── الخطّ الزمني وسجلّ التعديلات ──
+  const textVersions = parseTextVersions(o.text_versions, text);
+  const amendmentEvents = parseAmendmentEvents(o.amendment_events);
+
+  // ── حالُ الاسترجاع ──
+  // يُقرأ من الملف، فهو حقل المواصفة. وإن غاب اشتُقّ من الحقول المنطقية
+  // بالقاعدة نفسها التي اشتُقّ بها هناك — وذاك سدُّ فجوةِ حقلٍ إلزاميّ غاب،
+  // لا طبقةُ ظنٍّ فوق تصنيفٍ ورد.
+  const rawRetrieval = str(o.retrieval_status);
+  let retrievalStatus: string;
+  if (!rawRetrieval) {
+    retrievalStatus = isRepealed
+      ? RETRIEVAL_REPEALED
+      : hasAmendments && !amendmentApplied
+        ? RETRIEVAL_WARNING
+        : RETRIEVAL_EFFECTIVE;
+  } else {
+    retrievalStatus = VALID_RETRIEVAL.has(rawRetrieval)
+      ? rawRetrieval
+      : (RETRIEVAL_ALIASES.get(normalizeArabic(rawRetrieval)) ?? '');
+    if (!retrievalStatus) {
+      throw new ChunkError(
+        'bad_retrieval_status',
+        `\`retrieval_status\` غير معروف: ${rawRetrieval} — المسموح: نافذ | نافذ_بتحذير | ملغى`
+      );
+    }
+  }
+  // وقولُ الحقلين القديمين «منسوخ» يغلب: التصفية تأخذ بالثلاثة، وحالٌ تقول
+  // «نافذ» على مادةٍ `is_repealed` تناقضٌ يُحسم في الاتجاه الآمن.
+  if (isRepealed) retrievalStatus = RETRIEVAL_REPEALED;
+
+  const retrievalWarning =
+    str(o.retrieval_warning) || (retrievalStatus === RETRIEVAL_WARNING ? AMENDMENT_NOTICE : '') || null;
+
+  // ── العطب ──
+  // ثلاثةٌ تُحسب هنا لا في كل استعلام، وهي وحدها ما يحجب المادة عن البحث حتى
+  // يبتّ فيها إنسان. والتحذير لا يحجب — انظر `SOUND_SQL`.
+  const defect = detectDefect({
+    text,
+    textNorm: normalizeArabic(text),
+    textSuperseded: str(o.text_superseded),
+    isDuplicate: truthy(o.is_duplicate),
+    needsReview: !!needsReview,
+  });
 
   const known = new Set([
     'id', 'law_id', 'parent_law_id', 'doc_type', 'article_no', 'status', 'is_repealed',
@@ -559,6 +704,7 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     'is_duplicate', 'duplicate_of', 'duplicate_index',
     'has_amendments', 'amendment_kind', 'amendment_applied', 'needs_review',
     'amendment_instrument', 'amended_on', 'amendments_count', 'amendments_raw', 'amend_note',
+    'retrieval_status', 'retrieval_warning', 'text_versions', 'amendment_events',
   ]);
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) if (!known.has(k)) extra[k] = v;
@@ -609,15 +755,24 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     has_amendments: hasAmendments,
     amendment_kind: str(o.amendment_kind) || null,
     amendment_kind_norm: normalizeArabic(str(o.amendment_kind)) || null,
-    amendment_applied: truthy(o.amendment_applied) ? 1 : 0,
-    needs_review: truthy(o.needs_review) ? 1 : 0,
+    amendment_applied: amendmentApplied,
+    needs_review: needsReview,
     amendment_instrument: str(o.amendment_instrument) || null,
     amended_on: str(o.amended_on) || null,
     amendments_count: num(o.amendments_count),
     amendments_raw: amendmentsRaw,
     amend_note: str(o.amend_note) || null,
+    retrieval_status: retrievalStatus,
+    retrieval_warning: retrievalWarning,
+    // المصفوفتان تُخزَّنان نصّاً: قراءتُهما عند فتح المادة وحدها، ولا يُصفَّى
+    // بهما ولا يُرتَّب — فجدولٌ مستقلّ لكلٍّ ثمنٌ بلا مقابل.
+    text_versions: JSON.stringify(textVersions),
+    amendment_events: amendmentEvents.length ? JSON.stringify(amendmentEvents) : null,
+    has_defect: defect.has,
+    defect_kind: defect.kind,
     embed_text: embedText,
     text_norm: normalizeArabic(text),
+    book_norm: normalizeArabic(str(o.book)) || null,
     handle_norm: normalizeArabic(handle),
     meta_json: Object.keys(extra).length ? JSON.stringify(extra) : null,
     embed_hash: hashText(embedText),
@@ -630,6 +785,155 @@ function str(v: unknown): string {
   if (typeof v === 'string') return v.trim();
   if (typeof v === 'number' || typeof v === 'boolean') return String(v).trim();
   return '';
+}
+
+/** نوع الأداة كما يُخزَّن، أو `null` إن لم يُعرف اللفظ. */
+export function canonicalDocType(v: string): string | null {
+  const raw = v.trim();
+  if (!raw) return null;
+  if (DOC_TYPES[raw]) return raw;
+  return DOC_TYPE_ALIASES.get(normalizeArabic(raw)) ?? null;
+}
+
+/** نسخةٌ في الخطّ الزمني كما وردت في الملف. */
+export interface TextVersion {
+  seq: number;
+  text: string;
+  label: string | null;
+  from_instrument: string | null;
+  from_date: string | null;
+  current: boolean;
+}
+
+/**
+ * الخطّ الزمني — بقيوده الملزمة.
+ *
+ * قيدان تقولهما المواصفة نصّاً، ويُفحصان هنا لا يُفترضان: العنصر `current`
+ * واحدٌ لا غير، ونصُّه **مطابقٌ حرفياً** لحقل `text`. وخرقُ أيّهما يُسقط
+ * السطر برمزه — لأنّ خطّاً زمنياً يقول إن النافذ غير المعروض يجعل نافذة
+ * التاريخ تكذّب البطاقة، وهي أسوأ من غياب النافذة أصلاً.
+ *
+ * والغياب مقبول: من لا تعديل له تُبنى له نسخةٌ واحدة من نصّه.
+ */
+function parseTextVersions(v: unknown, text: string): TextVersion[] {
+  if (v == null || v === '') {
+    return [{ seq: 0, text, label: null, from_instrument: null, from_date: null, current: true }];
+  }
+  if (!Array.isArray(v)) throw new ChunkError('bad_text_versions', '`text_versions` ليست مصفوفة');
+  if (!v.length) {
+    return [{ seq: 0, text, label: null, from_instrument: null, from_date: null, current: true }];
+  }
+
+  const out: TextVersion[] = v.map((raw, i) => {
+    const o = (raw ?? {}) as Record<string, unknown>;
+    const vText = str(o.text);
+    if (!vText) throw new ChunkError('bad_text_versions', `نسخةٌ بلا نصّ في \`text_versions\` (${i})`);
+    return {
+      seq: num(o.seq) ?? i,
+      text: vText,
+      label: str(o.label) || null,
+      from_instrument: str(o.from_instrument) || null,
+      from_date: str(o.from_date) || null,
+      current: truthy(o.current),
+    };
+  });
+
+  const current = out.filter((x) => x.current);
+  if (current.length !== 1) {
+    throw new ChunkError(
+      'bad_text_versions',
+      `\`text_versions\` بها ${current.length} نسخة معتمدة — والمطلوب واحدة`
+    );
+  }
+  if (current[0].text.trim() !== text.trim()) {
+    throw new ChunkError(
+      'bad_text_versions',
+      'النسخة المعتمدة في `text_versions` تخالف `text` — ولا يصحّ خطٌّ زمنيّ يكذّب النصّ المعروض'
+    );
+  }
+  return out.sort((a, b) => a.seq - b.seq);
+}
+
+/** حدثُ تعديلٍ مفكَّك كما ورد في الملف. */
+export interface AmendmentEvent {
+  seq: number;
+  scope: string | null;
+  op: string | null;
+  targets: string[];
+  instrument: string | null;
+  instrument_no: string | null;
+  date_hijri: string | null;
+  effective_from: string | null;
+  new_text: string | null;
+  applied: boolean;
+  text_after: string | null;
+  result: string | null;
+  reason: string | null;
+  raw: string | null;
+}
+
+/**
+ * سجلّ التعديلات مفكَّكاً.
+ *
+ * يُقرأ كما ورد ولا يُصحَّح: ما تخطّاه المحرّك يبقى موسوماً `applied: false`
+ * بسببه، وهو بالضبط ما يحتاج المراجع أن يراه. وحقولُه كلُّها اختيارية —
+ * حدثٌ ناقصُ الوصف خيرٌ من سطرٍ مرفوض لأجله.
+ */
+function parseAmendmentEvents(v: unknown): AmendmentEvent[] {
+  if (v == null || v === '') return [];
+  if (!Array.isArray(v)) throw new ChunkError('bad_amendment_events', '`amendment_events` ليست مصفوفة');
+
+  return v
+    .map((raw, i) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const targets = Array.isArray(o.targets) ? o.targets.map((t) => str(t)).filter(Boolean) : [];
+      return {
+        seq: num(o.seq) ?? i,
+        scope: str(o.scope) || null,
+        op: str(o.op) || null,
+        targets,
+        instrument: str(o.instrument) || null,
+        instrument_no: str(o.instrument_no) || null,
+        date_hijri: str(o.date_hijri) || null,
+        effective_from: str(o.effective_from) || null,
+        new_text: str(o.new_text) || null,
+        applied: truthy(o.applied),
+        text_after: str(o.text_after) || null,
+        result: str(o.result) || null,
+        reason: str(o.reason) || null,
+        raw: str(o.raw) || null,
+      };
+    })
+    .sort((a, b) => a.seq - b.seq);
+}
+
+/** علاماتُ تسرّب ديباجة البوابة إلى متن المادة. */
+const PREAMBLE_MARKS = ['بموجب المرسوم', 'لتكون بالنص'].map((s) => normalizeArabic(s));
+
+/**
+ * العطب: ما يمنع قراءة المادة، لا ما ينقصها من دمج.
+ *
+ * ثلاثةٌ محصورة، وكلُّها في مادةٍ وسمها الملفُّ للمراجعة أصلاً — فلا نحجب
+ * بحكمٍ من عندنا على مادةٍ قال مُعِدُّها إنها سليمة:
+ *
+ * - **رقمٌ مكرّر:** مادّتان بالرقم نفسه، وأيُّهما المقصودة قرارُ مراجع.
+ * - **اقتطاع:** النصّ أقصر من نصف سابقه — تعديلٌ لا يُنقص المادة إلى النصف.
+ * - **ديباجة:** صياغة أداة الإصدار تسرّبت إلى المتن، فالمعروض ليس المادة.
+ */
+function detectDefect(x: {
+  text: string;
+  textNorm: string;
+  textSuperseded: string;
+  isDuplicate: boolean;
+  needsReview: boolean;
+}): { has: 0 | 1; kind: string | null } {
+  if (!x.needsReview) return { has: 0, kind: null };
+  if (x.isDuplicate) return { has: 1, kind: 'رقم مكرّر' };
+  if (x.textSuperseded && x.text.length * 2 < x.textSuperseded.length) {
+    return { has: 1, kind: 'مشبوه الاقتطاع' };
+  }
+  if (PREAMBLE_MARKS.some((m) => x.textNorm.includes(m))) return { has: 1, kind: 'تسرّب ديباجة' };
+  return { has: 0, kind: null };
 }
 
 function truthy(v: unknown): boolean {
@@ -762,6 +1066,7 @@ const COMPARED_FIELDS = [
 
 /** صفٌّ قائم كما تحتاجه المقارنة — بلا `embed_text` كعادة كل مسار عرض. */
 interface ExistingRow {
+  seq: number;
   id: string;
   article_no: string | null;
   status: string;
@@ -824,7 +1129,7 @@ async function fetchExisting(env: Env, ids: string[]): Promise<Map<string, Exist
     const slice = ids.slice(i, i + DB_BATCH);
     const marks = slice.map(() => '?').join(',');
     const rows = await env.DB.prepare(
-      `SELECT id, article_no, status, is_repealed, instrument_no, issue_date, issue_date_hijri, text, law_id,
+      `SELECT seq, id, article_no, status, is_repealed, instrument_no, issue_date, issue_date_hijri, text, law_id,
               amendment_applied
        FROM legal_chunks WHERE id IN (${marks})`
     )
@@ -912,8 +1217,9 @@ const UPSERT_SQL = `
     is_duplicate, duplicate_of, duplicate_index,
     has_amendments, amendment_kind, amendment_kind_norm, amendment_applied, needs_review,
     amendment_instrument, amended_on, amendments_count, amendments_raw, amend_note,
-    embed_text, text_norm, handle_norm, meta_json, embed_hash, embedded_at, imported_at, updated_at
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)
+    retrieval_status, retrieval_warning, text_versions, amendment_events, has_defect, defect_kind,
+    embed_text, text_norm, book_norm, handle_norm, meta_json, embed_hash, embedded_at, imported_at, updated_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)
   ON CONFLICT(id) DO UPDATE SET
     law_id = excluded.law_id,
     parent_law_id = excluded.parent_law_id,
@@ -955,8 +1261,20 @@ const UPSERT_SQL = `
     amendments_count = excluded.amendments_count,
     amendments_raw = excluded.amendments_raw,
     amend_note = excluded.amend_note,
+    -- حالُ الاسترجاع من الملف تغلب ما صعّده المراجع: الدفعة الجديدة أحدثُ
+    -- علماً بالمصدر، والتصعيد كان على نصٍّ قد لا يكون هو هذا. وما لم يتغيّر
+    -- فيه شيء يحتفظ بتصعيده — بشرط بقاء المراجعة نفسه المستعمَل أدناه.
+    retrieval_status = CASE WHEN ${REVIEW_UNCHANGED} AND legal_chunks.review_status IN ('approved','edited')
+                            THEN legal_chunks.retrieval_status ELSE excluded.retrieval_status END,
+    retrieval_warning = CASE WHEN ${REVIEW_UNCHANGED} AND legal_chunks.review_status IN ('approved','edited')
+                             THEN legal_chunks.retrieval_warning ELSE excluded.retrieval_warning END,
+    text_versions = excluded.text_versions,
+    amendment_events = excluded.amendment_events,
+    has_defect = excluded.has_defect,
+    defect_kind = excluded.defect_kind,
     embed_text = excluded.embed_text,
     text_norm = excluded.text_norm,
+    book_norm = excluded.book_norm,
     handle_norm = excluded.handle_norm,
     meta_json = excluded.meta_json,
     embedded_at = CASE WHEN legal_chunks.embed_hash = excluded.embed_hash
@@ -987,7 +1305,7 @@ const DB_BATCH = 25;
 export async function upsertLegalChunks(
   env: Env,
   rows: PreparedChunk[],
-  opts: { importId?: string; correction?: boolean } = {}
+  opts: { importId?: string; correction?: boolean; batchId?: string } = {}
 ): Promise<{ inserted: number; updated: number; archived: number; superseded: number }> {
   if (!rows.length) return { inserted: 0, updated: 0, archived: 0, superseded: 0 };
   const now = Date.now();
@@ -1098,13 +1416,130 @@ export async function upsertLegalChunks(
           r.is_duplicate, r.duplicate_of, r.duplicate_index,
           r.has_amendments, r.amendment_kind, r.amendment_kind_norm, r.amendment_applied, r.needs_review,
           r.amendment_instrument, r.amended_on, r.amendments_count, r.amendments_raw, r.amend_note,
-          r.embed_text, r.text_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now
+          r.retrieval_status, r.retrieval_warning, r.text_versions, r.amendment_events,
+          r.has_defect, r.defect_kind,
+          r.embed_text, r.text_norm, r.book_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now
         )
       )
     );
   }
 
+  // معرّفات الدفعة تُقيَّد جزءاً بعد جزء. الملف يُرفع مقسَّماً، فبلا هذا لا
+  // تُعرف الدفعة التامّة عند الختام — ويصير حذف اليتيم حذفَ ما خرج عن نافذة
+  // الخمسمئة سطر الأخيرة، وهو محوُ نظامٍ لا تنظيفُ أثر.
+  if (opts.batchId) {
+    const at = Date.now();
+    for (let i = 0; i < rows.length; i += DB_BATCH) {
+      await env.DB.batch(
+        rows.slice(i, i + DB_BATCH).map((r) =>
+          env.DB.prepare(
+            `INSERT INTO legal_batch_ids (batch_id, chunk_id, law_id, at) VALUES (?,?,?,?)
+             ON CONFLICT(batch_id, chunk_id) DO NOTHING`
+          ).bind(opts.batchId, r.id, r.law_id, at)
+        )
+      );
+    }
+  }
+
   return { inserted: rows.length - updated, updated, archived, superseded };
+}
+
+/** مادةٌ في القاعدة غابت عن دفعةٍ تامّة تحمل نظامها. */
+export interface OrphanChunk {
+  id: string;
+  law_id: string | null;
+  article_no: string | null;
+  law_title: string | null;
+  review_status: string;
+  was_edited: boolean;
+}
+
+/**
+ * أيتام الدفعة: ما بقي في القاعدة من أنظمةٍ حملتها الدفعة ولم ترد فيها.
+ *
+ * **والحصر على أنظمة الدفعة وحدها.** `upsert` تُحدّث وتُضيف ولا تحذف ما اختفى،
+ * فمادةٌ أُسقطت من المصدر تبقى في النتائج إلى الأبد. لكنّ القياس يكون على ما
+ * وردت الدفعة به: نظامٌ لم تحمله لا يُقاس عليه شيء، وإلا محا رفعُ نظامٍ واحد
+ * كلَّ ما عداه.
+ */
+export async function listBatchOrphans(env: Env, batchId: string): Promise<OrphanChunk[]> {
+  const rows = await env.DB.prepare(
+    `SELECT c.id, c.law_id, c.article_no, c.law_title, c.review_status,
+            c.text_original_import IS NOT NULL AS was_edited
+     FROM legal_chunks c
+     WHERE c.law_id IN (SELECT DISTINCT law_id FROM legal_batch_ids WHERE batch_id = ? AND law_id IS NOT NULL)
+       AND c.id NOT IN (SELECT chunk_id FROM legal_batch_ids WHERE batch_id = ?)
+     ORDER BY c.law_id, c.seq`
+  )
+    .bind(batchId, batchId)
+    .all<{
+      id: string; law_id: string | null; article_no: string | null;
+      law_title: string | null; review_status: string; was_edited: number;
+    }>();
+
+  return (rows.results ?? []).map((r) => ({
+    id: r.id,
+    law_id: r.law_id,
+    article_no: r.article_no,
+    law_title: r.law_title,
+    review_status: r.review_status,
+    was_edited: r.was_edited === 1,
+  }));
+}
+
+/**
+ * يحذف أيتام الدفعة — السجلّ ومتجهه معاً.
+ *
+ * ولا يُمحى نصُّها: يدخل `legal_chunk_versions` بوسم «حُذفت من المصدر» قبل
+ * الحذف. فمن استشهد بها أمسِ يجد أثرها اليوم، ومن أراد ردَّها وجد نصَّها.
+ */
+export async function deleteOrphans(
+  env: Env,
+  ids: string[],
+  opts: { importId?: string; actorId?: string } = {}
+): Promise<number> {
+  if (!ids.length) return 0;
+  const existing = await fetchExisting(env, ids);
+  const now = Date.now();
+  let deleted = 0;
+
+  for (let i = 0; i < ids.length; i += DB_BATCH) {
+    const slice = ids.slice(i, i + DB_BATCH);
+    const statements = [];
+    for (const id of slice) {
+      const old = existing.get(id);
+      if (!old) continue;
+      statements.push(
+        archiveVersion(env, {
+          chunkId: old.id,
+          lawId: old.law_id,
+          articleNo: old.article_no,
+          status: old.status,
+          isRepealed: old.is_repealed,
+          instrumentNo: old.instrument_no,
+          issueDate: old.issue_date,
+          issueDateHijri: old.issue_date_hijri,
+          text: old.text,
+          changedFields: 'deleted',
+          importId: opts.importId ?? null,
+          amendedOn: null,
+          amendmentInstrument: null,
+          changeKind: 'deleted',
+          origin: 'deleted',
+          at: now,
+        })
+      );
+      statements.push(env.DB.prepare('DELETE FROM legal_chunks WHERE id = ?').bind(id));
+      deleted++;
+    }
+    if (statements.length) await env.DB.batch(statements);
+    // ومتجهاتها معها: سجلٌّ حُذف ومتجهُه باقٍ يُرجع نتيجةً لا صفَّ لها.
+    if (env.VECTORIZE) {
+      const seqs = slice.map((id) => existing.get(id)?.seq).filter((n): n is number => typeof n === 'number');
+      if (seqs.length) await env.VECTORIZE.deleteByIds(seqs.map(vectorId)).catch(() => {});
+    }
+  }
+  return deleted;
 }
 
 /** بصمات ما أُرشِف لهذه المواد — بها لا يتكرّر النصّ السابق عند إعادة الرفع. */
@@ -1139,7 +1574,12 @@ interface ArchivedVersion {
   amendedOn: string | null;
   amendmentInstrument: string | null;
   changeKind: string | null;
-  origin: 'displaced' | 'superseded';
+  /**
+   * من أين جاء النصّ المؤرشَف:
+   * `displaced` أزاحته دفعةٌ جديدة · `superseded` ورد في `text_superseded`
+   * · `deleted` حُذفت مادتُه من المصدر فحُفظ نصُّها قبل ذهابها.
+   */
+  origin: 'displaced' | 'superseded' | 'deleted';
   importId: string | null;
   at: number;
 }
@@ -1245,19 +1685,35 @@ export function seqFromVectorId(id: string): number | null {
 export interface EmbedResult {
   embedded: number;
   remaining: number;
+  /** متجهاتٌ حُذفت لأن مادتها صارت ملغاة. */
+  purged?: number;
   /** سبب التخطّي إن لم يُنفَّذ التضمين — الفهرس المتجهي غير مهيّأ. */
   skipped?: string;
 }
 
 /**
+ * ما يستحقّ متجهاً: كلُّ مادة غير ملغاة.
+ *
+ * والملغاة لا تُفهرَس أصلاً — لا تُفهرَس ثم تُصفّى. فهرستُها تُنفق حصّة
+ * التضمين على ما لا يُسترجَع، وتُبقي متجهاً يطابق نصّاً خرج من النظام.
+ */
+const EMBEDDABLE_SQL = `retrieval_status <> '${RETRIEVAL_REPEALED}' AND is_repealed = 0`;
+
+/**
  * يحوّل `embed_text` للمقاطع التي تنتظر، دفعةً بعد دفعة.
  *
  * ولا يمسّ `text`: هو للعرض والاستشهاد ولا يدخل نموذج التضمين.
+ *
+ * **ويبدأ بالتنظيف قبل البناء.** مادةٌ انقلبت حالها إلى «ملغى» في دفعةٍ لاحقة
+ * يبقى متجهُها يطابق نصّها في البحث الدلاليّ، وتحديثُ الحال وحده لا يكفي:
+ * التصفية في SQL تُسقط الصفّ بعد استرجاعه، فتضيع خانةٌ من `topK` على مادةٍ
+ * لا تُعرض — وكلَّما كثرت الملغاة ضعف البحث بلا سبب ظاهر.
  */
 export async function embedPending(env: Env, limit = 200): Promise<EmbedResult> {
   const pendingCount = async () => {
-    const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM legal_chunks WHERE embedded_at IS NULL')
-      .first<{ n: number }>();
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM legal_chunks WHERE embedded_at IS NULL AND ${EMBEDDABLE_SQL}`
+    ).first<{ n: number }>();
     return row?.n ?? 0;
   };
 
@@ -1266,9 +1722,11 @@ export async function embedPending(env: Env, limit = 200): Promise<EmbedResult> 
     return { embedded: 0, remaining: await pendingCount(), skipped: 'الفهرس المتجهي غير مهيّأ' };
   }
 
+  const purged = await purgeRepealedVectors(env, limit);
+
   const rows = await env.DB.prepare(
     `SELECT seq, embed_text, law_id, doc_type, status, is_repealed, article_no_norm
-     FROM legal_chunks WHERE embedded_at IS NULL ORDER BY seq LIMIT ?`
+     FROM legal_chunks WHERE embedded_at IS NULL AND ${EMBEDDABLE_SQL} ORDER BY seq LIMIT ?`
   )
     .bind(limit)
     .all<{
@@ -1308,7 +1766,35 @@ export async function embedPending(env: Env, limit = 200): Promise<EmbedResult> 
     embedded += slice.length;
   }
 
-  return { embedded, remaining: await pendingCount() };
+  return { embedded, remaining: await pendingCount(), purged };
+}
+
+/**
+ * يحذف متجهات ما صار ملغىً.
+ *
+ * والعلامة أن الصفّ يحمل `embedded_at` وحالُه «ملغى»: كان له متجه ولم يعد
+ * يستحقّه. ويُصفَّر الطابع بعد الحذف فيخرج من عدّ المنتظر أيضاً — شرطُ
+ * `EMBEDDABLE_SQL` يمنع عودته إلى الطابور، فلا يدور بين حذفٍ وبناء.
+ */
+async function purgeRepealedVectors(env: Env, limit: number): Promise<number> {
+  const rows = await env.DB.prepare(
+    `SELECT seq FROM legal_chunks
+     WHERE embedded_at IS NOT NULL AND NOT (${EMBEDDABLE_SQL}) ORDER BY seq LIMIT ?`
+  )
+    .bind(limit)
+    .all<{ seq: number }>();
+
+  const stale = rows.results ?? [];
+  if (!stale.length) return 0;
+
+  // الحذف أوّلاً ثم التصفير: لو انقطع الشوط بينهما بقي الصفّ موسوماً
+  // بمتجهٍ حُذف، فيُعاد الحذف في الشوط التالي بلا ضرر. والعكس يترك متجهاً
+  // لا يعرف أحدٌ أنه بقي.
+  await env.VECTORIZE!.deleteByIds(stale.map((r) => vectorId(r.seq))).catch(() => {});
+  await env.DB.batch(
+    stale.map((r) => env.DB.prepare('UPDATE legal_chunks SET embedded_at = NULL WHERE seq = ?').bind(r.seq))
+  );
+  return stale.length;
 }
 
 // ── ٤) البيانات الوصفية: تصفية قبل البحث ──
@@ -1328,13 +1814,16 @@ export interface LegalFilters {
    */
   includeRepealed?: boolean;
   /**
-   * تجاوز الحجب المشروط: إظهار ما ينتظر المراجعة البشرية.
+   * تجاوز الحجب المشروط: إظهار المعطوب الذي لم يُبتّ فيه.
    *
    * لشاشة المراجعة وتصفّح النظام وحدهما. والاسترجاع الآلي — محادثةً كان أو
-   * تقريراً أو أتمتة — لا يمرّره أبداً: التصنيف الآلي يقترح ولا يقرّر، وما
-   * لم يعتمده إنسان لا يُستشهد به.
+   * تقريراً أو أتمتة — لا يمرّره أبداً: نصٌّ تسرّبت إليه واجهةُ البوابة أو
+   * اقتُطع نصفُه لا يُستشهد به قبل أن يراه إنسان.
    */
-  includeNeedsReview?: boolean;
+  includeDefective?: boolean;
+
+  /** حصر البحث في بابٍ من النظام — `book` كما ورد في الملف. */
+  book?: string | null;
 }
 
 function buildFilters(f: LegalFilters): { sql: string; binds: unknown[] } {
@@ -1342,7 +1831,7 @@ function buildFilters(f: LegalFilters): { sql: string; binds: unknown[] } {
   const binds: unknown[] = [];
 
   if (!f.includeRepealed) clauses.push(EFFECTIVE_SQL);
-  if (!f.includeNeedsReview) clauses.push(REVIEWED_SQL);
+  if (!f.includeDefective) clauses.push(SOUND_SQL);
 
   if (f.lawId) {
     if (f.withRegulations === false) {
@@ -1354,8 +1843,15 @@ function buildFilters(f: LegalFilters): { sql: string; binds: unknown[] } {
     }
   }
   if (f.docType) {
+    // النوع يُقابَل كما يُقابَل عند الاستيراد، فمن رشّح بـ«نظام» أصاب ما
+    // خُزِّن `law`: لغةُ المرشِّح ليست لغة المخزَّن، ولا يُطالَب بمعرفتها.
     clauses.push('c.doc_type = ?');
-    binds.push(f.docType);
+    binds.push(canonicalDocType(f.docType) ?? f.docType);
+  }
+  if (f.book) {
+    // الباب يُطابَق مطبَّعاً: «الباب الثالث» و«الباب الثّالث» بابٌ واحد.
+    clauses.push('c.book_norm = ?');
+    binds.push(normalizeArabic(f.book));
   }
   if (f.articleNo) {
     clauses.push('c.article_no_norm = ?');
@@ -1378,6 +1874,8 @@ interface HitRow {
   is_duplicate: number; duplicate_of: string | null; duplicate_index: number | null;
   has_amendments: number; amendment_kind: string | null; amendment_applied: number;
   needs_review: number; reviewed_at: number | null;
+  retrieval_status: string; retrieval_warning: string | null;
+  has_defect: number; defect_kind: string | null;
   review_status: string; review_note: string | null; was_edited: number;
   amendment_instrument: string | null; amended_on: string | null;
   amendments_count: number | null; amend_note: string | null;
@@ -1428,6 +1926,10 @@ function toHit(r: HitRow): LegalHit {
     amendmentKind: r.amendment_kind,
     amendmentApplied: r.amendment_applied === 1,
     needsReview: r.needs_review === 1,
+    retrievalStatus: r.retrieval_status,
+    retrievalWarning: r.retrieval_warning,
+    hasDefect: r.has_defect === 1,
+    defectKind: r.defect_kind,
     reviewedAt: r.reviewed_at,
     reviewStatus: r.review_status,
     reviewNote: r.review_note,
@@ -1679,7 +2181,7 @@ export async function getArticle(
     lawId: string;
     articleNo: string;
     includeRepealed?: boolean;
-    includeNeedsReview?: boolean;
+    includeDefective?: boolean;
     docType?: string | null;
   }
 ): Promise<LegalHit[]> {
@@ -1688,7 +2190,7 @@ export async function getArticle(
     docType: opts.docType ?? null,
     withRegulations: false,
     includeRepealed: opts.includeRepealed,
-    includeNeedsReview: opts.includeNeedsReview,
+    includeDefective: opts.includeDefective,
   };
   const filters = buildFilters({ ...scope, articleNo: opts.articleNo });
   const rows = await env.DB.prepare(
@@ -1706,9 +2208,9 @@ export async function getChunkById(
   env: Env,
   id: string,
   includeRepealed = false,
-  includeNeedsReview = false
+  includeDefective = false
 ): Promise<LegalHit | null> {
-  const filters = buildFilters({ includeRepealed, includeNeedsReview });
+  const filters = buildFilters({ includeRepealed, includeDefective });
   const row = await env.DB.prepare(
     `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE c.id = ?${filters.sql} LIMIT 1`
   )
@@ -1885,7 +2387,7 @@ export async function listReviewQueue(
   // والحكم على أختها لا يصحّ بغيابها.
   const articles = await expandDuplicates(env, (rows.results ?? []).map(toHit), {
     includeRepealed: true,
-    includeNeedsReview: true,
+    includeDefective: true,
   });
 
   return { articles, total: total?.n ?? 0 };
@@ -2203,7 +2705,7 @@ export interface ReviewDashboard {
 export async function reviewDashboard(env: Env, filters: ReviewFilters = {}): Promise<ReviewDashboard> {
   const row = await env.DB.prepare(
     `SELECT COUNT(*) AS chunks,
-            SUM(CASE WHEN ${EFFECTIVE_SQL} AND ${REVIEWED_SQL} THEN 1 ELSE 0 END) AS retrievable,
+            SUM(CASE WHEN ${EFFECTIVE_SQL} AND ${SOUND_SQL} THEN 1 ELSE 0 END) AS retrievable,
             SUM(CASE WHEN ${IN_QUEUE_SQL} THEN 1 ELSE 0 END) AS in_queue,
             SUM(CASE WHEN c.review_status = 'approved' THEN 1 ELSE 0 END) AS approved,
             SUM(CASE WHEN c.review_status = 'edited' THEN 1 ELSE 0 END) AS edited,
@@ -2307,7 +2809,7 @@ export async function listLawArticles(
     lawId,
     withRegulations: false,
     includeRepealed: opts.includeRepealed !== false,
-    includeNeedsReview: true,
+    includeDefective: true,
   });
 
   const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_chunks c WHERE 1 = 1${filters.sql}`)
