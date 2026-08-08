@@ -1,0 +1,170 @@
+name: محو قاعدة المعرفة
+
+# محوٌ كامل للمدوّنة النظامية والوثائق المرفوعة — تمهيداً لرفعٍ جديد من الصفر.
+#
+# **يُشغَّل بالطلب وحده.** لا `push` ولا `schedule`: محوٌ يقع مع النشر يمحو ما
+# رُفع بعده. والتشغيل من GitHub › Actions › محو قاعدة المعرفة › Run workflow.
+#
+# وثلاثة حرّاس قبل أوّل أمر حذف:
+#   ١) كلمة تأكيد تُكتب بالكامل — لا زرّ يُضغط سهواً
+#   ٢) `dry_run` مفعَّل افتراضياً: يعدّ ولا يحذف، فيُرى المدى قبل وقوعه
+#   ٣) نسخة احتياطية كاملة تُرفع مخرَجاً قبل الحذف، تبقى تسعين يوماً
+#
+# ما يُحذف: `legal_chunks` وفهرسها اللفظي · `legal_chunk_versions` ·
+# `legal_review_audit` · `legal_imports` · `kb_documents` · `kb_document_versions`
+# · متجهات فهرس `naf-legal-kb` كلُّها.
+#
+# ما لا يُمسّ: المحادثات والرسائل والأعضاء والقضايا والمواعيد وبنود العقود،
+# وصفوف `regulation_tracking` (يُفكّ ارتباطها بالوثائق فتنجو من التتالي)،
+# وفهرس المحادثات `naf-legal-conv`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'اكتب naf_legal للتأكيد — أيّ شيء آخر يوقف التشغيل'
+        required: true
+        type: string
+      dry_run:
+        description: 'إحصاءٌ بلا حذف'
+        required: true
+        type: boolean
+        default: true
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: حارس التأكيد
+        run: |
+          if [ "${{ inputs.confirm }}" != "naf_legal" ]; then
+            echo "::error::كلمة التأكيد غير مطابقة — لم يقع شيء."
+            exit 1
+          fi
+          echo "التأكيد مطابق. الوضع: ${{ inputs.dry_run && 'إحصاء بلا حذف' || 'محو فعليّ' }}"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: تثبيت الاعتماديات
+        run: npm ci
+
+      # العدّ قبل العدّ بعد: رقمٌ واحد لا يُقرأ إلا بجانب سابقه.
+      - name: إحصاء ما سيُحذف
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute naf_legal --remote --json --command "
+            SELECT 'legal_chunks' AS الجدول, COUNT(*) AS العدد FROM legal_chunks
+            UNION ALL SELECT 'legal_chunk_versions', COUNT(*) FROM legal_chunk_versions
+            UNION ALL SELECT 'legal_review_audit', COUNT(*) FROM legal_review_audit
+            UNION ALL SELECT 'legal_imports', COUNT(*) FROM legal_imports
+            UNION ALL SELECT 'kb_documents', COUNT(*) FROM kb_documents
+            UNION ALL SELECT 'kb_document_versions', COUNT(*) FROM kb_document_versions
+            UNION ALL SELECT 'regulation_tracking (تبقى)', COUNT(*) FROM regulation_tracking
+          " | tee counts-before.json
+
+      # النسخة قبل الحذف لا بعده. وهي القاعدة كاملة لا الجداول المحذوفة وحدها:
+      # استعادةٌ جزئية تحتاج ما حولها لتصحّ.
+      - name: نسخة احتياطية كاملة
+        run: npx wrangler d1 export naf_legal --remote --output naf_legal-backup.sql --skip-confirmation
+
+      - name: رفع النسخة الاحتياطية
+        uses: actions/upload-artifact@v4
+        with:
+          name: naf_legal-backup
+          path: |
+            naf_legal-backup.sql
+            counts-before.json
+          retention-days: 90
+
+      - name: وقوفٌ عند الإحصاء
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "::notice::إحصاءٌ بلا حذف — النسخة الاحتياطية مرفوعة، ولم يُحذف شيء."
+          echo "لتنفيذ المحو: أعِد التشغيل مع dry_run = false."
+
+      # ── المحو ──
+      # الصفوف أوّلاً ثم المتجهات: لو انقطع الشوط بينهما بقيت متجهاتٌ بلا صفوف
+      # — وهي تُزاحم النتائج ولا تُفسدها. والعكس يترك صفوفاً بلا متجهات، فيبدو
+      # الاسترجاع سليماً وهو أعمى.
+      - name: حذف الصفوف
+        if: ${{ !inputs.dry_run }}
+        run: npx wrangler d1 execute naf_legal --remote --file scripts/purge-knowledge-base.sql
+
+      # ملفّات الوثائق في R2: مفاتيحها في القاعدة، فتُجمع قبل الحذف لا بعده —
+      # ولذلك تُقرأ من النسخة الاحتياطية المأخوذة أعلاه.
+      - name: حذف ملفّات الوثائق من R2
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -uo pipefail
+          # المفاتيح من نسخة القاعدة: `r2_key` للأصل، و`kb-text/<id>.txt`
+          # للنصّ المستخرج، و`text_r2_key` لنصوص النسخ السابقة.
+          node --input-type=module -e "
+            import { readFileSync, writeFileSync } from 'node:fs';
+            const sql = readFileSync('naf_legal-backup.sql', 'utf8');
+            const keys = new Set();
+            for (const m of sql.matchAll(/'((?:kb|kb-text)\/[^']*)'/g)) keys.add(m[1]);
+            for (const m of sql.matchAll(/INSERT INTO \"?kb_documents\"?[^;]*;/g)) {
+              for (const id of m[0].matchAll(/'([0-9a-f-]{36})'/g)) keys.add('kb-text/' + id[1] + '.txt');
+            }
+            writeFileSync('r2-keys.txt', [...keys].join('\n'));
+            console.error('مفاتيح للحذف: ' + keys.size);
+          "
+          while IFS= read -r key; do
+            [ -z "$key" ] && continue
+            npx wrangler r2 object delete "naf-legal-files/$key" --remote 2>&1 | tail -1
+          done < r2-keys.txt
+          echo "انتهى حذف ملفّات الوثائق."
+
+      # الفهرس المتجهيّ لا يقبل «احذف كل شيء»، وحذفَ آلاف المعرّفات واحداً
+      # واحداً شوطٌ يطول وينقطع. وسكّانه اثنان لا ثالث لهما — مقاطعُ نظامية
+      # `legal:<seq>` ووثائقُ مرفوعة `<id>:<n>` — وكلاهما محذوف، فإسقاطه
+      # وإنشاؤه أنظف وأتمّ: يذهب معه كلُّ متجهٍ يتيمٍ من عهدٍ سابق.
+      #
+      # ومحادثات المستخدمين في فهرسٍ آخر — `naf-legal-conv` — لا يُمسّ.
+      - name: تفريغ الفهرس المتجهيّ
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          npx wrangler vectorize delete naf-legal-kb --force
+          npx wrangler vectorize create naf-legal-kb --dimensions=1024 --metric=cosine
+
+      # الربط يُحسم عند النشر، وفهرسٌ أُنشئ بعده يحتاج نشرةً تُمسك به. وبدونها
+      # يبقى `env.VECTORIZE` معلَّقاً على فهرسٍ مضى، فيسقط التضمين صامتاً.
+      - name: إعادة النشر ليُمسك الفهرس الجديد
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          LIST=$(npx wrangler vectorize list 2>&1) || LIST=""
+          if grep -q "naf-legal-kb" <<<"$LIST" && grep -q "naf-legal-conv" <<<"$LIST"; then
+            sed -i '/VECTORIZE-BINDINGS-START/,/VECTORIZE-BINDINGS-END/ s/^# \(\[\[vectorize\]\]\|binding \|index_name \)/\1/' wrangler.toml
+          fi
+          npm --prefix web ci
+          npm run build:web
+          npx wrangler deploy
+
+      - name: إحصاء ما بقي
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute naf_legal --remote --json --command "
+            SELECT 'legal_chunks' AS الجدول, COUNT(*) AS العدد FROM legal_chunks
+            UNION ALL SELECT 'legal_fts', COUNT(*) FROM legal_fts
+            UNION ALL SELECT 'legal_chunk_versions', COUNT(*) FROM legal_chunk_versions
+            UNION ALL SELECT 'legal_review_audit', COUNT(*) FROM legal_review_audit
+            UNION ALL SELECT 'legal_imports', COUNT(*) FROM legal_imports
+            UNION ALL SELECT 'kb_documents', COUNT(*) FROM kb_documents
+            UNION ALL SELECT 'kb_document_versions', COUNT(*) FROM kb_document_versions
+            UNION ALL SELECT 'regulation_tracking (تبقى)', COUNT(*) FROM regulation_tracking
+            UNION ALL SELECT 'conversations (لا تُمسّ)', COUNT(*) FROM conversations
+            UNION ALL SELECT 'clauses (لا تُمسّ)', COUNT(*) FROM clauses
+          "
+          echo "::notice::المحو تمّ. القاعدة جاهزة لرفعٍ جديد."
