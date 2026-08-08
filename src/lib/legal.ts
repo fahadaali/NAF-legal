@@ -2236,16 +2236,48 @@ export interface ChunkAmendment {
   amendments_raw: string | null;
   amend_note: string | null;
   text_superseded: string | null;
+  source_url: string | null;
+  /** الخطّ الزمني: نسخُ النصّ مرتَّبةً، وآخرها المعتمد. */
+  versions: TextVersion[];
+  /** سجلّ التعديلات مفكَّكاً: عمليةٌ لكل حدث بما طُبِّق وما تُخطّي وسببه. */
+  events: AmendmentEvent[];
 }
 
 export async function getChunkAmendment(env: Env, id: string): Promise<ChunkAmendment | null> {
-  return env.DB.prepare(
+  const row = await env.DB.prepare(
     `SELECT id, amendment_kind, amendment_applied, amendment_instrument, amended_on,
-            amendments_count, amendments_raw, amend_note, text_superseded
+            amendments_count, amendments_raw, amend_note, text_superseded, source_url,
+            text_versions, amendment_events
      FROM legal_chunks WHERE id = ? LIMIT 1`
   )
     .bind(id)
-    .first<ChunkAmendment>();
+    .first<
+      Omit<ChunkAmendment, 'versions' | 'events'> & {
+        text_versions: string | null;
+        amendment_events: string | null;
+      }
+    >();
+  if (!row) return null;
+
+  // نصٌّ محفوظٌ لا يُفكّ إلا هنا: المصفوفتان تُقرآن عند فتح المادة وحدها،
+  // ولا تُصفّى بهما ولا تُرتَّب. وما تعذّر فكُّه يعود فارغاً لا يُسقط النافذة:
+  // بطاقةٌ بلا خطٍّ زمنيّ خيرٌ من مادةٍ لا تُفتح.
+  const parse = <T>(raw: string | null): T[] => {
+    if (!raw) return [];
+    try {
+      const v = JSON.parse(raw);
+      return Array.isArray(v) ? (v as T[]) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const { text_versions, amendment_events, ...rest } = row;
+  return {
+    ...rest,
+    versions: parse<TextVersion>(text_versions),
+    events: parse<AmendmentEvent>(amendment_events),
+  };
 }
 
 // ── وحدة المراجعة ──

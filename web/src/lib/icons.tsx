@@ -9,6 +9,12 @@ import {
   Activity,
   ArrowDown,
   Ban,
+  BookX,
+  Copy,
+  ExternalLink,
+  FileClock,
+  FileDiff,
+  History as HistoryIcon,
   ArrowLeft,
   ArrowUp,
   BadgeCheck,
@@ -130,6 +136,14 @@ export const Icon = {
   reviewEdited: SquarePen,  // محرَّرة — حالُ نصٍّ بعد التحرير، وليست Pencil (فعل التعديل)
   reviewExcluded: Ban,      // مستبعدة — مقطعٌ يُخرَج، وليست CircleX (مرفوض: مستند عاد بحكم)
   reviewDeferred: Hourglass, // مؤجَّلة — وليست Clock (بانتظار المراجعة: الحال التي خرجت منها)
+  // حالُ الاسترجاع ونافذة سجلّ التعديلات — naf-icons.md تحت العنوان نفسه.
+  // والإلغاء واقعةٌ نظامية لا قرارُ مراجعٍ عندنا، فلا `Ban` (مستبعدة).
+  repealedArticle: BookX,   // ملغاة — أُلغيت بمرسوم، وليست Ban (قرار مراجع)
+  amendmentLog: FileDiff,   // سجل التعديلات — ما فُعل بالمادة، وليست History (ما صارت إليه)
+  versionTimeline: HistoryIcon, // الخط الزمني — «سجلّ النسخ» المسجَّلة أصلاً
+  originalText: FileClock,  // الأصل — نصٌّ من زمنٍ مضى، وليست Archive (فعلُ الأرشفة)
+  copy: Copy,               // نسخ
+  externalLink: ExternalLink, // رابط خارجي — الوجهة خارج النظام
   // الأعضاء والصلاحيات
   permissions: ShieldCheck, // صلاحيات
   members: Users,          // مستخدمو النظام جمعاً — وليست User (عميل فرد)

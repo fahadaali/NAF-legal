@@ -702,6 +702,11 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 }
 /* الفرق يُقرأ بالشكل كما يُقرأ باللون: خطٌّ على المحذوف وتسطيرٌ للمضاف،
    فمن لا يميّز الأحمر عن الأخضر يرى ما تغيّر. */
+/* المحذوف والمضاف يتجاوران بلا فاصل حين يقع الاستبدال على كلمةٍ بعينها —
+   المسافة بينهما بقيت في النصّ المشترك — فتُقرأ «تنشئتوفر» كلمةً واحدة.
+   وحشوةٌ أفقية تفصلهما بلا أن تُدخل في النصّ حرفاً ليس منه: من نسخ نسخ
+   النصّ كما هو. */
+.review-raw del, .review-raw ins { padding-inline: var(--space-1); border-radius: var(--radius-sm); }
 .review-raw del { background: var(--destructive-soft); color: var(--destructive-strong); text-decoration: line-through; }
 .review-raw ins { background: var(--success-soft); color: var(--success-strong); text-decoration: underline; }
 .review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block: var(--space-3); }
@@ -740,3 +745,64 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .search-hit:hover { border-color: var(--primary); }
 .search-hit-title { display: flex; align-items: center; gap: var(--space-2); font-weight: 700; }
 .search-hit-snippet { color: var(--muted-foreground); line-height: var(--leading-relaxed, 1.9); }
+
+/* ── نافذة سجلّ التعديلات ── */
+/* والتاريخ لا يُخفى بل يُطوى خلف زرّ: البطاقة تعرض النافذ وحده، وهذه تقول
+   كيف صار كذلك. */
+.amendment-card { height: min(86vh, 900px); }
+.amendment-tabs {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) 0;
+}
+.amendment-event {
+  padding: var(--space-3); margin-bottom: var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--card);
+}
+.amendment-event-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+/* رقمُ الحدث في ترتيبه — دائرةٌ تسبق أداتَه وتاريخَه. */
+.amendment-seq {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.75rem; height: 1.75rem; border-radius: var(--radius-full, 999px);
+  background: var(--muted); color: var(--muted-foreground);
+  font-size: 0.875rem; font-variant-numeric: tabular-nums;
+}
+.amendment-result { margin: 0 0 var(--space-2); font-weight: 500; }
+.amendment-event details { margin-top: var(--space-2); }
+.amendment-event summary { cursor: pointer; color: var(--muted-foreground); font-size: 0.875rem; }
+
+.version-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: var(--space-2); }
+.version-list button { width: 100%; justify-content: flex-start; text-align: start; }
+.version-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+/* أسطر الفقرات تبقى كما وردت: التعداد جزءٌ من المعنى النظامي، ودمجُه في
+   فقرةٍ واحدة يُفسده. */
+.legal-text { white-space: pre-line; line-height: var(--leading-relaxed, 1.9); }
+
+/* الطباعة تُخرج النصّ النافذ وسجلّ التعديلات معاً، ولا تُخرج ما لا يُقرأ
+   على ورق: أزرارَ التبويب وزرَّ الإغلاق. */
+@media print {
+  .modal-overlay { position: static; background: none; display: block; }
+  .amendment-card { width: auto; height: auto; max-height: none; box-shadow: none; border: 0; }
+  .amendment-tabs, .modal-close, .version-actions { display: none; }
+  .amendment-card .modal-body { overflow: visible; }
+}
+
+/* على الجوال: صفحةٌ كاملة لا نافذة — نافذةٌ بحوافّ على شاشةٍ ضيّقة تُضيّع
+   ثلث العرض على ظلٍّ لا يُقرأ.
+   وحشوةُ الحجاب تُرفع معها: `100vw` داخل حجابٍ محشوّ يتجاوزه بمقدار حشوته
+   من الجهتين، فتخرج حافّةُ البطاقة عن الشاشة. و`dvh` لا `vh` لأن شريط
+   المتصفّح على الجوال يقتطع من `vh` فيبقى ذيل النافذة تحت الشريط. */
+@media (max-width: 640px) {
+  .modal-overlay:has(.amendment-card) { padding: 0; }
+  .amendment-card {
+    width: 100%; height: 100dvh; max-height: none;
+    border: 0; border-radius: 0;
+  }
+}
