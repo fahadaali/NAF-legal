@@ -232,9 +232,18 @@ app.post('/finalize', requireAdmin, async (c) => {
 
 app.get('/stats', requireAdmin, async (c) => c.json(await legalStats(c.env)));
 
+/**
+ * سجلّ الدفعات — وأثرُ كلٍّ: مضاف ومحدَّث ومحذوف.
+ *
+ * والبصمة معها: بها يُعرف أيُّ ملفٍ أنتج ما في القاعدة، وتُطابَق ببصمة
+ * المُرسِل. ومعرّفُ الدفعة يجمع أجزاء الملف الواحد، فيُقرأ سجلُّها سطراً
+ * واحداً لا خمسةَ أسطر لملفٍ قُسِّم خمساً.
+ */
 app.get('/imports', requireAdmin, async (c) => {
   const rows = await c.env.DB.prepare(
-    'SELECT id, actor_id, filename, lines, inserted, updated, failed, created_at, kind FROM legal_imports ORDER BY created_at DESC LIMIT 50'
+    `SELECT id, actor_id, filename, lines, inserted, updated, failed, deleted,
+            file_sha256, batch_id, created_at, kind
+     FROM legal_imports ORDER BY created_at DESC LIMIT 50`
   ).all();
   return c.json({ imports: rows.results });
 });

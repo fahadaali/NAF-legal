@@ -1699,6 +1699,9 @@ export interface EmbedResult {
  */
 const EMBEDDABLE_SQL = `retrieval_status <> '${RETRIEVAL_REPEALED}' AND is_repealed = 0`;
 
+/** الشرط نفسه مؤهَّلاً باسم الجدول — لاستعلامٍ يجمع أعمدةً من `c`. */
+const EMBEDDABLE_SQL_C = `c.retrieval_status <> '${RETRIEVAL_REPEALED}' AND c.is_repealed = 0`;
+
 /**
  * يحوّل `embed_text` للمقاطع التي تنتظر، دفعةً بعد دفعة.
  *
@@ -2919,8 +2922,25 @@ export interface LegalStats {
   needs_review: number;
   /** مادةٌ عُدِّلت ونصُّها المعروض أصليّ — تُعرض مع تنبيهها. */
   amendment_pending: number;
+  /** توزيعُ حالِ الاسترجاع — يُقابَل ببيان الدفعة. */
+  retrieval: { effective: number; warning: number; repealed: number };
+  /** ما يستحقّ متجهاً: كلُّ ما ليس ملغىً. */
+  indexed: number;
+  /** يستحقّ متجهاً ولم يُضمَّن بعد. */
+  missing_vector: number;
+  /** ضُمِّن ولم يعد يستحقّ — يجب أن يبقى صفراً. */
+  stale_vector: number;
+  /** معطوبٌ محجوبٌ ينتظر البتّ. */
+  defective: number;
 }
 
+/**
+ * صحّة القاعدة — استعلامٌ حيّ لا رقمٌ ثابت.
+ *
+ * يُقارَن ببيان الدفعة الذي طبعه `verify-legal.mjs`: السجلات والأنظمة وتوزيع
+ * الحالات وما يُفهرَس. ورقمٌ مكتوبٌ في وثيقة يتقادم مع أوّل دفعة، فيُقارَن به
+ * ويُظَنّ الاستيراد ناقصاً — ولذلك يُقرأ من القاعدة في كل فتحة.
+ */
 export async function legalStats(env: Env): Promise<LegalStats> {
   const row = await env.DB.prepare(
     `SELECT COUNT(*) AS chunks,
@@ -2929,11 +2949,23 @@ export async function legalStats(env: Env): Promise<LegalStats> {
             COUNT(DISTINCT c.law_id) AS laws,
             SUM(CASE WHEN c.embedded_at IS NULL THEN 1 ELSE 0 END) AS pending,
             SUM(CASE WHEN ${IN_QUEUE_SQL} THEN 1 ELSE 0 END) AS needs_review,
-            SUM(CASE WHEN c.has_amendments = 1 AND c.amendment_applied = 0 THEN 1 ELSE 0 END) AS amendment_pending
+            SUM(CASE WHEN c.has_amendments = 1 AND c.amendment_applied = 0 THEN 1 ELSE 0 END) AS amendment_pending,
+            -- توزيعُ حالِ الاسترجاع: الحقل الذي يُبنى عليه القرار، فتوزيعُه
+            -- هو ما يُقابَل ببيان الدفعة لا العدد الإجمالي وحده.
+            SUM(CASE WHEN c.retrieval_status = '${RETRIEVAL_EFFECTIVE}' THEN 1 ELSE 0 END) AS r_effective,
+            SUM(CASE WHEN c.retrieval_status = '${RETRIEVAL_WARNING}' THEN 1 ELSE 0 END) AS r_warning,
+            SUM(CASE WHEN c.retrieval_status = '${RETRIEVAL_REPEALED}' THEN 1 ELSE 0 END) AS r_repealed,
+            -- ومقياسا المتجه: ما يستحقّه ولم يُضمَّن بعد، وما ضُمِّن وهو لا
+            -- يستحقّه. الثاني صفرٌ دائماً إن عمل التنظيف، وارتفاعُه إنذار.
+            SUM(CASE WHEN ${EMBEDDABLE_SQL_C} AND c.embedded_at IS NULL THEN 1 ELSE 0 END) AS missing_vector,
+            SUM(CASE WHEN NOT (${EMBEDDABLE_SQL_C}) AND c.embedded_at IS NOT NULL THEN 1 ELSE 0 END) AS stale_vector,
+            SUM(CASE WHEN c.has_defect = 1 AND c.review_status = 'pending' THEN 1 ELSE 0 END) AS defective
      FROM legal_chunks c`
   ).first<{
     chunks: number; effective: number; repealed: number; laws: number; pending: number;
     needs_review: number; amendment_pending: number;
+    r_effective: number; r_warning: number; r_repealed: number;
+    missing_vector: number; stale_vector: number; defective: number;
   }>();
 
   return {
@@ -2945,5 +2977,14 @@ export async function legalStats(env: Env): Promise<LegalStats> {
     vectorize: !!env.VECTORIZE,
     needs_review: row?.needs_review ?? 0,
     amendment_pending: row?.amendment_pending ?? 0,
+    retrieval: {
+      effective: row?.r_effective ?? 0,
+      warning: row?.r_warning ?? 0,
+      repealed: row?.r_repealed ?? 0,
+    },
+    indexed: (row?.chunks ?? 0) - (row?.r_repealed ?? 0),
+    missing_vector: row?.missing_vector ?? 0,
+    stale_vector: row?.stale_vector ?? 0,
+    defective: row?.defective ?? 0,
   };
 }

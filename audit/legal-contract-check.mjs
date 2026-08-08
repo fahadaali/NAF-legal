@@ -1619,6 +1619,51 @@ await check('٢٠ · والتراجع يُعيد التحذير كما يُعي�
   assert.ok(moves.length >= 2, 'تغيّر الحال لم يُقيَّد');
 });
 
+await check('٢١ · صحّة القاعدة عدٌّ حيّ: توزيعُ الحال ومقياسا المتجه', async () => {
+  // رقمٌ مكتوب في وثيقة يتقادم مع أوّل دفعة فيُقارَن به ويُظَنّ الاستيراد
+  // ناقصاً. وهذا يُقرأ من القاعدة في كل فتحة، ويُقابَل ببيان `verify-legal`.
+  const st = await lib.legalStats(env);
+  assert.equal(st.chunks, q('SELECT COUNT(*) AS n FROM legal_chunks')[0].n, 'العدّ ليس حيّاً');
+  assert.equal(
+    st.retrieval.effective + st.retrieval.warning + st.retrieval.repealed,
+    st.chunks,
+    'توزيع حال الاسترجاع لا يجمع إلى الإجمالي'
+  );
+  assert.equal(st.indexed, st.chunks - st.retrieval.repealed, '«ما يُفهرَس» لا يطابق ما ليس ملغىً');
+  // ومقياسُ المتجه اليتيم يبقى صفراً ما دام التنظيف يعمل — وارتفاعُه إنذار.
+  assert.equal(typeof st.stale_vector, 'number');
+  assert.equal(typeof st.missing_vector, 'number');
+  const cron = readFileSync(path.join(ROOT, 'src', 'cron.ts'), 'utf8');
+  assert.match(cron, /stale_vector/, 'الدورة الليلية لا تُحصي المتجه اليتيم');
+  assert.match(cron, /missing_vector/, 'ولا ما ينقصه متجه');
+});
+
+await check('٢١ · وسجلّ الدفعات يقول أثرها وبصمتَها', () => {
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  const q0 = routes.slice(routes.indexOf("app.get('/imports'"), routes.indexOf("app.get('/imports'") + 700);
+  for (const col of ['inserted', 'updated', 'failed', 'deleted', 'file_sha256', 'batch_id']) {
+    assert.ok(q0.includes(col), `سجلّ الدفعات بلا \`${col}\``);
+  }
+});
+
+await check('٢١ · والاستشهاد يحمل نسخة النصّ لا رقم المادة وحده', async () => {
+  // «المادة الخامسة» تصف موضعاً، و«بصيغتها بعد أ/256» تصف أيَّ نصٍّ فيه.
+  // ومادةٌ عُدِّلت ثلاثاً لها ثلاثة نصوص، والرقم وحده يصدق على أيّها.
+  await lib.upsertLegalChunks(env, lib.parseJsonl(
+    line({ id: 'ثالثة/art-5', law_id: 'third', law_name: 'نظام الثالثة', article_no: 5, instrument_no: 'م/51',
+      text: 'يُصرف بدل الاغتراب للمبتعث الموفَد إلى خارج المملكة وفق جدولٍ يعتمده الوزير.',
+      embed_text: 'نظام الثالثة — المادة 5 — بدل الاغتراب للمبتعث الموفَد.', retrieval_status: 'نافذ',
+      has_amendments: true, amendment_applied: true, amendment_instrument: 'أ/256', amended_on: '26/9/1438' })
+  ).rows, { importId: 'imp-cite' });
+  await lib.embedPending(env, 50);
+  const ctx = lib.formatRagContext(
+    await lib.retrieve(env, ['بدل الاغتراب للمبتعث الموفَد إلى خارج المملكة'], 10)
+  );
+  assert.match(ctx, /بصيغتها بعد أ\/256 وتاريخ 26\/9\/1438/, 'سطر الإسناد بلا نسخته: ' + ctx.slice(0, 300));
+  const prompts = readFileSync(path.join(ROOT, 'src', 'lib', 'prompts.ts'), 'utf8');
+  assert.match(prompts, /بصيغتها بعد/, 'البرومبت لا يُلزم بنقل سطر الإسناد');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

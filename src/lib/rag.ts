@@ -72,6 +72,8 @@ export interface RagResult {
   sourceUrl?: string;
   /** مادةٌ عُدِّلت ونصُّها المعروض أصليّ — يُذكر تنبيهها مع المقطع. */
   amendmentPending?: boolean;
+  /** دُمج تعديلُها في نصّها — فالاستشهاد يقول «بصيغتها بعد كذا». */
+  amendmentApplied?: boolean;
   amendmentInstrument?: string;
   amendedOn?: string;
   /** تاريخ نفاذها لم يحلّ بعد — نصُّها سابقٌ لأوانه. */
@@ -153,6 +155,7 @@ function fromLegalHit(h: LegalHit): RagResult {
     issueDateHijri: h.issueDateHijri ?? undefined,
     sourceUrl: h.sourceUrl ?? undefined,
     amendmentPending: h.hasAmendments && !h.amendmentApplied,
+    amendmentApplied: h.hasAmendments && h.amendmentApplied,
     amendmentInstrument: h.amendmentInstrument ?? undefined,
     amendedOn: h.amendedOn ?? undefined,
     effectivePending: h.effectivePending,
@@ -307,5 +310,15 @@ function citationLine(r: RagResult): string {
   if (r.instrumentNo) parts.push(r.instrumentNo);
   if (r.issueDate) parts.push(r.issueDateHijri ? `${r.issueDate} (${r.issueDateHijri})` : r.issueDate);
   else if (r.issueDateHijri) parts.push(r.issueDateHijri);
+
+  /* ونسخةُ النصّ تُقال حين تكون له نسخ.
+   *
+   * «المادة الخامسة من النظام الأساسي للحكم» تصف موضعاً، و«بصيغتها بعد الأمر
+   * أ/256 وتاريخ 26/9/1438هـ» تصف **أيَّ نصٍّ** في ذلك الموضع. ومادةٌ عُدِّلت
+   * ثلاث مرّات لها ثلاثة نصوص، والاستشهاد بالرقم وحده يصدق على أيّها. */
+  if (r.amendmentApplied) {
+    const by = [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' وتاريخ ');
+    if (by) parts.push(`بصيغتها بعد ${by}`);
+  }
   return parts.filter(Boolean).join(' — ');
 }

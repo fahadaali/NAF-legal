@@ -207,6 +207,16 @@ export interface LegalStats {
   needs_review: number;
   /** مادةٌ عُدِّلت ونصُّها المعروض أصليّ — تُعرض مع تنبيهها. */
   amendment_pending: number;
+  /** توزيعُ حالِ الاسترجاع — يُقابَل ببيان الدفعة. */
+  retrieval: { effective: number; warning: number; repealed: number };
+  /** ما يستحقّ متجهاً: كلُّ ما ليس ملغىً. */
+  indexed: number;
+  /** يستحقّ متجهاً ولم يُضمَّن بعد. */
+  missing_vector: number;
+  /** ضُمِّن ولم يعد يستحقّ — يجب أن يبقى صفراً. */
+  stale_vector: number;
+  /** معطوبٌ محجوبٌ ينتظر البتّ. */
+  defective: number;
 }
 
 /** نتيجة البحث في المنصة، مقسّمةً بمواضعها. */
