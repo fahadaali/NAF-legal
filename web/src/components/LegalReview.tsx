@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
   REVIEW_BULK_LIMIT,
+  type AmendmentEvent,
   type LegalAmendment,
   type LegalArticle,
   type LegalLaw,
@@ -19,6 +20,7 @@ import {
   type ReviewDashboard,
   type ReviewFilters,
 } from '../lib/api';
+import { DiffText } from '../lib/diff';
 import { formatDate, formatNumber, formatTime } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 import { ReviewStatusPill } from './LegalArticleView';
@@ -338,6 +340,48 @@ export function LegalReview() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * أحداث التعديل في شاشة المراجعة — سطرٌ لكلٍّ لا بطاقة.
+ *
+ * النافذةُ في الاستعراض تُفصّل لقارئٍ يقرأ مادةً واحدة، وهذه تُوجز لمراجعٍ
+ * يمرّ على مئتين: الأداةُ والتاريخ ووصفُ العملية ووسمُ التطبيق في سطر، وسببُ
+ * التخطّي تحته لأنه ما يحتاج القرار.
+ */
+function ReviewEvents({ events }: { events: AmendmentEvent[] }) {
+  return (
+    <ol className="review-events">
+      {events.map((e, i) => (
+        <li key={e.seq ?? i}>
+          <div className="amendment-event-head">
+            <span className="amendment-seq"><bdi>{formatNumber(i + 1)}</bdi></span>
+            <span>
+              <bdi>{[e.instrument, e.instrument_no].filter(Boolean).join(' ') || '—'}</bdi>
+              {e.date_hijri ? <> · <bdi>{e.date_hijri}هـ</bdi></> : null}
+            </span>
+            <span className={`pill ${e.applied ? 'success' : 'pending'}`}>
+              {e.applied ? (
+                <><Icon.approved size={ICON_SM} aria-hidden /> مطبَّق</>
+              ) : (
+                <><Icon.warning size={ICON_SM} aria-hidden /> لم يُطبَّق</>
+              )}
+            </span>
+            {e.result || e.scope ? (
+              <span className="audit-value">
+                <bdi>{e.result || e.scope}</bdi>
+                {e.targets.length ? <> — <bdi>{e.targets.join('، ')}</bdi></> : null}
+              </span>
+            ) : null}
+          </div>
+          {e.new_text ? <p className="review-raw">{e.new_text}</p> : null}
+          {!e.applied && e.reason ? (
+            <p className="review-event-reason"><bdi>{e.reason}</bdi></p>
+          ) : null}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -799,6 +843,16 @@ function ArticlePanes({
         </div>
       </div>
 
+      {/* سجلّ التعديلات مفكَّكاً تحت الألواح الثلاثة.
+          به تصير المراجعة تحقّقاً من خطوةٍ معلومة لا قراءةَ نصٍّ خام: المراجع
+          يرى ما طُبِّق وما تُخطّي وسببه، فيعرف ما عليه أن يدمجه بيده. */}
+      {amendment?.events.length ? (
+        <>
+          <div className="compare-label">سجل التعديلات</div>
+          <ReviewEvents events={amendment.events} />
+        </>
+      ) : null}
+
       <div className="review-actions">
         <button className="btn-sm primary" disabled={busy} onClick={onCommit}>
           {changed ? 'تحرير واعتماد' : 'اعتماد'}
@@ -890,64 +944,3 @@ function ArticleAudit({ id }: { id: string }) {
   );
 }
 
-/**
- * فرقُ نصّين بالكلمات.
- *
- * بالكلمة لا بالحرف: نصٌّ قانونيّ يُقرأ كلماتٍ، وفرقٌ بالحروف يجعل «الخامسة»
- * و«السادسة» سلسلةً من الإدراج والحذف لا تُقرأ. والمقارنة بأطول تتابعٍ مشترك
- * — وهي تربيعيّة، فيُتخطّى النصّ الطويل جداً ويُعرض كما هو: فرقٌ لا يُقرأ لا
- * يستحقّ إبطاء الشاشة.
- */
-const DIFF_MAX_WORDS = 1200;
-
-function DiffText({ from, to }: { from: string; to: string }) {
-  const parts = useMemo(() => diffWords(from, to), [from, to]);
-  if (!parts) return <p className="review-raw">{from}</p>;
-  return (
-    <p className="review-raw">
-      {parts.map((p, i) =>
-        p.kind === 'same' ? (
-          <span key={i}>{p.text}</span>
-        ) : p.kind === 'del' ? (
-          <del key={i}>{p.text}</del>
-        ) : (
-          <ins key={i}>{p.text}</ins>
-        )
-      )}
-    </p>
-  );
-}
-
-type DiffPart = { kind: 'same' | 'del' | 'ins'; text: string };
-
-function diffWords(from: string, to: string): DiffPart[] | null {
-  const a = from.split(/(\s+)/).filter(Boolean);
-  const b = to.split(/(\s+)/).filter(Boolean);
-  if (a.length > DIFF_MAX_WORDS || b.length > DIFF_MAX_WORDS) return null;
-
-  // جدول أطول تتابعٍ مشترك، ثم تتبّعُه من أوّله.
-  const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-    }
-  }
-
-  const parts: DiffPart[] = [];
-  const push = (kind: DiffPart['kind'], text: string) => {
-    const last = parts[parts.length - 1];
-    if (last && last.kind === kind) last.text += text;
-    else parts.push({ kind, text });
-  };
-
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) push('same', a[i++]), j++;
-    else if (lcs[i + 1][j] >= lcs[i][j + 1]) push('del', a[i++]);
-    else push('ins', b[j++]);
-  }
-  while (i < a.length) push('del', a[i++]);
-  while (j < b.length) push('ins', b[j++]);
-  return parts;
-}

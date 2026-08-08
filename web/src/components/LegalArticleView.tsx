@@ -9,6 +9,7 @@
 // (`TriangleAlert`) و«بانتظار المراجعة» (`Clock`) — ولا ثالثة هنا.
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, type LegalAmendment, type LegalArticle } from '../lib/api';
+import { DiffText } from '../lib/diff';
 import { formatNumber } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 
@@ -89,9 +90,17 @@ export function ReviewStatusPill({ status }: { status: string }) {
  * المراجع والثاني ما قاله الملف، ومادةٌ اعتُمدت يبقى وسمُها كما ورد.
  */
 export function ArticleFlags({ a }: { a: LegalArticle }) {
+  // حالُ المادة في النظام أوّلاً، ثم حالُ عملنا عليها: الأولى واقعةٌ نظامية
+  // يقرؤها المحامي، والثانية أثرُ عملٍ داخليّ. وأيقونتاهما مختلفتان في
+  // `naf-icons.md` لهذا بعينه.
+  const repealed = a.retrievalStatus === 'repealed' || a.isRepealed || a.status === 'repealed';
   return (
     <>
-      {a.isRepealed || a.status === 'repealed' ? <span className="pill error">منسوخة</span> : null}
+      {repealed ? (
+        <span className="pill error">
+          <Icon.repealedArticle size={ICON_SM} aria-hidden /> ملغاة
+        </span>
+      ) : null}
       {a.needsReview ? <ReviewStatusPill status={a.reviewStatus} /> : null}
       {a.duplicateOf ? <span className="pill pending">رقم مكرّر</span> : null}
     </>
@@ -106,7 +115,10 @@ export function ArticleFlags({ a }: { a: LegalArticle }) {
  * ومدخلٌ إلى نصّه.
  */
 export function ArticleNotices({ a, onOpenAmendment }: { a: LegalArticle; onOpenAmendment?: () => void }) {
-  const pendingAmendment = a.hasAmendments && !a.amendmentApplied;
+  // نصّ التحذير يأتي جاهزاً من طبقة الاسترجاع حين يأتي: هي التي تعرف حالَ
+  // المادة، والشاشة تعرضه ولا تركّبه. وما لم يأتِ يقع على اللفظ المسجَّل.
+  const pendingAmendment = a.retrievalStatus === 'effective_warning' || (a.hasAmendments && !a.amendmentApplied);
+  const warning = a.retrievalWarning || AMENDMENT_NOTICE;
   const effectiveOn = a.effectiveFrom || a.effectiveFromHijri;
   if (!pendingAmendment && !a.effectivePending && !a.duplicateOf) return null;
 
@@ -116,7 +128,7 @@ export function ArticleNotices({ a, onOpenAmendment }: { a: LegalArticle; onOpen
         <div className="legal-notice">
           <Icon.warning size={ICON_SM} aria-hidden />
           <div>
-            <p>{AMENDMENT_NOTICE}</p>
+            <p>{warning}</p>
             <p className="legal-notice-meta">
               {[
                 a.amendmentKind ? `نوع التعديل: ${a.amendmentKind}` : '',
@@ -167,10 +179,285 @@ export function ArticleNotices({ a, onOpenAmendment }: { a: LegalArticle; onOpen
 }
 
 /**
- * نافذة التعديلات الخام.
+ * نافذة سجلّ التعديلات — ثلاثة تبويبات.
  *
- * تُطلب عند فتحها لا مع كل نتيجة: نصٌّ قد يبلغ آلاف الأحرف. والتصنيف الآلي
- * يقترح ولا يقرّر، فهذا ما يرجع إليه المراجع البشري بلا إعادة سحب.
+ * **والتاريخ لا يُخفى بل يُطوى خلف زرّ.** البطاقة تعرض النافذ وحده، ومن أراد
+ * أن يعرف كيف صار كذلك فتح هذه. وتُطلب عند فتحها لا مع كل نتيجة: نافذةُ
+ * البوابة الخام قد تبلغ آلاف الأحرف.
+ *
+ * وتُفتح برابطٍ مباشر `#amendments` ليصلح الاستشهاد بها من إجابة المساعد،
+ * وتُغلق بـ`Esc` وبالنقر خارجها.
+ */
+export function AmendmentWindow({ id, onClose }: { id: string; onClose: () => void }) {
+  const [data, setData] = useState<LegalAmendment | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [tab, setTab] = useState<'log' | 'timeline' | 'original'>('log');
+
+  useEffect(() => {
+    setData(null);
+    setFailed(false);
+    api
+      .legalAmendment(id)
+      .then((r) => setData(r.amendment))
+      .catch(() => setFailed(true));
+  }, [id]);
+
+  // `Esc` تُغلق كما يُغلق النقر خارجها — ومن فتحها بلوحة المفاتيح يُغلقها بها.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const TABS: [typeof tab, string, keyof typeof Icon][] = [
+    ['log', 'سجل التعديلات', 'amendmentLog'],
+    ['timeline', 'الخط الزمني', 'versionTimeline'],
+    ['original', 'الأصل', 'originalText'],
+  ];
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card amendment-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="modal-title">سجل التعديلات</span>
+          <button className="modal-close" onClick={onClose} title="إغلاق">×</button>
+        </div>
+
+        <div className="amendment-tabs" role="tablist">
+          {TABS.map(([key, label, icon]) => {
+            const Glyph = Icon[icon];
+            return (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={tab === key}
+                className={`btn-sm ${tab === key ? 'primary' : ''}`}
+                onClick={() => setTab(key)}
+              >
+                <Glyph size={ICON_SM} aria-hidden /> {label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="modal-body">
+          {failed ? <p className="legal-notice-meta">تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة</p> : null}
+          {!failed && !data ? <p className="legal-notice-meta">جارٍ التحميل</p> : null}
+          {data && tab === 'log' ? <AmendmentLog data={data} /> : null}
+          {data && tab === 'timeline' ? <VersionTimeline versions={data.versions} /> : null}
+          {data && tab === 'original' ? <OriginalTab data={data} /> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * التبويب الأوّل: بطاقةٌ لكل حدثٍ بترتيبه الزمني.
+ *
+ * **والحدث غير المطبَّق لا يُخفى ولا يُطوى.** هو بالضبط ما يحتاج المحامي أن
+ * يعرفه: ثمّة تعديل صادر ولم يُدمج، وهذا نصُّه وهذا سببه. والمطويّ وحده هو
+ * صياغة البوابة الحرفية — لمن أرادها.
+ */
+function AmendmentLog({ data }: { data: LegalAmendment }) {
+  if (!data.events.length) {
+    return (
+      <>
+        {data.amend_note ? (
+          <div className="amendment-event">
+            <div className="compare-label">سبب الإحالة للمراجعة</div>
+            <p><bdi>{data.amend_note}</bdi></p>
+          </div>
+        ) : null}
+        {data.amendments_raw ? (
+          <div className="amendment-event">
+            <div className="compare-label">نصّ التعديل كما ورد في البوابة</div>
+            <p className="review-raw">{data.amendments_raw}</p>
+          </div>
+        ) : (
+          <p className="legal-notice-meta">لا سجلّ تعديلاتٍ مفكَّكاً لهذه المادة</p>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {data.events.map((e, i) => (
+        <div key={e.seq ?? i} className="amendment-event">
+          <div className="amendment-event-head">
+            <span className="amendment-seq"><bdi>{formatNumber(i + 1)}</bdi></span>
+            <span>
+              <bdi>{[e.instrument, e.instrument_no].filter(Boolean).join(' ') || '—'}</bdi>
+              {e.date_hijri ? <> · <bdi>{e.date_hijri}هـ</bdi></> : null}
+            </span>
+            {/* الوسم أيقونةٌ ولفظ لا لونٌ وحده: من لا يميّز الأخضر عن الأصفر
+                يقرأ «مطبَّق» و«لم يُطبَّق» كما يقرؤهما غيره. */}
+            <span className={`pill ${e.applied ? 'success' : 'pending'}`}>
+              {e.applied ? (
+                <><Icon.approved size={ICON_SM} aria-hidden /> مطبَّق</>
+              ) : (
+                <><Icon.warning size={ICON_SM} aria-hidden /> لم يُطبَّق</>
+              )}
+            </span>
+          </div>
+
+          {e.result || e.scope ? (
+            <p className="amendment-result">
+              <bdi>{e.result || e.scope}</bdi>
+              {e.targets.length ? <> — <bdi>{e.targets.join('، ')}</bdi></> : null}
+            </p>
+          ) : null}
+
+          {e.effective_from ? (
+            <p className="legal-notice-meta">يسري من <bdi>{e.effective_from}</bdi></p>
+          ) : null}
+
+          {e.new_text ? (
+            <>
+              <div className="compare-label">النصّ المستحدَث</div>
+              <p className="review-raw">{e.new_text}</p>
+            </>
+          ) : null}
+
+          {/* السبب بارزٌ لا مطويّ: هو ما يفرّق «لم يُدمج» عن «لا تعديل». */}
+          {!e.applied && e.reason ? (
+            <div className="legal-notice">
+              <Icon.warning size={ICON_SM} aria-hidden />
+              <div>
+                <div className="compare-label">سبب عدم التطبيق</div>
+                <p><bdi>{e.reason}</bdi></p>
+              </div>
+            </div>
+          ) : null}
+
+          {e.raw ? (
+            <details>
+              <summary>نصّ التعديل كما ورد في البوابة</summary>
+              <p className="review-raw">{e.raw}</p>
+            </details>
+          ) : null}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * التبويب الثاني: النسخ، والمعتمدة مفتوحةٌ افتراضاً.
+ *
+ * **وإبراز الفرق هو أنفع ما في النافذة.** نصّان متجاوران يترك المقابلة على
+ * عين القارئ، وهذه تقول له *ما الذي تغيّر*. وبعنصرَي `ins` و`del` لا باللون
+ * وحده: قارئ الشاشة ينطقهما إدراجاً وحذفاً.
+ */
+function VersionTimeline({ versions }: { versions: LegalAmendment['versions'] }) {
+  const currentIndex = Math.max(0, versions.findIndex((v) => v.current));
+  const [at, setAt] = useState(currentIndex);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => setAt(currentIndex), [currentIndex]);
+
+  if (!versions.length) return <p className="legal-notice-meta">لا خطَّ زمنيّ لهذه المادة</p>;
+
+  const shown = versions[Math.min(at, versions.length - 1)];
+  const previous = at > 0 ? versions[at - 1] : null;
+
+  const copy = () => {
+    // النصّ وحده بلا وسوم: من نسخ نسخ نصّاً لا بطاقة.
+    navigator.clipboard?.writeText(shown.text).then(
+      () => { setCopied(true); window.setTimeout(() => setCopied(false), 2000); },
+      () => {}
+    );
+  };
+
+  return (
+    <>
+      <ol className="version-list">
+        {versions.map((v, i) => (
+          <li key={v.seq ?? i}>
+            <button
+              className={`btn-sm ${i === at ? 'primary' : ''}`}
+              aria-current={i === at ? 'true' : undefined}
+              onClick={() => setAt(i)}
+            >
+              <bdi>{v.label || `نسخة ${formatNumber(i + 1)}`}</bdi>
+              {v.current ? ' — المعتمد' : ''}
+            </button>
+          </li>
+        ))}
+      </ol>
+
+      {/* والوسم يقول ما هي وما لا يُفعل بها معاً: «نسخة تاريخية» وحدها تُقرأ
+          تصنيفاً محايداً، فينسخ القارئ ما لم يعد قائماً. */}
+      {!shown.current ? (
+        <div className="legal-notice">
+          <Icon.warning size={ICON_SM} aria-hidden />
+          <div><p>نسخة تاريخية — لا يُستشهد بها</p></div>
+        </div>
+      ) : null}
+
+      <div className="version-actions">
+        <button className="btn-sm" onClick={copy}>
+          <Icon.copy size={ICON_SM} aria-hidden /> {copied ? 'تم النسخ' : 'نسخ'}
+        </button>
+        {shown.from_instrument || shown.from_date ? (
+          <span className="legal-notice-meta">
+            <bdi>{[shown.from_instrument, shown.from_date ? `${shown.from_date}هـ` : ''].filter(Boolean).join(' · ')}</bdi>
+          </span>
+        ) : null}
+      </div>
+
+      {previous ? (
+        <>
+          <div className="compare-label">الفرق عن سابقتها</div>
+          <DiffText from={previous.text} to={shown.text} />
+        </>
+      ) : (
+        <p className="legal-text">{shown.text}</p>
+      )}
+    </>
+  );
+}
+
+/** التبويب الثالث: النصّ قبل أوّل تعديل، ونافذة البوابة حرفياً، والمصدر. */
+function OriginalTab({ data }: { data: LegalAmendment }) {
+  const original = data.text_superseded || data.versions.find((v) => !v.current)?.text || null;
+  return (
+    <>
+      {original ? (
+        <>
+          <div className="compare-label">الأصل</div>
+          <p className="legal-text">{original}</p>
+        </>
+      ) : (
+        <p className="legal-notice-meta">لا نصّ أصليّ محفوظ لهذه المادة — لم تُعدَّل</p>
+      )}
+
+      {data.amendments_raw ? (
+        <>
+          <div className="compare-label">نصّ التعديل كما ورد في البوابة</div>
+          <p className="review-raw">{data.amendments_raw}</p>
+        </>
+      ) : null}
+
+      {data.source_url ? (
+        <p>
+          <a href={data.source_url} target="_blank" rel="noreferrer">
+            <Icon.externalLink size={ICON_SM} aria-hidden /> المصدر في بوابة هيئة الخبراء
+          </a>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * نافذة التعديلات الخام — تبقى للوحة المراجعة الثلاثية.
+ *
+ * شاشة المراجعة تعرض الألواح جنباً إلى جنب لا في نافذة: المراجع يقابل بينها
+ * وهو يحرّر، وفتحُ نافذةٍ فوق نصٍّ يحرّره يحجب ما يحرّره.
  */
 export function AmendmentPanel({ id }: { id: string }) {
   const [data, setData] = useState<LegalAmendment | null>(null);
@@ -222,19 +509,42 @@ export function AmendmentPanel({ id }: { id: string }) {
 export function ArticleCard({ group, children }: { group: LegalArticle[]; children?: ReactNode }) {
   const [openAmendment, setOpenAmendment] = useState(false);
   const a = group[0];
+
+  /* رابطٌ مباشر إلى النافذة: `#amendments` على معرّف المادة. إجابةُ المساعد
+     تستشهد بمادة، ورابطُها يجب أن يفتح ما استند إليه لا الصفحة وحدها. */
+  useEffect(() => {
+    if (!a) return;
+    const check = () => {
+      const hash = decodeURIComponent(window.location.hash);
+      setOpenAmendment(hash === `#${a.id}#amendments` || hash === '#amendments');
+    };
+    check();
+    window.addEventListener('hashchange', check);
+    return () => window.removeEventListener('hashchange', check);
+  }, [a?.id]);
+
   if (!a) return null;
   return (
-    <article className="legal-article">
+    <article className="legal-article" id={a.id}>
       <h4>
         <ArticleHeading a={a} shown={group.length} />
         <ArticleFlags a={a} />
+        {/* زرُّ التاريخ يظهر حين يكون له تاريخ، ويحمل عدَّه. */}
+        {a.hasAmendments ? (
+          <button className="btn-sm" onClick={() => setOpenAmendment(true)}>
+            <Icon.amendmentLog size={ICON_SM} aria-hidden /> عليها تعديل
+            {a.amendmentsCount ? <> (<bdi>{formatNumber(a.amendmentsCount)}</bdi>)</> : null}
+          </button>
+        ) : null}
       </h4>
-      <ArticleNotices a={a} onOpenAmendment={() => setOpenAmendment(!openAmendment)} />
-      {openAmendment ? <AmendmentPanel id={a.id} /> : null}
+      <ArticleNotices a={a} onOpenAmendment={() => setOpenAmendment(true)} />
+      {/* أسطر الفقرات تبقى: التعداد جزءٌ من المعنى النظامي، ودمجُه في فقرةٍ
+          واحدة يُفسده — «١ - … ٢ - …» تصير جملةً متّصلة لا تُقرأ حكماً. */}
       {group.map((part) => (
-        <p key={part.id}>{part.text}</p>
+        <p key={part.id} className="legal-text">{part.text}</p>
       ))}
       {children}
+      {openAmendment ? <AmendmentWindow id={a.id} onClose={() => setOpenAmendment(false)} /> : null}
     </article>
   );
 }

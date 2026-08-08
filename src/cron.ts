@@ -241,12 +241,22 @@ async function checkRegulation(env: Env, title: string): Promise<{ changed: bool
 // تضمينه في الليلة نفسها، والبحث اللفظي يعمل عليه من لحظة الاستيراد.
 // وتبتلع خطأها: المهام الأربع تُشغَّل معاً، فرميُ واحدةٍ يُسقط البقية —
 // وجدولٌ لم تُطبَّق هجرته يوقف تنبيهات المواعيد وتتبّع الأنظمة معه.
-export async function runLegalEmbedding(env: Env): Promise<{ embedded: number; remaining: number }> {
+export async function runLegalEmbedding(env: Env): Promise<{
+  embedded: number;
+  remaining: number;
+  /** متجهاتٌ حُذفت لأن مادتها صارت ملغاة. */
+  purged: number;
+  /** يستحقّ متجهاً ولم يُضمَّن — يُصرَّف في الدورة التالية. */
+  missing_vector: number;
+  /** ضُمِّن ولم يعد يستحقّ — يجب أن يبقى صفراً بعد التنظيف. */
+  stale_vector: number;
+}> {
   try {
     // دفعاتٌ متتابعة حتى ينتهي المعلَّق أو يبلغ السقف. دفعةٌ واحدة في الليلة
     // تجعل ستّة آلاف مادة تحتاج أسبوعاً، ونصفُ البحث معطَّل طوالَه.
     let embedded = 0;
     let remaining = 0;
+    let purged = 0;
     // ٥٠٠ في الدورة وثمانُ دورات: كل مقطع يكلّف ثلاثة طلبات فرعية (تضمين
     // ودفع إلى الفهرس وكتابة في D1)، وسقفُ الطلبات الفرعية في نداءٍ واحد
     // ألف. فأربعة آلاف مقطع في الليلة تحت السقف بمريح.
@@ -254,10 +264,36 @@ export async function runLegalEmbedding(env: Env): Promise<{ embedded: number; r
       const result = await embedPending(env, 500);
       embedded += result.embedded;
       remaining = result.remaining;
+      purged += result.purged ?? 0;
       if (!result.embedded || !remaining) break;
     }
-    return { embedded, remaining };
+
+    /* ── فحصُ المتجه اليتيم ──
+     *
+     * المتجه بلا صفٍّ لا يُفسد نتيجة — الاسترجاع يقرأ الصفّ من SQL بعد
+     * المطابقة، فما لا صفّ له يسقط — لكنه يشغل خانةً من `topK`، فكلَّما كثر
+     * ضعف البحث بلا سبب ظاهر. والصفُّ بلا متجه أسوأ: مادةٌ قائمة لا يجدها
+     * البحث الدلاليّ أصلاً.
+     *
+     * والفحص لا يُصلح بنفسه غير ما يملك إصلاحه: ما ينقصه متجه يُصرَّف في
+     * الدورة التالية، وما زاد متجهُه يُحذف أعلاه. وما بقي بعدهما يُقال في
+     * تقرير الدورة ليُرى — إصلاحٌ صامت لعطبٍ متكرّر يُخفي سببه. */
+    const health = await env.DB.prepare(
+      `SELECT SUM(CASE WHEN retrieval_status <> 'repealed' AND is_repealed = 0 AND embedded_at IS NULL
+                       THEN 1 ELSE 0 END) AS missing,
+              SUM(CASE WHEN (retrieval_status = 'repealed' OR is_repealed = 1) AND embedded_at IS NOT NULL
+                       THEN 1 ELSE 0 END) AS stale
+       FROM legal_chunks`
+    ).first<{ missing: number; stale: number }>();
+
+    return {
+      embedded,
+      remaining,
+      purged,
+      missing_vector: health?.missing ?? 0,
+      stale_vector: health?.stale ?? 0,
+    };
   } catch {
-    return { embedded: 0, remaining: 0 };
+    return { embedded: 0, remaining: 0, purged: 0, missing_vector: 0, stale_vector: 0 };
   }
 }

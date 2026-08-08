@@ -21,6 +21,8 @@ import {
   listLawArticles,
   listReviewQueue,
   listReviewQueueIds,
+  listBatchOrphans,
+  deleteOrphans,
   listReviewAudit,
   listCaptureBatches,
   reviewChunk,
@@ -133,9 +135,14 @@ app.post('/import', requireAdmin, async (c) => {
 
   // استبدال لا إضافة: المفتاح `id`. وما تغيّر يُؤرشَف قبل أن يُكتب فوقه.
   const importId = uuid();
+  // معرّف الدفعة يجمع أجزاء الملف الواحد. الملف يُرفع مقسَّماً، ولا يُعرف
+  // ما ورد فيه كلِّه إلا بجمع أجزائه — وعليه وحده يقع حذف اليتيم في الخطوة
+  // الختامية. وبلا معرّف لا تُقيَّد المعرّفات ولا يقع حذفٌ بحال.
+  const batchId = c.req.query('batch') || null;
   const { inserted, updated, archived, superseded } = await upsertLegalChunks(c.env, parsed.rows, {
     importId,
     correction,
+    batchId: batchId ?? undefined,
   });
 
   const full = {
@@ -149,12 +156,14 @@ app.post('/import', requireAdmin, async (c) => {
     kind: correction ? 'correction' : 'import',
   };
   await c.env.DB.prepare(
-    `INSERT INTO legal_imports (id, actor_id, filename, lines, inserted, updated, failed, report_json, created_at, kind)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO legal_imports (id, actor_id, filename, lines, inserted, updated, failed, report_json, created_at,
+                                kind, file_sha256, batch_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       importId, c.get('user').id, filename || null, parsed.total, inserted, updated,
-      parsed.errors.length, JSON.stringify(full), Date.now(), correction ? 'correction' : 'import'
+      parsed.errors.length, JSON.stringify(full), Date.now(), correction ? 'correction' : 'import',
+      c.req.query('sha256') || null, batchId
     )
     .run();
   await audit(c, 'legal.import', importId, {
@@ -185,11 +194,56 @@ app.post('/embed-pending', requireAdmin, async (c) => {
   return c.json(result);
 });
 
+/**
+ * ختامُ الدفعة — وهو الموضع الوحيد الذي يقع فيه حذف.
+ *
+ * **`upsert` تُحدّث وتُضيف ولا تحذف ما اختفى**، فمادةٌ أُسقطت من المصدر تبقى
+ * في النتائج إلى الأبد. والحذف لا يقع مع كل جزء: الملف يُرفع مقسَّماً،
+ * وقياسُ الزائد على جزءٍ منه محوُ نظامٍ لا تنظيفُ أثر. فيُقاس على الدفعة
+ * تامّةً بمعرّفها، ولا يُقاس إلا على الأنظمة التي حملتها.
+ *
+ * ويُعرض قبل أن يقع: `?apply=1` يحذف، وبدونه يُحصى ويُردّ ليُنظر فيه.
+ */
+app.post('/finalize', requireAdmin, async (c) => {
+  const batchId = c.req.query('batch') ?? '';
+  if (!batchId) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
+
+  const orphans = await listBatchOrphans(c.env, batchId);
+  if (!c.req.query('apply')) return c.json({ ok: true, applied: false, orphans, count: orphans.length });
+
+  const importId = uuid();
+  const deleted = await deleteOrphans(c.env, orphans.map((o) => o.id), {
+    importId,
+    actorId: c.get('user').id,
+  });
+  // ولا يمرّ الحذف بلا قيد: كلُّ معرّف مذكورٌ في السجلّ، ونصُّه محفوظٌ في
+  // سجلّ التحديث قبل ذهابه.
+  await audit(c, 'legal.orphans_deleted', batchId, {
+    deleted,
+    ids: orphans.map((o) => o.id),
+    edited: orphans.filter((o) => o.was_edited).map((o) => o.id),
+  });
+  await c.env.DB.prepare('UPDATE legal_imports SET deleted = deleted + ? WHERE batch_id = ? AND deleted = 0')
+    .bind(deleted, batchId)
+    .run();
+
+  return c.json({ ok: true, applied: true, deleted, orphans });
+});
+
 app.get('/stats', requireAdmin, async (c) => c.json(await legalStats(c.env)));
 
+/**
+ * سجلّ الدفعات — وأثرُ كلٍّ: مضاف ومحدَّث ومحذوف.
+ *
+ * والبصمة معها: بها يُعرف أيُّ ملفٍ أنتج ما في القاعدة، وتُطابَق ببصمة
+ * المُرسِل. ومعرّفُ الدفعة يجمع أجزاء الملف الواحد، فيُقرأ سجلُّها سطراً
+ * واحداً لا خمسةَ أسطر لملفٍ قُسِّم خمساً.
+ */
 app.get('/imports', requireAdmin, async (c) => {
   const rows = await c.env.DB.prepare(
-    'SELECT id, actor_id, filename, lines, inserted, updated, failed, created_at, kind FROM legal_imports ORDER BY created_at DESC LIMIT 50'
+    `SELECT id, actor_id, filename, lines, inserted, updated, failed, deleted,
+            file_sha256, batch_id, created_at, kind
+     FROM legal_imports ORDER BY created_at DESC LIMIT 50`
   ).all();
   return c.json({ imports: rows.results });
 });

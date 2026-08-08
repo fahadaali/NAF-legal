@@ -207,6 +207,16 @@ export interface LegalStats {
   needs_review: number;
   /** مادةٌ عُدِّلت ونصُّها المعروض أصليّ — تُعرض مع تنبيهها. */
   amendment_pending: number;
+  /** توزيعُ حالِ الاسترجاع — يُقابَل ببيان الدفعة. */
+  retrieval: { effective: number; warning: number; repealed: number };
+  /** ما يستحقّ متجهاً: كلُّ ما ليس ملغىً. */
+  indexed: number;
+  /** يستحقّ متجهاً ولم يُضمَّن بعد. */
+  missing_vector: number;
+  /** ضُمِّن ولم يعد يستحقّ — يجب أن يبقى صفراً. */
+  stale_vector: number;
+  /** معطوبٌ محجوبٌ ينتظر البتّ. */
+  defective: number;
 }
 
 /** نتيجة البحث في المنصة، مقسّمةً بمواضعها. */
@@ -258,6 +268,12 @@ export interface LegalLaw {
 /** مادةٌ كما تُعرض — `text` وحده، ولا أثر لـ`embed_text`. */
 export interface LegalArticle {
   id: string;
+  /** حالُ الاسترجاع: `effective` · `effective_warning` · `repealed`. */
+  retrievalStatus?: string;
+  /** نصّ التحذير جاهزاً — يأتي من طبقة الاسترجاع لا يُركَّب في الشاشة. */
+  retrievalWarning?: string | null;
+  hasDefect?: boolean;
+  defectKind?: string | null;
   lawId: string | null;
   articleNo: string | null;
   /** «المادة الخامسة والأربعون» — كما تُكتب في النظام. */
@@ -371,6 +387,34 @@ export interface ReviewAuditEntry {
 }
 
 /** نافذة التعديلات الخام — تُقرأ بطلبٍ صريح ولا تأتي مع نتائج البحث. */
+/** نسخةٌ في الخطّ الزمني — أوّلها الأصل وآخرها المعتمد. */
+export interface TextVersion {
+  seq: number;
+  text: string;
+  label: string | null;
+  from_instrument: string | null;
+  from_date: string | null;
+  current: boolean;
+}
+
+/** حدثُ تعديلٍ مفكَّك: ما فُعل، وهل وقع، ولمَ لم يقع. */
+export interface AmendmentEvent {
+  seq: number;
+  scope: string | null;
+  op: string | null;
+  targets: string[];
+  instrument: string | null;
+  instrument_no: string | null;
+  date_hijri: string | null;
+  effective_from: string | null;
+  new_text: string | null;
+  applied: boolean;
+  text_after: string | null;
+  result: string | null;
+  reason: string | null;
+  raw: string | null;
+}
+
 export interface LegalAmendment {
   id: string;
   amendment_kind: string | null;
@@ -381,6 +425,9 @@ export interface LegalAmendment {
   amendments_raw: string | null;
   amend_note: string | null;
   text_superseded: string | null;
+  source_url: string | null;
+  versions: TextVersion[];
+  events: AmendmentEvent[];
 }
 
 /** مادةٌ تغيّر فيها شيء — القديم والجديد جنباً إلى جنب. */
