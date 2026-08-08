@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
+  REVIEW_BULK_LIMIT,
   type LegalAmendment,
   type LegalArticle,
   type LegalLaw,
@@ -65,6 +66,8 @@ export function LegalReview() {
   const [total, setTotal] = useState(0);
   const [at, setAt] = useState(0);
   const [busy, setBusy] = useState(false);
+  /** تقدّم الاعتماد الجملي: ما تمّ من إجماليّ ما حُدِّد. `null` حين لا اعتماد يجري. */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const { queue, filters } = seat;
 
@@ -136,7 +139,10 @@ export function LegalReview() {
       // بعد البتّ فيه يُبتّ فيه مرّتين. والعدّادات تُعاد من الخادم لا تُحسب هنا.
       setArticles((rows) => rows.filter((r) => r.id !== id));
       setTotal((n) => Math.max(0, n - 1));
-      api.legalReviewDashboard(filters).then(setDash).catch(() => {});
+      // وآخرُ صفٍّ في الصفحة يستدعي الصفحة التالية لا شاشةَ الفراغ: طابورٌ فيه
+      // مئتان يُقال عنه «لا مادة بانتظار المراجعة» لأن خمساً وعشرين نفدت خطأ.
+      if (articles.length <= 1) load();
+      else api.legalReviewDashboard(filters).then(setDash).catch(() => {});
     } catch {
       load();
     } finally {
@@ -147,23 +153,43 @@ export function LegalReview() {
   /**
    * اعتمادُ ما حدَّده المراجع.
    *
-   * بمعرّفاتٍ رآها على الشاشة وأشّر عليها، لا بشرطٍ يُطابق ما لم يُعرض. وكلُّ
-   * مادة تُقيَّد وحدها في سجلّ التدقيق موسومةً بأن اعتمادها وقع جملةً.
+   * بمعرّفاتٍ بأعيانها لا بشرطٍ يُطابق ما لم يُعرض: العدد الذي رآه المراجع قبل
+   * التأكيد هو العدد الذي يقع عليه القرار. وكلُّ مادة تُقيَّد وحدها في سجلّ
+   * التدقيق موسومةً بأن اعتمادها وقع جملةً.
+   *
+   * **والتقسيم على دفعات لا نداءٌ واحد.** سقف النداء خمسون، فتحديدُ الطابور
+   * كلِّه يمرّ في دفعاتٍ متتابعة لا متوازية: القاعدة واحدة، والتسابق عليها
+   * يُبطئ ولا يُسرع. والتقدّم يُعرض بعد كل دفعة — انتظارٌ صامت على مئتي مادة
+   * يُقرأ تعليقاً.
    */
   const approveSelected = async (ids: string[]) => {
     if (!ids.length) return;
     setBusy(true);
+    setProgress({ done: 0, total: ids.length });
+    const cleared = new Set<string>();
     try {
-      const res = await api.legalReviewSelected(ids, 'approve');
-      const done = new Set(ids.slice(0, res.done));
-      setArticles((rows) => rows.filter((r) => !done.has(r.id)));
-      setTotal((n) => Math.max(0, n - res.done));
-      api.legalReviewDashboard(filters).then(setDash).catch(() => {});
-      if (res.failed.length) load();
+      for (let i = 0; i < ids.length; i += REVIEW_BULK_LIMIT) {
+        const batch = ids.slice(i, i + REVIEW_BULK_LIMIT);
+        const res = await api.legalReviewSelected(batch, 'approve');
+        // ما تعثّر يُعرف بمعرّفه لا بالطرح من العدّ: الإخفاقات قد تتخلّل
+        // الدفعة، فحسبُ الناجح بـ«أوّل كذا» يُسقط الصواب ويُبقي الخطأ.
+        const missed = new Set(res.failed.map((f) => f.id));
+        batch.forEach((id) => {
+          if (!missed.has(id)) cleared.add(id);
+        });
+        setProgress({ done: cleared.size, total: ids.length });
+        setArticles((rows) => rows.filter((r) => !cleared.has(r.id)));
+        setTotal((n) => Math.max(0, n - (res.done ?? 0)));
+      }
     } catch {
-      load();
+      // النداء المقطوع لا يُبطل ما تمّ قبله: ما اعتُمد اعتُمد، والباقي يظهر
+      // في الطابور حين تُعاد القائمة أدناه.
     } finally {
+      setProgress(null);
       setBusy(false);
+      // والقائمة تُعاد من الخادم في كل حال: بعد الدفعات لا تبقى في هذه الصفحة
+      // موادُّ تُعرض، وما بقي في الطابور بعدها لا يُخمَّن هنا.
+      load();
     }
   };
 
@@ -274,12 +300,18 @@ export function LegalReview() {
         <div className="empty-state">لا مادة بانتظار المراجعة. كل ما استُورد داخلٌ في الاسترجاع.</div>
       ) : (
         <>
+          {/* التحديد يسقط بتغيّر الطابور أو المرشّحات: معرّفٌ حُدِّد تحت شرطٍ
+              ثم تغيّر الشرط لم يعد ممّا يراه المراجع أمامه. */}
           <QueueList
+            key={`${queue ?? ''}|${filters.lawId ?? ''}|${filters.capturedAt ?? ''}|${filters.docType ?? ''}`}
             groups={groups}
+            total={total}
             at={at}
             busy={busy}
+            progress={progress}
             onOpen={setAt}
             onApproveSelected={approveSelected}
+            onSelectQueue={() => api.legalReviewQueueIds({ ...filters, queue })}
           />
 
           <div className="law-pager">
@@ -312,30 +344,55 @@ export function LegalReview() {
 /**
  * قائمة الطابور — نظرةٌ على ما ينتظر، وتحديدٌ لما يُعتمد جملةً.
  *
- * **والتحديد على ما يُعرض وحده.** «تحديد الكل» تختار صفوف هذه الصفحة لا
- * الطابور كلَّه: ما لم يظهر على الشاشة لا يُعتمد بضغطة. وزرُّ الاعتماد يحمل
- * عدَّ ما حُدِّد، ويسأل قبل أن يقع.
+ * **وتحديدان لا واحد.** «تحديد الكل» تختار صفوف هذه الصفحة، و«تحديد الطابور
+ * كلَّه» تتجاوزها إلى ما لم يُعرض. والثانية لا تظهر إلا بعد الأولى — من أراد
+ * الطابور كلَّه يمرّ بصفحته أوّلاً — وتحمل عدَّه في لفظها: من لا جدول أمامه
+ * يعدّه لا يعرف كم يختار إلا بما يُكتب له.
+ *
+ * **والمعرّفات تُجلب صريحةً في الحالين.** الشامل يطلبها من الخادم ثم يعيدها
+ * إليه واحدةً واحدة، ولا يرسل شرطاً يُطابق ما لم يُحصَ. فالعدد المعروض قبل
+ * التأكيد هو العدد الواقع، وكلُّ اعتماد يبقى مقيَّداً وحده في سجلّ التدقيق.
  */
 function QueueList({
   groups,
+  total,
   at,
   busy,
+  progress,
   onOpen,
   onApproveSelected,
+  onSelectQueue,
 }: {
   groups: LegalArticle[][];
+  total: number;
   at: number;
   busy: boolean;
+  progress: { done: number; total: number } | null;
   onOpen: (index: number) => void;
   onApproveSelected: (ids: string[]) => void;
+  onSelectQueue: () => Promise<{ ids: string[]; total: number; truncated: number }>;
 }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [wide, setWide] = useState<{ ids: string[]; truncated: number } | null>(null);
+  const [fetching, setFetching] = useState(false);
   const [asking, setAsking] = useState(false);
 
-  // المحدَّد يُقصَر على المعروض: صفٌّ خرج من الطابور لا يبقى محدَّداً في الظلّ.
+  // المحدَّد على الصفحة يُقصَر على المعروض: صفٌّ خرج من الطابور لا يبقى
+  // محدَّداً في الظلّ.
   const shown = useMemo(() => groups.flat().map((a) => a.id), [groups]);
-  const chosen = useMemo(() => shown.filter((id) => picked.has(id)), [shown, picked]);
-  const allPicked = shown.length > 0 && chosen.length === shown.length;
+  const onPage = useMemo(() => shown.filter((id) => picked.has(id)), [shown, picked]);
+  const allPicked = shown.length > 0 && onPage.length === shown.length;
+
+  /* والتحديد الشامل يسقط بأوّل تغيّرٍ في الطابور: بتٌّ في مادة، أو إعادةُ
+     تحميل، تجعل القائمة المجلوبة تصف ما لم يعد قائماً. */
+  useEffect(() => setWide(null), [groups]);
+
+  const chosen = wide ? wide.ids : onPage;
+
+  /* وما لم يُعرض يُعدّ بالمطابقة لا بالطرح: الصفحة تعرض أخوات الرقم ولو بُتَّ
+     في إحداهنّ، فطرحُ عدد الصفوف من عدد المحدَّد يُنقص ما لم يُنظر إليه. */
+  const shownSet = useMemo(() => new Set(shown), [shown]);
+  const unseen = wide ? wide.ids.reduce((n, id) => (shownSet.has(id) ? n : n + 1), 0) : 0;
 
   const toggle = (id: string) =>
     setPicked((s) => {
@@ -345,6 +402,24 @@ function QueueList({
       return next;
     });
 
+  const clear = () => {
+    setPicked(new Set());
+    setWide(null);
+  };
+
+  const selectQueue = async () => {
+    setFetching(true);
+    try {
+      const r = await onSelectQueue();
+      setWide({ ids: r.ids, truncated: r.truncated });
+    } catch {
+      // تعذّر الجلب: يبقى تحديد الصفحة كما هو، ولا يُدَّعى شمولٌ لم يقع.
+      setWide(null);
+    } finally {
+      setFetching(false);
+    }
+  };
+
   return (
     <>
       <div className="kb-section">المنتظرة في الطابور</div>
@@ -352,24 +427,59 @@ function QueueList({
         <label className="import-option">
           <input
             type="checkbox"
-            checked={allPicked}
-            disabled={busy || !shown.length}
-            onChange={(e) => setPicked(new Set(e.target.checked ? shown : []))}
+            checked={allPicked || !!wide}
+            disabled={busy || fetching || !shown.length}
+            onChange={(e) => {
+              if (e.target.checked) setPicked(new Set(shown));
+              else clear();
+            }}
           />
           تحديد الكل
         </label>
-        <button className="btn-sm primary" disabled={busy || !chosen.length} onClick={() => setAsking(true)}>
+        {/* الشاملة بعد الصفحة لا مكانها، وبعدِّها لا مجرّدةً — §٧ من السجلّ.
+            والعبارة في عنصرٍ واحد: `btn-sm` صندوقٌ مرن بفجوة، فكلُّ مقطعٍ نصّيّ
+            فيه بندٌ مستقلّ — تتباعد الأقواس عن عددها، وينقلب ترتيبها في LTR. */}
+        {allPicked && !wide && total > shown.length ? (
+          <button className="btn-sm" disabled={busy || fetching} onClick={selectQueue}>
+            <span>
+              تحديد الطابور كلَّه (<bdi>{formatNumber(total)}</bdi>)
+            </span>
+          </button>
+        ) : null}
+        <button
+          className="btn-sm primary"
+          disabled={busy || fetching || !chosen.length}
+          onClick={() => setAsking(true)}
+        >
           اعتماد المحدَّد
         </button>
         <span className="review-keys">
-          المحدَّد <bdi>{formatNumber(chosen.length)}</bdi> / <bdi>{formatNumber(shown.length)}</bdi>
+          {progress ? (
+            <>
+              جارٍ الاعتماد <bdi>{formatNumber(progress.done)}</bdi> /{' '}
+              <bdi>{formatNumber(progress.total)}</bdi>
+            </>
+          ) : (
+            <>
+              المحدَّد <bdi>{formatNumber(chosen.length)}</bdi> /{' '}
+              <bdi>{formatNumber(wide ? total : shown.length)}</bdi>
+            </>
+          )}
         </span>
-        {chosen.length ? (
-          <button className="btn-sm" disabled={busy} onClick={() => setPicked(new Set())}>
+        {chosen.length && !progress ? (
+          <button className="btn-sm" disabled={busy || fetching} onClick={clear}>
             إلغاء التحديد
           </button>
         ) : null}
       </div>
+
+      {/* السقف يُقال حين يُبلَغ: «تمّ» على تحديدٍ قُصَّ نصفُه تترك ما بقي بلا
+          قرارٍ ولا خبر. */}
+      {wide && wide.truncated ? (
+        <p className="review-keys">
+          حُدِّد أوّل <bdi>{formatNumber(wide.ids.length)}</bdi> مادة، والباقي يبقى في الطابور
+        </p>
+      ) : null}
 
       <div className="table-scroll">
         <table className="data-table">
@@ -426,6 +536,13 @@ function QueueList({
                 ستدخل <bdi>{formatNumber(chosen.length)}</bdi> مادةً الاسترجاع ويُستشهد بها. ويُقيَّد في سجلّ
                 التدقيق أنها اعتُمدت جملةً.
               </p>
+              {/* وما لم يُعرض يُقال حين يوجد وحده: تنبيهٌ عن خطرٍ غير قائم
+                  يُعلّم القارئ تجاهل التنبيهات. */}
+              {unseen ? (
+                <p>
+                  منها <bdi>{formatNumber(unseen)}</bdi> لم تظهر على الشاشة.
+                </p>
+              ) : null}
             </div>
             <div className="modal-foot">
               <button className="btn-sm" onClick={() => setAsking(false)}>إلغاء</button>
@@ -433,9 +550,10 @@ function QueueList({
                 className="btn-sm primary"
                 disabled={busy}
                 onClick={() => {
+                  const ids = chosen;
                   setAsking(false);
-                  setPicked(new Set());
-                  onApproveSelected(chosen);
+                  clear();
+                  onApproveSelected(ids);
                 }}
               >
                 اعتماد

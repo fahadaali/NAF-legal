@@ -1892,6 +1892,46 @@ export async function listReviewQueue(
 }
 
 /**
+ * سقف ما يُجلب من معرّفات الطابور في نداءٍ واحد.
+ *
+ * لا لحماية الخادم — المعرّفات صفٌّ واحد لكلٍّ — بل لأن ما فوقه لا يُقرأ عدداً
+ * في شاشة: من حدّد عشرة آلاف مادة لم يعد يقرّر، وإنما ضغط زرّاً.
+ */
+export const QUEUE_IDS_MAX = 5000;
+
+/**
+ * معرّفات الطابور كلِّه — لتحديدٍ يشمله لا يشمل صفحته.
+ *
+ * ويُجلب صريحاً ليعود إلى الخادم صريحاً: القرار يقع على معرّفاتٍ بأعيانها في
+ * كل حال، فيبقى كلُّ اعتماد مقيَّداً وحده في سجلّ التدقيق، ويبقى العدد الذي
+ * يراه المراجع قبل التأكيد هو العدد الذي يقع عليه القرار.
+ *
+ * والبديل — أن يقبل المسار «كل ما يطابق الشرط» — يُخفي العدد حتى بعد وقوعه.
+ */
+export async function listReviewQueueIds(
+  env: Env,
+  opts: ReviewFilters & { queue?: ReviewQueueKey | null } = {}
+): Promise<{ ids: string[]; total: number; truncated: number }> {
+  const f = reviewFilterSql(opts);
+  const q = opts.queue ? queueClause(opts.queue) : { sql: '', binds: [] };
+  const where = `${IN_QUEUE_SQL}${f.sql}${q.sql}`;
+  const binds = [...f.binds, ...q.binds];
+
+  const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_chunks c WHERE ${where}`)
+    .bind(...binds)
+    .first<{ n: number }>();
+
+  const rows = await env.DB.prepare(
+    `SELECT c.id FROM legal_chunks c WHERE ${where} ORDER BY c.law_id, c.seq LIMIT ?`
+  )
+    .bind(...binds, QUEUE_IDS_MAX)
+    .all<{ id: string }>();
+
+  const ids = (rows.results ?? []).map((r) => r.id);
+  return { ids, total: total?.n ?? 0, truncated: Math.max(0, (total?.n ?? 0) - ids.length) };
+}
+
+/**
  * نصّ التضمين المبنيّ من بنية المادة.
  *
  * صيغةٌ واحدة للمستورَد وللمحرَّر: لو بُني المحرَّر بصيغةٍ أخرى لصار جارُه في
@@ -2100,11 +2140,17 @@ export async function reviewChunks(
   actorId: string,
   opts: { note?: string } = {}
 ): Promise<BulkResult> {
-  const unique = Array.from(new Set(ids.filter(Boolean))).slice(0, BULK_LIMIT);
-  const failed: { id: string; error: string }[] = [];
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  // ما زاد عن السقف يُردّ مذكوراً بمعرّفه لا يُقصّ صامتاً: قصٌّ خفيّ يجعل
+  // المراجع يرى «تمّ» وقد بقي نصفُ ما حدّده بلا قرار، ولا شيء يدلّه عليه.
+  const over = unique.slice(BULK_LIMIT);
+  const failed: { id: string; error: string }[] = over.map((id) => ({
+    id,
+    error: `تجاوز سقف النداء الواحد (${BULK_LIMIT})`,
+  }));
   let done = 0;
   let reembedded = false;
-  for (const id of unique) {
+  for (const id of unique.slice(0, BULK_LIMIT)) {
     const res = await reviewChunk(env, id, action, actorId, { note: opts.note, via: 'bulk' });
     if (res.ok) {
       done++;
