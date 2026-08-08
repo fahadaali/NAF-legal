@@ -144,6 +144,29 @@ export function LegalReview() {
     }
   };
 
+  /**
+   * اعتمادُ ما حدَّده المراجع.
+   *
+   * بمعرّفاتٍ رآها على الشاشة وأشّر عليها، لا بشرطٍ يُطابق ما لم يُعرض. وكلُّ
+   * مادة تُقيَّد وحدها في سجلّ التدقيق موسومةً بأن اعتمادها وقع جملةً.
+   */
+  const approveSelected = async (ids: string[]) => {
+    if (!ids.length) return;
+    setBusy(true);
+    try {
+      const res = await api.legalReviewSelected(ids, 'approve');
+      const done = new Set(ids.slice(0, res.done));
+      setArticles((rows) => rows.filter((r) => !done.has(r.id)));
+      setTotal((n) => Math.max(0, n - res.done));
+      api.legalReviewDashboard(filters).then(setDash).catch(() => {});
+      if (res.failed.length) load();
+    } catch {
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!dash) return null;
 
   return (
@@ -251,6 +274,14 @@ export function LegalReview() {
         <div className="empty-state">لا مادة بانتظار المراجعة. كل ما استُورد داخلٌ في الاسترجاع.</div>
       ) : (
         <>
+          <QueueList
+            groups={groups}
+            at={at}
+            busy={busy}
+            onOpen={setAt}
+            onApproveSelected={approveSelected}
+          />
+
           <div className="law-pager">
             <button className="btn-sm" disabled={at === 0} onClick={() => move(-1)}>السابق</button>
             <span>
@@ -275,6 +306,145 @@ export function LegalReview() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * قائمة الطابور — نظرةٌ على ما ينتظر، وتحديدٌ لما يُعتمد جملةً.
+ *
+ * **والتحديد على ما يُعرض وحده.** «تحديد الكل» تختار صفوف هذه الصفحة لا
+ * الطابور كلَّه: ما لم يظهر على الشاشة لا يُعتمد بضغطة. وزرُّ الاعتماد يحمل
+ * عدَّ ما حُدِّد، ويسأل قبل أن يقع.
+ */
+function QueueList({
+  groups,
+  at,
+  busy,
+  onOpen,
+  onApproveSelected,
+}: {
+  groups: LegalArticle[][];
+  at: number;
+  busy: boolean;
+  onOpen: (index: number) => void;
+  onApproveSelected: (ids: string[]) => void;
+}) {
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [asking, setAsking] = useState(false);
+
+  // المحدَّد يُقصَر على المعروض: صفٌّ خرج من الطابور لا يبقى محدَّداً في الظلّ.
+  const shown = useMemo(() => groups.flat().map((a) => a.id), [groups]);
+  const chosen = useMemo(() => shown.filter((id) => picked.has(id)), [shown, picked]);
+  const allPicked = shown.length > 0 && chosen.length === shown.length;
+
+  const toggle = (id: string) =>
+    setPicked((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  return (
+    <>
+      <div className="kb-section">المنتظرة في الطابور</div>
+      <div className="review-actions">
+        <label className="import-option">
+          <input
+            type="checkbox"
+            checked={allPicked}
+            disabled={busy || !shown.length}
+            onChange={(e) => setPicked(new Set(e.target.checked ? shown : []))}
+          />
+          تحديد الكل
+        </label>
+        <button className="btn-sm primary" disabled={busy || !chosen.length} onClick={() => setAsking(true)}>
+          اعتماد المحدَّد
+        </button>
+        <span className="review-keys">
+          المحدَّد <bdi>{formatNumber(chosen.length)}</bdi> / <bdi>{formatNumber(shown.length)}</bdi>
+        </span>
+        {chosen.length ? (
+          <button className="btn-sm" disabled={busy} onClick={() => setPicked(new Set())}>
+            إلغاء التحديد
+          </button>
+        ) : null}
+      </div>
+
+      <div className="table-scroll">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>النظام</th>
+              <th>المادة</th>
+              <th>سبب الإحالة للمراجعة</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g, i) =>
+              g.map((a) => (
+                <tr key={a.id} className={i === at ? 'row-open' : undefined}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={picked.has(a.id)}
+                      disabled={busy}
+                      onChange={() => toggle(a.id)}
+                      aria-label={`تحديد المادة ${a.articleNo ?? a.id}`}
+                    />
+                  </td>
+                  <td><bdi>{a.lawTitle || a.lawId}</bdi></td>
+                  <td>
+                    <bdi>{a.articleNo ?? a.id}</bdi>
+                    {a.duplicateOf ? <span className="pill pending">رقم مكرّر</span> : null}
+                  </td>
+                  <td className="audit-value"><bdi>{a.amendNote ?? a.amendmentKind ?? '—'}</bdi></td>
+                  <td>
+                    <button className="btn-sm" onClick={() => onOpen(i)}>عرض</button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* السؤال في نافذة المنصة لا في مربّع المتصفح — §٤ من السجلّ. والعدد في
+          نصّ السؤال لا في الزرّ وحده: من حدّد خمساً وعشرين وهو يظنّها خمساً
+          يقرأ الرقم قبل أن يضغط. */}
+      {asking ? (
+        <div className="modal-overlay" onClick={() => setAsking(false)}>
+          <div className="modal-card confirm-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span className="modal-title">اعتماد المحدَّد</span>
+              <button className="modal-close" onClick={() => setAsking(false)} title="إغلاق">×</button>
+            </div>
+            <div className="modal-body confirm-body">
+              <p>
+                ستدخل <bdi>{formatNumber(chosen.length)}</bdi> مادةً الاسترجاع ويُستشهد بها. ويُقيَّد في سجلّ
+                التدقيق أنها اعتُمدت جملةً.
+              </p>
+            </div>
+            <div className="modal-foot">
+              <button className="btn-sm" onClick={() => setAsking(false)}>إلغاء</button>
+              <button
+                className="btn-sm primary"
+                disabled={busy}
+                onClick={() => {
+                  setAsking(false);
+                  setPicked(new Set());
+                  onApproveSelected(chosen);
+                }}
+              >
+                اعتماد
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 

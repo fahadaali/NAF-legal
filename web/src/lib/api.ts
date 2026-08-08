@@ -357,6 +357,8 @@ export interface ReviewAuditEntry {
   new_value: string | null;
   actor_id: string | null;
   at: number;
+  /** `single` قرارٌ فُتحت له المادة · `bulk` اعتُمدت ضمن محدَّدٍ جملةً. */
+  via: string | null;
 }
 
 /** نافذة التعديلات الخام — تُقرأ بطلبٍ صريح ولا تأتي مع نتائج البحث. */
@@ -598,6 +600,16 @@ export const api = {
   legalReviewAudit: (chunkId?: string | null, limit = 50) =>
     req<{ entries: ReviewAuditEntry[] }>(
       `/legal/review/audit?limit=${limit}${chunkId ? `&chunk_id=${encodeURIComponent(chunkId)}` : ''}`
+    ),
+  /**
+   * قرارٌ واحد على موادّ محدَّدة بأعيانها.
+   *
+   * بمعرّفاتها لا بشرط: ما لم يظهر على الشاشة ويُؤشَّر عليه لا يُعتمد.
+   */
+  legalReviewSelected: (ids: string[], action: Exclude<ReviewAction, 'edit'>, note?: string) =>
+    req<{ ok: true; done: number; failed: { id: string; error: string }[]; limit: number }>(
+      '/legal/review-selected',
+      { method: 'POST', body: JSON.stringify({ ids, action, note }) }
     ),
   /** قرار المراجع: اعتماد · تحرير واعتماد · استبعاد · تأجيل · ملاحظة · تراجع. */
   legalReview: (id: string, action: ReviewAction, body: { text?: string; note?: string } = {}) =>

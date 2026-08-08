@@ -23,7 +23,9 @@ import {
   listReviewAudit,
   listCaptureBatches,
   reviewChunk,
+  reviewChunks,
   reviewDashboard,
+  BULK_LIMIT,
   getLawWithRegulations,
   legalStats,
   type ReviewAction,
@@ -241,6 +243,32 @@ app.get('/review/audit', requireAdmin, async (c) =>
  * نصُّها أو نافذةُ تعديلها في استيرادٍ لاحق — فاعتمادُ نصٍّ لم يعد هو النصّ
  * ليس اعتماداً. وكلُّ تغيير يُقيَّد في سجلّ التدقيق.
  */
+/**
+ * قرارٌ واحد على موادّ محدَّدة بأعيانها.
+ *
+ * **بمعرّفاتها لا بشرطٍ يُطابقها**، وبسقفٍ يقابل صفحة الطابور: نداءٌ يقبل «كل
+ * الطابور» يعتمد ما لم يُعرض على أحد. وكلُّ مادة تُقيَّد وحدها في سجلّ
+ * التدقيق موسومةً `bulk`، فيُعرف لاحقاً أن الاعتماد وقع جملةً لا مادةً مادة.
+ *
+ * والتحرير خارجه: نصٌّ يُحرَّر يُحرَّر وحده.
+ */
+app.post('/review-selected', requireAdmin, async (c) => {
+  const body = await c.req
+    .json<{ ids?: unknown; action?: string; note?: string }>()
+    .catch(() => ({}) as { ids?: unknown; action?: string; note?: string });
+  const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string') : [];
+  if (!ids.length) return c.json({ error: 'حدِّد مادةً واحدة على الأقل' }, 400);
+  const action = (body.action ?? 'approve') as Exclude<ReviewAction, 'edit'>;
+  if (!['approve', 'exclude', 'defer', 'note', 'undo'].includes(action)) {
+    return c.json({ error: 'الإجراء غير معروف' }, 400);
+  }
+
+  const result = await reviewChunks(c.env, ids, action, c.get('user').id, { note: body.note });
+  await audit(c, 'legal.review.bulk', ids[0] ?? '', { action, requested: ids.length, done: result.done });
+  if (result.reembedded) c.executionCtx.waitUntil(embedPending(c.env, REVIEW_EMBED_BUDGET).then(() => {}));
+  return c.json({ ok: true, ...result, limit: BULK_LIMIT });
+});
+
 app.post('/review/:id', requireAdmin, async (c) => {
   // الوسيط يُفقد Hono استنتاجَ نوع المعامل، فيُقرأ بقيمة احتياطية فارغة —
   // ومعرّفٌ فارغ لا يجد مادة، فيُردّ ٤٠٤ كما لو طُلبت مادةٌ غير موجودة.

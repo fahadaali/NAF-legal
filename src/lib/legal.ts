@@ -1954,7 +1954,7 @@ export async function reviewChunk(
   id: string,
   action: ReviewAction,
   actorId: string,
-  opts: { text?: string; note?: string } = {}
+  opts: { text?: string; note?: string; via?: 'single' | 'bulk' } = {}
 ): Promise<ReviewResult> {
   const row = await env.DB.prepare(
     `SELECT id, law_id, law_title, instrument, book, chapter, article_title, article_no,
@@ -2044,9 +2044,9 @@ export async function reviewChunk(
     await env.DB.batch(
       audit.slice(i, i + DB_BATCH).map((a) =>
         env.DB.prepare(
-          `INSERT INTO legal_review_audit (id, chunk_id, law_id, field, old_value, new_value, actor_id, at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(uuid(), id, row.law_id, a.field, a.from, a.to, actorId, now)
+          `INSERT INTO legal_review_audit (id, chunk_id, law_id, field, old_value, new_value, actor_id, at, via)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(uuid(), id, row.law_id, a.field, a.from, a.to, actorId, now, opts.via ?? 'single')
       )
     );
   }
@@ -2064,6 +2064,56 @@ export interface ReviewAuditEntry {
   new_value: string | null;
   actor_id: string | null;
   at: number;
+  /** `single` قرارٌ فُتحت له المادة · `bulk` اعتُمدت ضمن محدَّدٍ جملةً. */
+  via: string | null;
+}
+
+/**
+ * سقفُ ما يُعتمد جملةً في نداءٍ واحد.
+ *
+ * بقدر صفحة الطابور لا أكثر: «تحديد الكل» تحدّد ما على الشاشة، فالسقف يقابل
+ * ما تراه العين. وسقفٌ أوسع يفتح باباً لاعتماد الطابور كلِّه بنداءٍ واحد —
+ * وهو ما لا تراه الشاشة ولا يقرأه أحد.
+ */
+export const BULK_LIMIT = 50;
+
+export interface BulkResult {
+  done: number;
+  failed: { id: string; error: string }[];
+  reembedded: boolean;
+}
+
+/**
+ * قرارٌ واحد على موادّ محدَّدة بأعيانها.
+ *
+ * **بمعرّفاتها لا بشرطٍ يُطابقها.** نداءٌ يقبل «كل الطابور» يعتمد ما لم يُعرض
+ * على أحد، والمعرّفات تأتي من صفوفٍ رآها المراجع وأشّر عليها بيده. وكلُّ مادة
+ * تمرّ بالمسار المفرد نفسه: تُقيَّد وحدها في سجلّ التدقيق، ويُوسَم قيدُها
+ * `bulk` فيُعرف لاحقاً أن الاعتماد وقع جملةً.
+ *
+ * والتحرير خارج هذا الباب: نصٌّ يُحرَّر يُحرَّر مادةً مادة.
+ */
+export async function reviewChunks(
+  env: Env,
+  ids: string[],
+  action: Exclude<ReviewAction, 'edit'>,
+  actorId: string,
+  opts: { note?: string } = {}
+): Promise<BulkResult> {
+  const unique = Array.from(new Set(ids.filter(Boolean))).slice(0, BULK_LIMIT);
+  const failed: { id: string; error: string }[] = [];
+  let done = 0;
+  let reembedded = false;
+  for (const id of unique) {
+    const res = await reviewChunk(env, id, action, actorId, { note: opts.note, via: 'bulk' });
+    if (res.ok) {
+      done++;
+      reembedded ||= !!res.reembedded;
+    } else {
+      failed.push({ id, error: res.error ?? 'تعذّر القرار' });
+    }
+  }
+  return { done, failed, reembedded };
 }
 
 /** سجلّ التدقيق: لمادةٍ بعينها، أو لآخر ما وقع في المنصة كلّها. */
