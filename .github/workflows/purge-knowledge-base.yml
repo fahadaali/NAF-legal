@@ -61,7 +61,7 @@ jobs:
       - name: إحصاء ما سيُحذف
         run: |
           set -euo pipefail
-          npx wrangler d1 execute naf_legal --remote --json --command "
+          npx wrangler d1 execute naf_legal --remote --yes --json --command "
             SELECT 'legal_chunks' AS الجدول, COUNT(*) AS العدد FROM legal_chunks
             UNION ALL SELECT 'legal_chunk_versions', COUNT(*) FROM legal_chunk_versions
             UNION ALL SELECT 'legal_review_audit', COUNT(*) FROM legal_review_audit
@@ -97,7 +97,7 @@ jobs:
       # الاسترجاع سليماً وهو أعمى.
       - name: حذف الصفوف
         if: ${{ !inputs.dry_run }}
-        run: npx wrangler d1 execute naf_legal --remote --file scripts/purge-knowledge-base.sql
+        run: npx wrangler d1 execute naf_legal --remote --yes --file scripts/purge-knowledge-base.sql
 
       # ملفّات الوثائق في R2: مفاتيحها في القاعدة، فتُجمع قبل الحذف لا بعده —
       # ولذلك تُقرأ من النسخة الاحتياطية المأخوذة أعلاه.
@@ -155,7 +155,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
-          npx wrangler d1 execute naf_legal --remote --json --command "
+          npx wrangler d1 execute naf_legal --remote --yes --json --command "
             SELECT 'legal_chunks' AS الجدول, COUNT(*) AS العدد FROM legal_chunks
             UNION ALL SELECT 'legal_fts', COUNT(*) FROM legal_fts
             UNION ALL SELECT 'legal_chunk_versions', COUNT(*) FROM legal_chunk_versions
