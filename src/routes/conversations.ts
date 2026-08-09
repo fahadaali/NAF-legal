@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
+import { isGenerating } from '../lib/generating';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -68,7 +69,17 @@ app.get('/:id', async (c) => {
   )
     .bind(id)
     .all();
-  return c.json({ conversation: conv, messages: messages.results, attachments: attachments.results });
+  /* «دورٌ يجري الآن» — لمن عاد بعد إعادة تحميل الصفحة.
+     التوليد يمضي في الخلفية ولا يتوقّف بانصراف صاحبه، لكن البثّ الذي كان
+     يحمله ذهب مع الصفحة. فبلا هذه العلامة يرى العائد محادثةً ساكنة بلا ردّ
+     ولا أثرِ عمل، فيعيد السؤال — ويدفع دوراً ثانياً على دورٍ يجري. */
+  const generating = await isGenerating(c.env, id);
+  return c.json({
+    conversation: conv,
+    messages: messages.results,
+    attachments: attachments.results,
+    generating,
+  });
 });
 
 // إعادة تسمية

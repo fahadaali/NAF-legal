@@ -15,6 +15,7 @@ import Members from './components/Members';
 import AccountMenu from './components/AccountMenu';
 import NotificationBell from './components/NotificationBell';
 import { useTheme } from './lib/theme';
+import { subscribeChatActivity } from './lib/chatStream';
 import { Icon, ICON_MD, ICON_LG } from './lib/icons';
 
 export default function App() {
@@ -46,6 +47,15 @@ export default function App() {
   }, []);
 
   const refreshConversations = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  /* الشريط الجانبي يتبع الدور ولو غادرت شاشتُه.
+     التوليد يمضي في الخلفية (`lib/chatStream.ts`)، وعنوانُ المحادثة يُصاغ
+     عند أوّل ردّ وترتيبُها يتغيّر بختامه. وكان التحديث معلَّقاً على نداءٍ من
+     `ChatView` — فمن بدّل المحادثة أثناء الدور بقيت في قائمته «محادثة جديدة»
+     إلى أن يُعيد فتحها. والاشتراك هنا على دورة الحياة وحدها — البدء والعنوان
+     والختام — لا على كل مقطعٍ من النصّ: الشريط لا يُعاد بناؤه مئة مرّة في
+     الدور الواحد. */
+  useEffect(() => subscribeChatActivity(refreshConversations), [refreshConversations]);
 
   const handleLogout = async () => {
     await api.logout();

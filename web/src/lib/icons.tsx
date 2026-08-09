@@ -38,6 +38,7 @@ import {
   FileType,
   Folder,
   Globe,
+  Highlighter,
   Hourglass,
   Library,
   LifeBuoy,
@@ -51,6 +52,7 @@ import {
   Moon,
   Paperclip,
   Pencil,
+  Quote,
   RefreshCw,
   Replace,
   RotateCcw,
@@ -144,6 +146,13 @@ export const Icon = {
   originalText: FileClock,  // الأصل — نصٌّ من زمنٍ مضى، وليست Archive (فعلُ الأرشفة)
   copy: Copy,               // نسخ
   externalLink: ExternalLink, // رابط خارجي — الوجهة خارج النظام
+  // التحديد داخل المحادثة — naf-icons.md: «تظليل النصّ» تحت «التنسيق داخل
+  // النصّ»، و«اقتباس» تحت «كتل المحتوى». والمعنى هو المعنى وإن اختلف الموضع:
+  // قلمُ التظليل يظلّل كلماتٍ بعينها هنا كما يظلّلها في المحرر.
+  // ولا أيقونة لـ«مسح التظليل»: لا صفَّ لها في السجلّ، و`Eraser` مأخوذةٌ
+  // لـ«إعادة الافتراضي». فالزرّ نصٌّ بلا أيقونة حتى تُسجَّل.
+  highlightText: Highlighter, // تظليل النصّ
+  quote: Quote,             // اقتباس
   // الأعضاء والصلاحيات
   permissions: ShieldCheck, // صلاحيات
   members: Users,          // مستخدمو النظام جمعاً — وليست User (عميل فرد)

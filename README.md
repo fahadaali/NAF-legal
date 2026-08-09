@@ -35,8 +35,8 @@
 src/                     # خلفية Cloudflare Worker
   index.ts               # نقطة الدخول: التوجيه، الأمان، Cron، Queue
   types.ts               # أنواع البيئة (bindings)
-  routes/                # auth · conversations · chat · files · kb · legal · admin
-  lib/                   # crypto · auth · claude · planner · rag · legal · arabic · prompts · docx · extract
+  routes/                # auth · conversations · chat · files · kb · legal · highlights · admin
+  lib/                   # crypto · auth · claude · planner · rag · legal · generating · arabic · prompts · docx · extract
   ingest.ts              # التقسيم والتضمين للوثائق المرفوعة
   cron.ts                # تتبّع الأنظمة + تصريف تضمين المقاطع المستوردة
 migrations/              # مخطط D1 (§9) + بذور الأنظمة الأولية
@@ -44,8 +44,8 @@ audit/                   # فحوص العقود: الدخول الموحّد ·
 docs/legal-import.md     # عقد استيراد المحتوى النظامي
 scripts/import-legal.mjs # استيراد ملف JSONL على دفعات
 web/                     # واجهة React + Vite (RTL)
-  src/components/        # Auth · Sidebar · ChatView · Admin
-  src/lib/               # api · consultations · markdown
+  src/components/        # Auth · Sidebar · ChatView · SourceModal · Admin
+  src/lib/               # api · chatStream · highlight · consultations · markdown
 wrangler.toml            # bindings: D1, R2, Vectorize, AI, KV, Queue, Cron
 ```
 
@@ -220,4 +220,9 @@ npm run check:legal   # فحص العقد على الكود نفسه
 - **إصدارات الأنظمة:** أرشفة النص القديم بتواريخ سريان عند رفع نسخة أحدث.
 - **خلاصة أخبار جريدة أم القرى** (Cron) + **استيعاب تلقائي** لعنصر عند اعتماده.
 
-> جميعها موثّقة في مخطط `migrations/0003_features.sql` والمسارات تحت `src/routes/`.
+**6) قراءة المحادثة**
+- **تحديد النصّ وتظليله:** أيّ نصّ في المحادثة — رسالة المستخدم أو ردّ المساعد — يُحدَّد فيظهر شريطٌ فوقه: نسخ · تظليل · مسح التظليل · اقتباس. والتظليل يُحفَظ بإزاحتين على نصّ الرسالة (`message_highlights`) ومعه مقتطعٌ شاهد يُقابَل به الموضع، فتظليلٌ على جملةٍ أُزيحت بتحرير المسوّدة يسقط ولا يقع على غيرها. و«اقتباس» ينقل المحدَّد إلى صندوق الكتابة. و«مستخدم (اطّلاع)» له النسخ وحده — التظليل كتابة.
+- **المصادر تُفتح لا تُذكَر:** شارة المصدر أسفل الردّ زرٌّ يفتح المادة بنصّها النافذ، وأداةِ إصدار نظامها وجهتِه وتاريخِه، وتنبيهاتِها، وسجلِّ تعديلاتها، وزرِّ الانتقال إلى صفحتها في بوابة هيئة الخبراء. والمادة تُجلب عند كل فتحة لا تُقرأ من الاستشهاد المحفوظ: النافذ اليوم قد يكون غير ما استُند إليه يومها. واستشهادات المحادثات القديمة — حُفظت بعنوان النظام ورقم المادة وحدهما — تُفتح بمطابقة العنوان مطابقةً تامّة (`/api/legal/article?law_title=&article_no=`)، وما لم يُطابق يبقى شارةً ولا يُفتح تخميناً.
+- **التوليد يعمل في الخلفية:** الدور صار مهمّةً في `waitUntil` لا جسماً داخل مجرى الاستجابة، فإغلاق التبويب أو إعادة تحميل الصفحة لا يقطعه — والردّ والعنوان وتحقّق الإسناد تُحفَظ على أي حال. وفي الواجهة يعيش البثّ في `web/src/lib/chatStream.ts` خارج شاشة المحادثة، فتبديل المحادثة أو فتح الأدوات لا يهدمه ولا يفقد ما وصل منه. ومن عاد بعد إعادة التحميل تقول له علامةٌ في KV (`src/lib/generating.ts`) إن ثمّة دوراً يجري، فينتظره ولا يعيد السؤال.
+
+> جميعها موثّقة في مخطط `migrations/0003_features.sql` و`migrations/0019_message_highlights.sql`، والمسارات تحت `src/routes/`.
