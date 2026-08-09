@@ -66,7 +66,11 @@ export interface RagResult {
   lawId?: string;
   docType?: string;
   articleNo?: string;
+  /** نوع أداة الإصدار: مرسوم ملكي، قرار مجلس الوزراء… */
+  instrument?: string;
   instrumentNo?: string;
+  /** الجهة صاحبة النظام. */
+  authority?: string;
   issueDate?: string;
   issueDateHijri?: string;
   sourceUrl?: string;
@@ -150,7 +154,9 @@ function fromLegalHit(h: LegalHit): RagResult {
     lawId: h.lawId ?? undefined,
     docType: h.docType ?? undefined,
     articleNo: h.articleNo ?? undefined,
+    instrument: h.instrument ?? undefined,
     instrumentNo: h.instrumentNo ?? undefined,
+    authority: h.authority ?? undefined,
     issueDate: h.issueDate ?? undefined,
     issueDateHijri: h.issueDateHijri ?? undefined,
     sourceUrl: h.sourceUrl ?? undefined,

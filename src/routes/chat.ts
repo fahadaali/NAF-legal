@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
-import { retrieve, formatRagContext, indexConversationMessage } from '../lib/rag';
+import { retrieve, formatRagContext, indexConversationMessage, type RagResult } from '../lib/rag';
 import {
   streamClaude,
   webSearchTool,
@@ -20,6 +20,7 @@ import { getEffectiveConfig } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
 import { findMissingRegulations, mentionedInAnswer } from '../lib/regulations';
+import { markGenerating, clearGenerating } from '../lib/generating';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -68,6 +69,12 @@ app.post('/:conversationId', async (c) => {
     .bind(userMsgId, conversationId, 'user', message, now)
     .run();
 
+  /* العلامة تُرفع مع حفظ رسالة المستخدم لا مع بدء البثّ.
+     بينهما المُخطِّط والاسترجاع والتضمين — ثوانٍ. ومن أعاد تحميل الصفحة
+     فيها يجد سؤاله محفوظاً بلا جواب ولا أثرِ عمل، فيعيده. وتُنزل عند كل
+     مخرجٍ من هذا المسار: الاستيضاح، وفشل فتح البثّ، وختام الدور. */
+  await markGenerating(c.env, conversationId);
+
   // المرفقات المرتبطة بالمحادثة (نصّها المستخرَج)
   const atts = await c.env.DB.prepare(
     'SELECT filename, parsed_text FROM attachments WHERE conversation_id = ? AND parsed_text IS NOT NULL'
@@ -108,6 +115,7 @@ app.post('/:conversationId', async (c) => {
       userId: user.id,
       consultationType: conv.consultation_type,
     });
+    await clearGenerating(c.env, conversationId);
     return sseOnce(clarifyText, { messageId: asstId, plan }, title);
   }
 
@@ -118,7 +126,7 @@ app.post('/:conversationId', async (c) => {
     try {
       const results = await retrieve(c.env, plan.kb_queries, 6);
       ragContext = formatRagContext(results);
-      citations = results.map((r) => ({ title: r.title, ref: r.articleRef, score: r.score }));
+      citations = results.map(toCitation);
     } catch (e: any) {
       // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ:
       // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هنا وحده.
@@ -174,6 +182,7 @@ app.post('/:conversationId', async (c) => {
     // خدمة Claude، فتُقرأ خطأَ صلاحيات أو خللاً في حسابه — وما يفرّق بين
     // مفتاح ناقص وشكل طلبٍ مرفوض إنما هو ردّ الـAPI، ومكانه السجلّ لا الشاشة.
     console.error('generation failed:', e?.message ?? e);
+    await clearGenerating(env, conversationId);
     return c.json({ error: 'تعذّر توليد الرد', detail: String(e?.message ?? e) }, 502);
   }
 
@@ -185,16 +194,33 @@ app.post('/:conversationId', async (c) => {
   const encoder = new TextEncoder();
   const userId = user.id;
 
-  const outStream = new ReadableStream<Uint8Array>({
-    async start(controller) {
+  /* ══ الدور يجري في الخلفية، والاتصال يشاهده إن بقي ══
+   *
+   * كان جسمُ التوليد كلُّه داخل `start` مجرى الاستجابة، فعمرُه عمرُ الاتصال:
+   * يُغلق القارئ التبويب أو يُعيد تحميل الصفحة فيُلغى المجرى، ويقطع وقتُ
+   * التشغيل ما بقي من الطلب — ومعه الحفظُ في القاعدة والعنوانُ وتحقُّقُ
+   * الإسناد. فيخسر المحامي مذكرةً وصلت إلى نصفها لأنه ضغط زرّ الرجوع.
+   *
+   * وقد صار الجسم مهمّةً في `waitUntil`: وقتُ التشغيل يُبقيها حيّة إلى أن
+   * تنتهي بغضّ النظر عن الاتصال، وهي تكتب في `writable` ما دام أحدٌ يقرأ
+   * فإن انصرف مضت صامتةً إلى آخرها. والردّ يُحفظ في الحالين، فيجده صاحبه
+   * كاملاً حين يعود.
+   *
+   * والعلامة في KV هي ما يقوله للعائد بعد إعادة التحميل: ثمّة دورٌ يجري،
+   * فانتظره ولا تُعِد السؤال. */
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+
+  const run = async () => {
+    try {
       /* القارئ قد ينصرف قبل أن يكتمل الدور — يغلق التبويب أو تنقطع شبكته —
-         فيرمي الإدراجُ في مجرًى أُلغي. وما يُحفَظ يُكمَل على أي حال: الرد
+         فترمي الكتابةُ في مجرًى أُلغي. وما يُحفَظ يُكمَل على أي حال: الرد
          والعنوان وشارة التحقّق تُخزَّن، فيعود المستخدم فيجد محادثته تامّة. */
       let readerGone = false;
-      const push = (chunk: Uint8Array) => {
+      const push = async (chunk: Uint8Array) => {
         if (readerGone) return;
         try {
-          controller.enqueue(chunk);
+          await writer.write(chunk);
         } catch {
           readerGone = true;
         }
@@ -203,7 +229,7 @@ app.post('/:conversationId', async (c) => {
         push(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 
       // أرسل بيانات وصفية أولية
-      send('meta', { messageId: asstId, plan, citations });
+      await send('meta', { messageId: asstId, plan, citations });
 
       /** يمرّر أحداث محاولةٍ كما هي إلى الواجهة، ويجمع نصّها وعدّاداتها. */
       const pump = async (attempt: ClaudeStream): Promise<StreamOutcome> => {
@@ -213,7 +239,7 @@ app.post('/:conversationId', async (c) => {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          push(value); // مرّر أحداث SSE كما هي للواجهة
+          await push(value); // مرّر أحداث SSE كما هي للواجهة
           // استخرج النص لتجميعه
           buf += decoder.decode(value, { stream: true });
           const parts = buf.split('\n\n');
@@ -290,8 +316,8 @@ app.post('/:conversationId', async (c) => {
            الفقاعة ثم تصل الحدثان إلى مستمعٍ انصرف: شارة التحقّق لا تظهر
            أبداً، وطلبُ إضافة نظامٍ ناقص لا يُعرض. وزرُّ التصدير كان يظهر
            للحظةٍ قبل أن يوجد الصفّ الذي يصدّره. */
-        send('done', {});
-        send('regulations', { missing: relevantMissing });
+        await send('done', {});
+        await send('regulations', { missing: relevantMissing });
 
         // [5] طبقة التحقّق بعد التوليد (الاقتباس المُتحقَّق منه) — §2
         let verification = null;
@@ -306,7 +332,7 @@ app.post('/:conversationId', async (c) => {
             .bind(JSON.stringify(metadata), asstId)
             .run()
             .catch((e: any) => console.error('store verification failed:', e?.message ?? e));
-          send('verify', verification);
+          await send('verify', verification);
         }
 
         // [6] عنوان المحادثة من موضوعها — يُصاغ مرّة واحدة عند أول ردّ
@@ -318,13 +344,13 @@ app.post('/:conversationId', async (c) => {
           userId,
           consultationType: plan.consultation_type,
         });
-        if (title) send('title', { title });
+        if (title) await send('title', { title });
 
         // فهرسة دلالية للرسالتين (§3) — best-effort.
         //
-        // ويُمسَك خطؤها هنا فعلاً: هذا الموضع داخل `start` المجرى، واستثناءٌ
-        // منه يقطع البثّ **بعد** أن حُفظ الرد، فيرى المستخدم ردّاً ناقصاً
-        // بلا حدث `done` — والمفهرِس تفصيلٌ لا علاقة له بردٍّ اكتمل وخُزِّن.
+        // ويُمسَك خطؤها هنا فعلاً: استثناءٌ منها يقطع الدور **بعد** أن حُفظ
+        // الرد، فيرى المستخدم ردّاً ناقصاً بلا حدث `done` — والمفهرِس تفصيلٌ
+        // لا علاقة له بردٍّ اكتمل وخُزِّن.
         const indexTitle = title ?? conv.title;
         await indexConversationMessage(env, { messageId: userMsgId, conversationId, userId, role: 'user', content: message, title: indexTitle }).catch(
           (e) => console.error('index user message failed:', e?.message ?? e)
@@ -336,8 +362,8 @@ app.post('/:conversationId', async (c) => {
         // لم يأتِ نصّ ولا أفادت المحاولة الثانية: قُل السبب بعينه ولا تخزّن
         // ردّاً فارغاً. والفقاعة تُختم بعده حتى لا تنبض بلا نهاية.
         await touchConversation(env, conversationId);
-        send('error', { error: emptyTurnReason(outcome) });
-        send('done', {});
+        await send('error', { error: emptyTurnReason(outcome) });
+        await send('done', {});
       }
       await logUsage(env, {
         userId,
@@ -347,15 +373,25 @@ app.post('/:conversationId', async (c) => {
         outputTokens,
         consultationType: plan.consultation_type,
       });
-      if (!readerGone) {
-        try {
-          controller.close();
-        } catch {}
+    } catch (e: any) {
+      /* خطأٌ خرج من الجسم كلِّه. وهو الآن في `waitUntil` لا في مجرى استجابة،
+         فلا أحد يلتقطه ولا يظهر في شبكة المتصفّح — والسجلّ هو موضعه. */
+      console.error('background generation failed:', e?.message ?? e);
+    } finally {
+      // العلامة تُنزل مهما كان المآل، وإلا بقيت المحادثة «قيد التوليد» إلى
+      // أن تنتهي مهلتها — دوّارةُ انتظارٍ على دورٍ انتهى.
+      await clearGenerating(env, conversationId);
+      try {
+        await writer.close();
+      } catch {
+        // القارئ انصرف فأُلغي المجرى — لا شيء يُغلَق.
       }
-    },
-  });
+    }
+  };
 
-  return new Response(outStream, {
+  c.executionCtx.waitUntil(run());
+
+  return new Response(readable, {
     headers: {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache',
@@ -363,6 +399,38 @@ app.post('/:conversationId', async (c) => {
     },
   });
 });
+
+/**
+ * الاستشهاد كما يصل الواجهة.
+ *
+ * كان ثلاثة حقول — العنوان والمادة والدرجة — فكانت المصادر تُذكر أسفل كل
+ * إجابة ولا تُفتح: اسمُ نظامٍ ورقمُ مادةٍ في شارةٍ صمّاء، ومن أراد أن يقرأ
+ * المادة التي بُني عليها الرأي بحث عنها في شاشة الأنظمة بنفسه. والمعرّف هو
+ * ما يفتحها، وما بعده — الأداة والجهة والتاريخ والرابط — هو ما يُعرَف به
+ * النصُّ قبل أن يُستشهد به.
+ *
+ * والدرجة تبقى: هي رتبة المقطع في الاسترجاع، ولا تُعرض للقارئ.
+ */
+function toCitation(r: RagResult) {
+  return {
+    title: r.title,
+    ref: r.articleRef,
+    score: r.score,
+    // `document` للوثائق المرفوعة، و`legal` للمقاطع المستوردة — والثانية
+    // وحدها لها مادةٌ تُفتح ببوابتها.
+    source: r.source ?? 'document',
+    id: r.documentId,
+    lawId: r.lawId,
+    articleNo: r.articleNo,
+    docType: r.docType,
+    instrument: r.instrument,
+    instrumentNo: r.instrumentNo,
+    authority: r.authority,
+    issueDate: r.issueDate,
+    issueDateHijri: r.issueDateHijri,
+    sourceUrl: r.sourceUrl,
+  };
+}
 
 // يبني كتلة الملفات المرفوعة بسقف كلّي للحجم (يوزَّع على الملفات)
 const ATTACH_TOTAL_BUDGET = 60_000; // حروف

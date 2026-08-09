@@ -31,6 +31,7 @@ import {
   reviewChunk,
   reviewChunks,
   reviewDashboard,
+  resolveLawIdByTitle,
   BULK_LIMIT,
   getLawWithRegulations,
   legalStats,
@@ -440,7 +441,14 @@ app.get('/search', async (c) => {
   return c.json({ results: hits, count: hits.length });
 });
 
-/** استدعاء مادة بعينها: `?law_id=&article_no=` أو `?id=`. */
+/**
+ * استدعاء مادة بعينها: `?id=`، أو `?law_id=&article_no=`، أو
+ * `?law_title=&article_no=`.
+ *
+ * والعنوان بابٌ ثالث لأجل الاستشهادات القديمة: حُفظت بعنوان النظام ورقم
+ * المادة وحدهما، فبلا هذا الباب تبقى محادثاتٌ كاملة تذكر مصادرها ولا تفتحها.
+ * والمطابقة تامّة — انظر `resolveLawIdByTitle`.
+ */
 app.get('/article', async (c) => {
   const includeRepealed = c.req.query('include_repealed') === '1';
   const id = c.req.query('id');
@@ -463,9 +471,14 @@ app.get('/article', async (c) => {
     );
   }
 
-  const lawId = c.req.query('law_id');
   const articleNo = c.req.query('article_no');
-  if (!lawId || !articleNo) return c.json({ error: 'المطلوب: id أو (law_id و article_no)' }, 400);
+  const lawTitle = c.req.query('law_title')?.trim();
+  const lawId = c.req.query('law_id') || (lawTitle ? await resolveLawIdByTitle(c.env, lawTitle) : null);
+  if (!lawId || !articleNo) {
+    // عنوانٌ أُرسل ولم يُطابق نظاماً: السبب غيابُ النظام لا نقصُ المعاملات.
+    if (lawTitle && articleNo) return c.json({ error: 'المادة غير موجودة' }, 404);
+    return c.json({ error: 'المطلوب: id أو (law_id و article_no) أو (law_title و article_no)' }, 400);
+  }
   const hits = await getArticle(c.env, { lawId, articleNo, includeRepealed, docType: c.req.query('doc_type') ?? null });
   if (!hits.length) return c.json({ error: 'المادة غير موجودة' }, 404);
   return c.json({ results: hits, count: hits.length });

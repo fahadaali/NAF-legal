@@ -2461,6 +2461,25 @@ export async function getChunkById(
 }
 
 /**
+ * معرّف النظام من عنوانه — لاستشهادٍ لا يحمل إلا العنوان.
+ *
+ * استشهادات المحادثات القديمة حُفظت بعنوان النظام ورقم المادة وحدهما، بلا
+ * معرّف يفتح المادة. وهذا يردّ المعرّف من العنوان **بمطابقةٍ تامّة لا
+ * تقريبية**: نظامان يتشابه عنوانهما ولا يتطابق مادتان مختلفتان، وفتحُ
+ * الأقرب شكلاً استشهادٌ بغير ما استُند إليه — وهو أسوأ من ألّا يُفتح شيء.
+ */
+export async function resolveLawIdByTitle(env: Env, title: string): Promise<string | null> {
+  const clean = title.trim();
+  if (!clean) return null;
+  const row = await env.DB.prepare(
+    'SELECT law_id FROM legal_chunks WHERE law_title = ? AND law_id IS NOT NULL LIMIT 1'
+  )
+    .bind(clean)
+    .first<{ law_id: string }>();
+  return row?.law_id ?? null;
+}
+
+/**
  * نافذة التعديلات ونصُّ المادة السابق — بطلبٍ صريح وحده.
  *
  * التصنيف الآلي يقترح ولا يقرّر، وهذا ما يرجع إليه المراجع البشري: النصّ

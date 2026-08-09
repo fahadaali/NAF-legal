@@ -114,6 +114,45 @@ export interface Message {
 }
 
 /**
+ * مصدرٌ استند إليه الردّ — كما يصل من مسار المحادثة.
+ *
+ * كان ثلاثة حقول لا تُفتح: العنوان والمادة والدرجة. وما زاد عليها هو ما
+ * يجعل الشارة باباً — `id` يفتح المادة، والباقي يُعرَف به النصّ.
+ *
+ * **والحقول الزائدة كلُّها اختيارية عمداً:** الاستشهادات المحفوظة قبل هذا
+ * التغيير لا تحملها، وهي معروضةٌ في محادثاتٍ قائمة. فتُقرأ كما هي، ويُفتح
+ * منها ما يمكن فتحه بالعنوان ورقم المادة.
+ */
+export interface Citation {
+  title: string;
+  ref?: string;
+  score?: number;
+  /** `legal` مقطعٌ مستورد له مادةٌ تُفتح · `document` وثيقةٌ مرفوعة. */
+  source?: 'legal' | 'document';
+  /** معرّف المقطع في `legal_chunks` — أدقّ ما يُفتح به. */
+  id?: string;
+  lawId?: string;
+  articleNo?: string;
+  docType?: string;
+  instrument?: string;
+  instrumentNo?: string;
+  authority?: string;
+  issueDate?: string;
+  issueDateHijri?: string;
+  sourceUrl?: string;
+}
+
+/** تظليلٌ محفوظ على رسالة — بإزاحتيه ومقتطعه الشاهد. */
+export interface Highlight {
+  id: string;
+  message_id: string;
+  start_off: number;
+  end_off: number;
+  text: string;
+  created_at: number;
+}
+
+/**
  * قالب المستند — الخط والأحجام ونطاق الكتابة.
  *
  * مصدرٌ واحد لقالبَي Word والطباعة معاً: ما يُصدَّر وما يُطبع مستندٌ واحد.
@@ -594,7 +633,13 @@ export const api = {
   createConversation: (consultation_type: string) =>
     req<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ consultation_type }) }),
   getConversation: (id: string) =>
-    req<{ conversation: Conversation; messages: Message[]; attachments: Attachment[] }>(`/conversations/${id}`),
+    req<{
+      conversation: Conversation;
+      messages: Message[];
+      attachments: Attachment[];
+      /** دورٌ يجري في الخلفية الآن — بثُّه ذهب مع الصفحة وردُّه في الطريق. */
+      generating?: boolean;
+    }>(`/conversations/${id}`),
   renameConversation: (id: string, title: string) =>
     req(`/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteConversation: (id: string) => req(`/conversations/${id}`, { method: 'DELETE' }),
@@ -632,6 +677,29 @@ export const api = {
     req<{ results: LegalArticle[]; count: number }>(
       `/legal/search?q=${encodeURIComponent(q)}&limit=${limit}&lexical=1`
     ),
+  /**
+   * مادةٌ بعينها — بمعرّفها، أو بنظامها ورقمها، أو بعنوان نظامها ورقمها.
+   *
+   * والباب الثالث لاستشهادات المحادثات القديمة: حُفظت بعنوان النظام ورقم
+   * المادة وحدهما. والمطابقة على العنوان تامّة في الخادم، فما لم يُطابق
+   * يعود «المادة غير موجودة» ولا يُفتح تخميناً.
+   */
+  legalArticle: (by: {
+    id?: string;
+    lawId?: string;
+    lawTitle?: string;
+    articleNo?: string;
+    /** الأرشيف يُفتح صراحةً: مادةٌ أُلغيت تُعرض بشارتها لا تُكتم. */
+    includeRepealed?: boolean;
+  }) => {
+    const p = new URLSearchParams();
+    if (by.id) p.set('id', by.id);
+    if (by.lawId) p.set('law_id', by.lawId);
+    if (by.lawTitle) p.set('law_title', by.lawTitle);
+    if (by.articleNo) p.set('article_no', by.articleNo);
+    if (by.includeRepealed) p.set('include_repealed', '1');
+    return req<{ results: LegalArticle[]; count: number }>(`/legal/article?${p.toString()}`);
+  },
   legalLaw: (lawId: string) =>
     req<{ law: LegalLaw; regulations: LegalLaw[] }>(`/legal/laws/${encodeURIComponent(lawId)}`),
   legalLawArticles: (lawId: string, offset = 0, limit = 25) =>
@@ -756,6 +824,12 @@ export const api = {
     req<{ requests: RegulationRequest[]; pending: number }>(`/admin/regulation-requests?status=${status}`),
   decideRegulationRequest: (id: string, status: RegulationRequestStatus, admin_note?: string) =>
     req(`/admin/regulation-requests/${id}`, { method: 'PATCH', body: JSON.stringify({ status, admin_note }) }),
+
+  // تظليل النصّ في المحادثة — نداءٌ واحد للمحادثة كلّها عند فتحها
+  highlights: (conversationId: string) => req<{ highlights: Highlight[] }>(`/highlights/${conversationId}`),
+  addHighlight: (messageId: string, h: { start: number; end: number; text: string }) =>
+    req<Highlight>(`/highlights/${messageId}`, { method: 'POST', body: JSON.stringify(h) }),
+  deleteHighlight: (id: string) => req(`/highlights/${id}`, { method: 'DELETE' }),
 
   // التقييم
   getFeedback: (messageId: string) => req<{ feedback: { rating: number; comment?: string } | null }>(`/feedback/${messageId}`),

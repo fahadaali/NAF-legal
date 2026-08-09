@@ -256,6 +256,21 @@ a { color: var(--primary); }
 
 .citations { margin-top: 12px; font-size: 0.875rem; color: var(--muted-foreground); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .citation-chip { background: var(--muted); border: 1px solid var(--border); padding: 4px 8px; border-radius: var(--radius-lg); }
+/* المصدر الذي يُفتح زرٌّ لا شارة: يُبلَغ بالمفاتيح، وله حلقة تركيز ظاهرة،
+   ويقول بمظهره أن خلفه شيئاً. والذي لا يُفتح — استشهادٌ قديم بلا معرّف —
+   يبقى شارةً صمّاء ولا يَعِد بما لا يفعل. */
+.citation-chip.is-open {
+  color: var(--foreground); font-family: inherit; font-size: inherit;
+  transition: border-color 0.15s ease-out, color 0.15s ease-out;
+}
+.citation-chip.is-open:hover { border-color: var(--primary); color: var(--primary); }
+
+/* سطرُ الحال داخل نقاط الانتظار: «يبحث في المصادر…» و«جارٍ التوليد». */
+.typing-note {
+  font-size: var(--text-sm); color: var(--muted-foreground);
+  margin-inline-end: var(--space-2);
+  display: inline-flex; align-items: center; gap: var(--space-2);
+}
 .clarify-note {
   background: var(--primary-soft); border: 1px solid var(--primary);
   color: var(--foreground); border-radius: var(--radius-lg); padding: 4px 12px; font-size: 0.875rem; margin-top: 8px; display: inline-block;
@@ -291,6 +306,51 @@ a { color: var(--primary); }
 .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
 .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+
+/* ══ تحديد النصّ في المحادثة وتظليله ══
+
+   نصُّ الرسالة يُحدَّد كأي نصّ — والتصريح هنا ليس زائداً: قشرةُ التطبيق على
+   الجوال وبعضُ إعدادات المتصفّح تمنع التحديد داخل مناطق التمرير افتراضاً،
+   فيقرأ المحامي أن رسائل المحادثة وحدها لا تُنسخ. */
+.msg-text { user-select: text; -webkit-user-select: text; }
+
+/* التظليل علامةُ قارئٍ لا حالُ مستند.
+   و`--accent` هو رمز الإبراز المسجَّل — CLAUDE.md §٦: «الإبراز تأكيد لا
+   زينة» — ويظهر فوق سطحَي الفقاعتين في الوضعين: `--card` لفقاعة المساعد
+   و`--primary-soft` لفقاعة المستخدم. ولا يؤخذ من رموز الحالات:
+   `--warning-soft` تحته مباشرةً تنبيهُ «غير موجود في قاعدة المعرفة»،
+   فتظليلُ جملةٍ بلونه يُقرأ حكماً على الجملة لا علامةَ قارئ.
+
+   والنصّ يبقى `--foreground` ولا يأخذ `--accent-foreground`: قياساً لا
+   تفضيلاً. الثاني يعطي ٨٫٠ في الفاتح و٤٫٥١ في الداكن — على حدّ AA بالضبط
+   لنصٍّ بحجم المتن — والأوّل يعطي ٩٫٧٦ و٩٫٤٧. وهو أصدق شكلاً أيضاً: قلمُ
+   التظليل يضع لوناً تحت الحرف ولا يغيّر لون الحرف.
+
+   ولا خطَّ سفليّ تحته: العربية ذات نوازل، والخطّ يقطعها. */
+.msg-highlight {
+  background: var(--accent);
+  color: var(--foreground);
+  border-radius: var(--radius-sm);
+  /* حشوةٌ أفقية وحدها: الرأسية تُزيح أسطر الفقرة بعضها عن بعض. */
+  padding-inline: var(--space-1);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* شريط التحديد — عند ما حُدِّد، ثابتٌ في النافذة.
+   موضعُه محسوبٌ في `SelectionToolbar` من `getBoundingClientRect`، وهي تقيس
+   من حافّة النافذة اليسرى في الاتجاهين معاً — فـ`left` هنا قياسٌ لا اختيارُ
+   جهة، و`inset-inline-start` مكانها تضع الشريط في الجهة المقابلة عند العربية.
+   ويلتفّ ولا يخرج: أربعة أزرار عربية لا تسع سطراً عند ٣٧٥. */
+.selection-toolbar {
+  position: fixed; z-index: 120;
+  display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1);
+  max-width: calc(100vw - var(--space-4));
+  background: var(--popover); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+}
+.selection-toolbar .btn-sm { padding: var(--space-1) var(--space-2); background: none; border-color: transparent; }
+.selection-toolbar .btn-sm:hover { background: var(--muted); transform: none; }
 
 /* ── منطقة الإدخال ── */
 .composer {
@@ -488,6 +548,14 @@ a { color: var(--primary); }
   margin: 0; padding: 20px 24px; white-space: pre-wrap; word-break: break-word; user-select: text;
   font-family: var(--font-sans); font-size: 1rem; color: var(--foreground);
 }
+
+/* نافذة المصدر — تأتي بعد `.modal-card` عمداً: تلك تفرض `height` ثابتاً
+   لعارض المستندات، وهذه تُلغيه. وقاعدتان بالوزن نفسه تحسمهما الأخيرة. */
+.modal-card.source-card { height: auto; max-height: min(86vh, 900px); width: min(46rem, 96vw); }
+.source-body { padding: var(--space-4); }
+.source-body .law-head { margin-top: 0; }
+.source-body .legal-article:last-child { border-bottom: 0; }
+.source-body .legal-article:first-of-type { padding-top: 0; }
 
 /* نافذة الإدخال الأولي */
 .modal-card.intake { height: auto; max-height: 92vh; width: min(680px, 96vw); }
