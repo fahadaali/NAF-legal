@@ -1664,6 +1664,166 @@ await check('٢١ · والاستشهاد يحمل نسخة النصّ لا رق
   assert.match(prompts, /بصيغتها بعد/, 'البرومبت لا يُلزم بنقل سطر الإسناد');
 });
 
+// ═══ ٢٢) ردُّ دفعة: صورةٌ قبل الكتابة، وخطّةٌ قبل التنفيذ ═══
+//
+// الاستيراد يكتب فوق ما كان، فدفعةٌ معطوبة تُتلف نصّاً صحيحاً. والردُّ نطاقُه
+// نظامٌ في دفعة — لا القاعدة كلَّها كما تفعل النسخة الاحتياطية.
+
+const R1 = [
+  line({ id: 'ردّ/1', law_id: 'revert-a', law_name: 'نظام الردّ', doc_type: 'نظام', article_no: 1,
+    text: 'النصُّ الأوّل للمادة الأولى كما صدر في الجريدة الرسمية.',
+    embed_text: 'نظام الردّ — المادة 1 — النصّ الأوّل.', retrieval_status: 'نافذ',
+    text_versions: [{ seq: 0, text: 'النصُّ الأوّل للمادة الأولى كما صدر في الجريدة الرسمية.', label: 'الأصل', current: true }] }),
+  line({ id: 'ردّ/2', law_id: 'revert-a', law_name: 'نظام الردّ', doc_type: 'نظام', article_no: 2,
+    text: 'النصُّ الأوّل للمادة الثانية.', embed_text: 'نظام الردّ — المادة 2.', retrieval_status: 'نافذ' }),
+  line({ id: 'آخر/1', law_id: 'revert-b', law_name: 'نظامٌ آخر', doc_type: 'نظام', article_no: 1,
+    text: 'مادةٌ في نظامٍ آخر حملتها الدفعتان معاً.', embed_text: 'نظامٌ آخر — المادة 1.', retrieval_status: 'نافذ' }),
+];
+await lib.upsertLegalChunks(env, lib.parseJsonl(R1.join('\n')).rows, { importId: 'imp-r1', batchId: 'batch-r1' });
+// قرارُ مراجعةٍ وقع **قبل** الدفعة الثانية — الصورة تحمله، فيعود بردّها.
+await lib.reviewChunk(env, 'ردّ/2', 'approve', 'مراجعٌ قديم');
+
+const R2 = [
+  line({ id: 'ردّ/1', law_id: 'revert-a', law_name: 'نظام الردّ', doc_type: 'نظام', article_no: 1,
+    text: 'نصٌّ ثانٍ معطوب حلَّ محلَّ الأوّل.', embed_text: 'نظام الردّ — المادة 1 — معطوب.', retrieval_status: 'نافذ' }),
+  line({ id: 'ردّ/3', law_id: 'revert-a', law_name: 'نظام الردّ', doc_type: 'نظام', article_no: 3,
+    text: 'مادةٌ أدرجتها الدفعة الثانية ولم تكن قبلها.', embed_text: 'نظام الردّ — المادة 3.', retrieval_status: 'نافذ' }),
+  line({ id: 'آخر/1', law_id: 'revert-b', law_name: 'نظامٌ آخر', doc_type: 'نظام', article_no: 1,
+    text: 'نصٌّ جديد في النظام الآخر — لا يمسّه ردُّ نظامٍ غيره.', embed_text: 'نظامٌ آخر — المادة 1 — جديد.', retrieval_status: 'نافذ' }),
+];
+await lib.upsertLegalChunks(env, lib.parseJsonl(R2.join('\n')).rows, { importId: 'imp-r2', batchId: 'batch-r2' });
+await env.DB.prepare(
+  `INSERT INTO legal_imports (id, actor_id, filename, lines, inserted, updated, failed, created_at, batch_id)
+   VALUES (?,?,?,?,?,?,?,?,?)`
+).bind('imp-r2', 'مسؤول', 'revert-a.jsonl', 3, 1, 2, 0, Date.now(), 'batch-r2').run();
+// وقرارُ مراجعةٍ وقع **بعد** الدفعة على مادةٍ ستُردّ — يسقط بردّها، فيُعلَن.
+await lib.reviewChunk(env, 'ردّ/1', 'approve', 'مراجعٌ جديد');
+
+await check('٢٢ · الصورة تُؤخذ قبل أن تكتب الدفعة فوقها — صفّاً كاملاً لا حقولاً مختارة', () => {
+  const snaps = q("SELECT chunk_id FROM legal_snapshots WHERE batch_id = 'batch-r2' ORDER BY chunk_id")
+    .map((r) => r.chunk_id);
+  assert.deepEqual(snaps, ['آخر/1', 'ردّ/1'], 'صورةٌ لكل ما كان قائماً قبل الدفعة');
+  assert.ok(!snaps.includes('ردّ/3'), 'وما أدرجته الدفعة بلا صورة — وبغيابها يُعرف أنه مُدرَج');
+
+  const snap = JSON.parse(
+    q("SELECT row_json FROM legal_snapshots WHERE batch_id = 'batch-r2' AND chunk_id = 'ردّ/1'")[0].row_json
+  );
+  // الصفُّ كلُّه لا ثمانية أعمدة كما يحفظ سجلّ التحديث: من ردّ من ذاك استرجع
+  // النصّ وفقد الخطّ الزمني وحالَ الاسترجاع ونصَّ التضمين.
+  const cols = q('PRAGMA table_info(legal_chunks)').length;
+  assert.equal(Object.keys(snap).length, cols, `الصورة ناقصةُ الأعمدة: ${Object.keys(snap).length} من ${cols}`);
+  assert.match(snap.text, /النصُّ الأوّل/, 'الصورة لا تحمل النصّ الذي كان');
+  assert.ok(snap.text_versions, 'الصورة بلا خطٍّ زمني — وهو ما يفقده سجلّ التحديث');
+});
+
+await check('٢٢ · والخطّة تُعرض قبل أن تقع، ومعها قرارُ المراجعة الذي سيسقط', async () => {
+  const plan = await lib.planRevert(env, 'batch-r2', 'revert-a');
+  assert.deepEqual(plan.restore, ['ردّ/1'], 'ما يُستعاد');
+  assert.deepEqual(plan.remove, ['ردّ/3'], 'وما يُحذف');
+  // أخطرُ ما في الباب: الصورة تحمل حالَ المراجعة كما كانت، فردُّها يمحو قراراً
+  // وقع بعدها. صحيحٌ منطقاً، وخطيرٌ إن وقع صامتاً.
+  assert.deepEqual(plan.review_lost.map((r) => r.id), ['ردّ/1'], 'قرارُ مراجعةٍ يسقط ولم يُعلَن');
+  // وقرارٌ سبق الدفعة لا يُعدّ ساقطاً: الصورة تحمله فيعود كما كان.
+  assert.ok(!plan.review_lost.some((r) => r.id === 'ردّ/2'), 'قرارٌ سابقٌ للدفعة عُدَّ ساقطاً');
+
+  const other = await lib.planRevert(env, 'batch-r2', 'revert-b');
+  assert.deepEqual(other.restore, ['آخر/1'], 'ونظامٌ آخر في الدفعة له خطّتُه المستقلّة');
+});
+
+await check('٢٢ · والتنفيذ يردّ النصّ وحالَ المراجعة، ويُصفّر المتجه، ويحذف المُدرَج بنصِّه محفوظاً', async () => {
+  await lib.embedPending(env, 50);
+  assert.ok(q("SELECT embedded_at FROM legal_chunks WHERE id = 'ردّ/1'")[0].embedded_at, 'المادة غير مُضمَّنة قبل الردّ');
+
+  const res = await lib.revertLaw(env, 'batch-r2', 'revert-a', { actorId: 'مسؤول' });
+  assert.deepEqual(res, { restored: 1, removed: 1 });
+
+  const back = q("SELECT text, embedded_at, review_status, reviewed_by FROM legal_chunks WHERE id = 'ردّ/1'")[0];
+  assert.match(back.text, /النصُّ الأوّل/, 'النصّ لم يعد إلى ما كان');
+  // نصٌّ عاد ومتجهٌ لم يعد يطابقه أسوأ من غيابهما معاً.
+  assert.equal(back.embedded_at, null, 'المتجه لم يُصفَّر ليُعاد بناؤه على النصّ المستعاد');
+  assert.equal(back.review_status, 'pending', 'حالُ المراجعة لم تعد إلى ما قبل الدفعة كما أُعلن');
+  assert.ok(!back.reviewed_by, 'اسمُ مراجعٍ بقي على قرارٍ سقط');
+
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_chunks WHERE id = 'ردّ/3'")[0].n, 0, 'المُدرَج لم يُحذف');
+  const kept = q("SELECT text, origin FROM legal_chunk_versions WHERE chunk_id = 'ردّ/3'");
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].origin, 'deleted', 'ذهب المُدرَج بلا أثرٍ لنصِّه');
+});
+
+await check('٢٢ · ونظامٌ آخر حملته الدفعة لا يمسُّه ردُّ نظامٍ غيره', () => {
+  assert.match(
+    q("SELECT text FROM legal_chunks WHERE id = 'آخر/1'")[0].text,
+    /نصٌّ جديد في النظام الآخر/,
+    'ردُّ نظامٍ ردَّ معه نظاماً لم يُطلب'
+  );
+  // ومادةٌ لم تحملها الدفعة الثانية باقيةٌ بقرار مراجعتها السابق.
+  const untouched = q("SELECT review_status, reviewed_by FROM legal_chunks WHERE id = 'ردّ/2'")[0];
+  assert.equal(untouched.review_status, 'approved');
+  assert.equal(untouched.reviewed_by, 'مراجعٌ قديم');
+});
+
+await check('٢٢ · والدفعة المردودة تُقيَّد في سجلّها ولا تُحذف منه', async () => {
+  const imp = q("SELECT reverted_at, reverted_by FROM legal_imports WHERE batch_id = 'batch-r2'")[0];
+  assert.ok(imp.reverted_at, 'دفعةٌ رُدَّ منها تُقرأ في السجلّ كأنها قائمة بأثرها كلِّه');
+  assert.equal(imp.reverted_by, 'مسؤول', 'ولا يُعرف من ردَّها');
+  const listed = (await lib.listRevertableBatches(env)).find((b) => b.batch_id === 'batch-r2');
+  assert.ok(listed, 'وصورُها باقية: ردُّ نظامٍ لا يمنع ردَّ ما معه');
+  assert.ok(listed.reverted_at, 'وقائمة الدفعات لا تُظهر أنها رُدَّت');
+  assert.equal(listed.filename, 'revert-a.jsonl');
+  assert.ok(listed.laws.length >= 2, 'وقائمةُ أنظمتها ناقصة: ' + JSON.stringify(listed.laws));
+});
+
+await check('٢٢ · والصور تُقلَّم إلى أحدث ثلاث دفعات — تخزينٌ بلا حدٍّ ثمنٌ بلا مقابل', async () => {
+  assert.equal(lib.SNAPSHOT_KEEP, 3);
+  for (const b of ['batch-r3', 'batch-r4', 'batch-r5']) {
+    await lib.upsertLegalChunks(env, lib.parseJsonl(
+      line({ id: 'ردّ/2', law_id: 'revert-a', text: `تغييرٌ صغير في ${b}.`, embed_text: `ردّ 2 — ${b}.`,
+        retrieval_status: 'نافذ' })
+    ).rows, { importId: b, batchId: b });
+  }
+  const left = q('SELECT DISTINCT batch_id FROM legal_snapshots ORDER BY batch_id').map((r) => r.batch_id);
+  assert.deepEqual(left, ['batch-r3', 'batch-r4', 'batch-r5'], 'التقليم أبقى غير الثلاث الأحدث: ' + left.join('، '));
+  // ومن أراد ما هو أقدم فمصدرُه النسخة الاحتياطية لا هذا الجدول.
+  const wf = readFileSync(path.join(ROOT, '.github', 'workflows', 'restore-backup.yml'), 'utf8');
+  assert.match(wf, /dry_run/, 'سير الاستعادة بلا قراءةٍ قبل الكتابة');
+  assert.match(wf, /pre-restore/, 'الاستعادة بلا نسخةٍ للحال القائمة قبلها');
+});
+
+await check('٢٢ · ودفعتان في المللي ثانية نفسها: يُقلَّم الأقدم لا الأحدث', async () => {
+  // `at` مللي ثانية، ورفعٌ آليّ متتابع يضع دفعتين فيها. والترتيب بالوقت وحده
+  // يجعل SQLite تختار بالقرعة، فتذهب صورُ **أحدث** دفعة — وهي أوّل ما يُطلب
+  // ردُّه. والفاصل `rowid`: الأحدثُ كتابةً هي الأحدث وقوعاً.
+  const real = Date.now;
+  const frozen = real() + 60_000;
+  Date.now = () => frozen;
+  try {
+    for (const b of ['tie-1', 'tie-2', 'tie-3', 'tie-4', 'tie-5']) {
+      await lib.upsertLegalChunks(env, lib.parseJsonl(
+        line({ id: 'تساوٍ/1', law_id: 'tie', text: `نصٌّ كتبته الدفعة ${b}.`, embed_text: `تساوٍ — ${b}.`,
+          retrieval_status: 'نافذ' })
+      ).rows, { importId: b, batchId: b });
+    }
+  } finally {
+    Date.now = real;
+  }
+  const ats = q('SELECT DISTINCT at FROM legal_snapshots').length;
+  assert.equal(ats, 1, 'الأوقات لم تتساوَ، فالفحص لا يُثبت شيئاً');
+  const left = q('SELECT DISTINCT batch_id FROM legal_snapshots ORDER BY batch_id').map((r) => r.batch_id);
+  assert.deepEqual(left, ['tie-3', 'tie-4', 'tie-5'], 'التقليم أسقط الأحدث عند تساوي الوقت: ' + left.join('، '));
+});
+
+await check('٢٢ · والردُّ يُعرض ولا يقع إلا بطلبٍ صريح، ويُقيَّد بما أسقط', () => {
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  const body = routes.slice(routes.indexOf("app.post('/revert'"), routes.indexOf("app.get('/stats'"));
+  assert.match(body, /requireAdmin/, 'الردّ بلا حارس');
+  assert.match(body, /if \(!c\.req\.query\('apply'\)\) return c\.json\(\{ ok: true, applied: false, plan \}\)/,
+    'الردّ يقع بلا عرضٍ سابق');
+  assert.match(body, /audit\(c, 'legal\.revert'/, 'الردّ بلا قيدٍ في سجلّ التدقيق');
+  assert.match(body, /review_lost: plan\.review_lost\.map/, 'القيد بلا ما أسقطه من قرارات مراجعة');
+  assert.match(body, /embedPending/, 'ما صُفِّر متجهُه يبقى بلا فهرسةٍ إلى الليلة القادمة');
+  assert.match(routes, /app\.get\('\/revertable', requireAdmin/, 'لا مسار يعرض الدفعات القابلة للردّ');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

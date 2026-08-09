@@ -23,6 +23,9 @@ import {
   listReviewQueueIds,
   listBatchOrphans,
   deleteOrphans,
+  listRevertableBatches,
+  planRevert,
+  revertLaw,
   listReviewAudit,
   listCaptureBatches,
   reviewChunk,
@@ -228,6 +231,46 @@ app.post('/finalize', requireAdmin, async (c) => {
     .run();
 
   return c.json({ ok: true, applied: true, deleted, orphans });
+});
+
+/**
+ * الدفعات التي بقيت صورُها — وما تمسّه كلٌّ من أنظمة.
+ *
+ * وهي ثلاثٌ لا أكثر: الصور تُقلَّم عند كل دفعة جديدة، ومن أراد ما هو أقدم
+ * فمصدرُه النسخة الاحتياطية لا هذا المسار.
+ */
+app.get('/revertable', requireAdmin, async (c) => c.json({ batches: await listRevertableBatches(c.env) }));
+
+/**
+ * التراجع عن دفعةٍ **في نطاق نظام** — يُعرض قبل أن يقع.
+ *
+ * النطاق نظامٌ واحد لا الدفعة كلَّها: «أعِد نظام العمل إلى ما كان قبل دفعة
+ * كذا» جملةٌ تُقرأ ويُقدَّر أثرها، و«أعِد الدفعة» تمسّ ما لا يعلمه صاحب القرار.
+ *
+ * وبلا `?apply=1` يُردّ الخطّة وحدها: كم يُستعاد، وكم يُحذف، وأيُّ قرارات
+ * مراجعةٍ ستسقط. **وتلك الأخيرة أخطر ما فيه** — الصورة تحمل حالَ المراجعة كما
+ * كانت قبل الدفعة، فردُّها يردّ معها قراراتٍ وقعت بعدها. تُعرض ليقرّر صاحبُ
+ * القرار وهو يعلم، لا ليكتشفها مراجعٌ فقد عملَ يومه.
+ */
+app.post('/revert', requireAdmin, async (c) => {
+  const batchId = c.req.query('batch') ?? '';
+  const lawId = c.req.query('law_id') ?? '';
+  if (!batchId || !lawId) return c.json({ error: 'معرّف الدفعة والنظام مطلوبان' }, 400);
+
+  const plan = await planRevert(c.env, batchId, lawId);
+  if (!plan.restore.length && !plan.remove.length) {
+    return c.json({ ok: false, applied: false, plan, error: 'لا صورة لهذا النظام في هذه الدفعة' }, 404);
+  }
+  if (!c.req.query('apply')) return c.json({ ok: true, applied: false, plan });
+
+  const result = await revertLaw(c.env, batchId, lawId, { actorId: c.get('user').id });
+  await audit(c, 'legal.revert', `${batchId}:${lawId}`, {
+    ...result,
+    review_lost: plan.review_lost.map((r) => r.id),
+  });
+  // ما استُعيد صُفِّر متجهُه، فيُصرَّف في الحال لا في الليلة القادمة.
+  c.executionCtx.waitUntil(embedPending(c.env, IMPORT_EMBED_BUDGET).then(() => {}));
+  return c.json({ ok: true, applied: true, ...result, plan });
 });
 
 app.get('/stats', requireAdmin, async (c) => c.json(await legalStats(c.env)));

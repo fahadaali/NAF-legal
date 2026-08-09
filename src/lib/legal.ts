@@ -1315,6 +1315,9 @@ export async function upsertLegalChunks(
   // الكتابة فوق نصٍّ نظاميّ بلا أثرٍ له تُفقد ما كان معمولاً به وقت الواقعة.
   const existing = await fetchExisting(env, rows.map((r) => r.id));
   const archivedHashes = await fetchArchivedHashes(env, rows.map((r) => r.id));
+
+  // الصورة قبل الكتابة لا بعدها — وهي كلُّ ما يجعل التراجع ممكناً.
+  if (opts.batchId) await snapshotBatch(env, opts.batchId, rows.map((r) => r.id));
   let archived = 0;
   let superseded = 0;
   const archiveStatements = [];
@@ -1442,6 +1445,241 @@ export async function upsertLegalChunks(
   }
 
   return { inserted: rows.length - updated, updated, archived, superseded };
+}
+
+/**
+ * كم دفعةً تُحفظ صورُها.
+ *
+ * ثلاثٌ لا أكثر: تخزينٌ بلا حدٍّ ثمنٌ بلا مقابل، ومن أراد ما هو أقدم فمصدرُه
+ * النسخة الاحتياطية. والثلاث تكفي لما تُبنى له الاستعادة أصلاً — دفعةٌ رُفعت
+ * وتبيّن عطبُها قبل أن تليها دفعتان.
+ */
+export const SNAPSHOT_KEEP = 3;
+
+/**
+ * صورةُ الصفوف قبل أن تكتب الدفعة فوقها.
+ *
+ * الصفُّ كاملاً نصّاً واحداً — لا أعمدةً مفكَّكة: عمودٌ لكل حقل يعني هجرةً
+ * جديدة مع كل حقلٍ يُضاف إلى المخطط، وهذا ما يجعل الاستعادة تشيخ صامتةً
+ * فتردّ مادةً ناقصةَ الحقول التي وُلدت بعدها.
+ *
+ * وما لا صورة له في الدفعة مادةٌ **أدرجتها** الدفعة — تُعرف بغياب صفِّها،
+ * ولا تحتاج علامةً ثانية.
+ */
+async function snapshotBatch(env: Env, batchId: string, ids: string[]): Promise<number> {
+  const at = Date.now();
+  let taken = 0;
+  for (let i = 0; i < ids.length; i += DB_BATCH) {
+    const slice = ids.slice(i, i + DB_BATCH);
+    const marks = slice.map(() => '?').join(',');
+    const rows = await env.DB.prepare(`SELECT * FROM legal_chunks WHERE id IN (${marks})`)
+      .bind(...slice)
+      .all<Record<string, unknown>>();
+    const found = rows.results ?? [];
+    if (!found.length) continue;
+    await env.DB.batch(
+      found.map((r) =>
+        env.DB.prepare(
+          `INSERT INTO legal_snapshots (batch_id, chunk_id, law_id, row_json, at) VALUES (?,?,?,?,?)
+           ON CONFLICT(batch_id, chunk_id) DO NOTHING`
+        ).bind(batchId, String(r.id), (r.law_id as string) ?? null, JSON.stringify(r), at)
+      )
+    );
+    taken += found.length;
+  }
+  await pruneSnapshots(env);
+  return taken;
+}
+
+/**
+ * يُبقي صور أحدث الدفعات ويُسقط ما قبلها.
+ *
+ * والترتيب بالوقت ثم بترتيب الكتابة: دفعتان في المللي ثانية نفسها — وذلك يقع
+ * في الفحص وفي رفعٍ آليّ متتابع — تتساويان في `at`، فلولا `rowid` لَسقطت
+ * إحداهما بالقرعة. والأحدثُ كتابةً هي الأحدث وقوعاً.
+ */
+async function pruneSnapshots(env: Env, keep = SNAPSHOT_KEEP): Promise<void> {
+  await env.DB.prepare(
+    `DELETE FROM legal_snapshots WHERE batch_id NOT IN (
+       SELECT batch_id FROM legal_snapshots
+       GROUP BY batch_id ORDER BY MAX(at) DESC, MAX(rowid) DESC LIMIT ?
+     )`
+  )
+    .bind(keep)
+    .run();
+}
+
+/** دفعةٌ يمكن التراجع عنها، وما تمسّه من أنظمة. */
+export interface RevertableBatch {
+  batch_id: string;
+  filename: string | null;
+  file_sha256: string | null;
+  created_at: number;
+  reverted_at: number | null;
+  laws: { law_id: string | null; law_title: string | null; updated: number; inserted: number }[];
+}
+
+/**
+ * الدفعات التي بقيت صورُها — وما مسّته كلٌّ من أنظمة.
+ *
+ * والعدّان مفصولان لأن أثرهما في التراجع مختلف: المحدَّث يُردّ إلى صورته،
+ * والمُدرَج يُحذف. ومن يرى «٣٠٠ محدَّثة و٤ مُدرَجة» يعرف ما سيقع قبل أن يقع.
+ */
+export async function listRevertableBatches(env: Env): Promise<RevertableBatch[]> {
+  const batches = await env.DB.prepare(
+    `SELECT s.batch_id,
+            MAX(i.filename) AS filename, MAX(i.file_sha256) AS file_sha256,
+            MIN(s.at) AS created_at, MAX(i.reverted_at) AS reverted_at
+     FROM legal_snapshots s LEFT JOIN legal_imports i ON i.batch_id = s.batch_id
+     GROUP BY s.batch_id ORDER BY created_at DESC, MIN(s.rowid) DESC`
+  ).all<{
+    batch_id: string; filename: string | null; file_sha256: string | null;
+    created_at: number; reverted_at: number | null;
+  }>();
+
+  const out: RevertableBatch[] = [];
+  for (const b of batches.results ?? []) {
+    const laws = await env.DB.prepare(
+      `SELECT b.law_id,
+              MAX(c.law_title) AS law_title,
+              SUM(CASE WHEN s.chunk_id IS NOT NULL THEN 1 ELSE 0 END) AS updated,
+              SUM(CASE WHEN s.chunk_id IS NULL THEN 1 ELSE 0 END) AS inserted
+       FROM legal_batch_ids b
+       LEFT JOIN legal_snapshots s ON s.batch_id = b.batch_id AND s.chunk_id = b.chunk_id
+       LEFT JOIN legal_chunks c ON c.id = b.chunk_id
+       WHERE b.batch_id = ?
+       GROUP BY b.law_id ORDER BY b.law_id`
+    )
+      .bind(b.batch_id)
+      .all<{ law_id: string | null; law_title: string | null; updated: number; inserted: number }>();
+    out.push({ ...b, laws: laws.results ?? [] });
+  }
+  return out;
+}
+
+export interface RevertPlan {
+  batch_id: string;
+  law_id: string;
+  /** يُردّ إلى صورته قبل الدفعة. */
+  restore: string[];
+  /** أدرجته الدفعة، فيُحذف بردّها. */
+  remove: string[];
+  /** قرارُ مراجعةٍ وقع بعد الدفعة على مادةٍ ستُردّ — يسقط معها. */
+  review_lost: { id: string; review_status: string; reviewed_at: number | null }[];
+}
+
+/**
+ * ما سيقع لو رُدَّت الدفعة في نطاق نظام — يُعرض قبل أن يقع.
+ *
+ * **والنطاق نظامٌ واحد لا الدفعة كلَّها.** «أعِد نظام العمل إلى ما كان» جملةٌ
+ * تُقرأ وتُفهم ويُقدَّر أثرها، و«أعِد الدفعة» تمسّ ما لا يعلمه صاحب القرار.
+ *
+ * و`review_lost` يُحصى ويُعرض لأنه أخطر ما في الباب: الصورة تحمل حالَ المراجعة
+ * كما كانت قبل الدفعة، فردُّها يردّ معها قراراتٍ وقعت بعدها. وذلك صحيحٌ
+ * منطقاً — الصفُّ يعود إلى لحظةٍ بعينها — وخطيرٌ إن وقع صامتاً: عملُ مراجعٍ
+ * يُمحى ولا يعلم أنه مُحي.
+ */
+export async function planRevert(env: Env, batchId: string, lawId: string): Promise<RevertPlan> {
+  const rows = await env.DB.prepare(
+    `SELECT b.chunk_id, s.chunk_id IS NOT NULL AS has_snapshot,
+            c.review_status, c.reviewed_at
+     FROM legal_batch_ids b
+     LEFT JOIN legal_snapshots s ON s.batch_id = b.batch_id AND s.chunk_id = b.chunk_id
+     LEFT JOIN legal_chunks c ON c.id = b.chunk_id
+     WHERE b.batch_id = ? AND b.law_id = ?
+     ORDER BY b.chunk_id`
+  )
+    .bind(batchId, lawId)
+    .all<{ chunk_id: string; has_snapshot: number; review_status: string | null; reviewed_at: number | null }>();
+
+  const batchAt = await env.DB.prepare('SELECT MIN(at) AS at FROM legal_snapshots WHERE batch_id = ?')
+    .bind(batchId)
+    .first<{ at: number | null }>();
+
+  const restore: string[] = [];
+  const remove: string[] = [];
+  const review_lost: RevertPlan['review_lost'] = [];
+  for (const r of rows.results ?? []) {
+    if (r.has_snapshot) {
+      restore.push(r.chunk_id);
+      // قرارٌ وقع بعد الدفعة: وقتُه بعد وقت أخذ الصورة.
+      if (r.reviewed_at && batchAt?.at && r.reviewed_at >= batchAt.at) {
+        review_lost.push({ id: r.chunk_id, review_status: r.review_status ?? '', reviewed_at: r.reviewed_at });
+      }
+    } else {
+      remove.push(r.chunk_id);
+    }
+  }
+  return { batch_id: batchId, law_id: lawId, restore, remove, review_lost };
+}
+
+/**
+ * يردّ نظاماً إلى ما كان عليه قبل دفعة.
+ *
+ * والصورة تُكتب صفّاً كاملاً لا حقولاً مختارة: كتابةُ بعض الحقول تترك مادةً
+ * نصفُها من قبل الدفعة ونصفُها من بعدها — وهي حالٌ لم تقع قطّ، ولا يعرف
+ * قارئُها أنها مركَّبة.
+ *
+ * وما أدرجته الدفعة يُحذف بنصِّه محفوظاً في سجلّ التحديث، كما يُحذف اليتيم.
+ */
+export async function revertLaw(
+  env: Env,
+  batchId: string,
+  lawId: string,
+  opts: { actorId?: string } = {}
+): Promise<{ restored: number; removed: number }> {
+  const plan = await planRevert(env, batchId, lawId);
+
+  let restored = 0;
+  for (let i = 0; i < plan.restore.length; i += DB_BATCH) {
+    const slice = plan.restore.slice(i, i + DB_BATCH);
+    const marks = slice.map(() => '?').join(',');
+    const snaps = await env.DB.prepare(
+      `SELECT chunk_id, row_json FROM legal_snapshots WHERE batch_id = ? AND chunk_id IN (${marks})`
+    )
+      .bind(batchId, ...slice)
+      .all<{ chunk_id: string; row_json: string }>();
+
+    const statements = [];
+    for (const s of snaps.results ?? []) {
+      let row: Record<string, unknown>;
+      try {
+        row = JSON.parse(s.row_json);
+      } catch {
+        continue; // صورةٌ لا تُقرأ لا تُردّ نصفَ مادة
+      }
+      // `seq` يبقى كما هو: عليه يقوم الفهرس اللفظي ومعرّف المتجه، وتغييرُه
+      // يقطع الفهرس عن صاحبه. و`embedded_at` يُصفَّر ليُعاد بناء المتجه على
+      // النصّ المستعاد — نصٌّ عاد ومتجهٌ لم يعد يطابقه أسوأ من غيابهما.
+      const cols = Object.keys(row).filter((k) => k !== 'seq' && k !== 'embedded_at');
+      const sets = [...cols.map((c) => `${c} = ?`), 'embedded_at = NULL'].join(', ');
+      statements.push(
+        env.DB.prepare(`UPDATE legal_chunks SET ${sets} WHERE id = ?`).bind(
+          ...cols.map((c) => row[c] ?? null),
+          s.chunk_id
+        )
+      );
+      restored++;
+    }
+    if (statements.length) await env.DB.batch(statements);
+  }
+
+  // والمُدرَج يُحذف كما يُحذف اليتيم: نصُّه إلى سجلّ التحديث، ثم متجهُه معه.
+  const removed = await deleteOrphans(env, plan.remove, { actorId: opts.actorId });
+
+  // ويُقيَّد في سجلّ الدفعات أنّ هذه الدفعة رُدَّ منها شيء، فلا تُقرأ لاحقاً
+  // كأنها قائمةٌ بأثرها كلِّه. والقيد على الدفعة لا على النظام — والتفصيل
+  // (أيُّ نظامٍ ومتى وبأيّ يد) في سجلّ التدقيق.
+  //
+  // وليس قفلاً: الدفعة تحمل أنظمةً، وردُّ أحدها لا يمنع ردَّ الآخر، وصورُها
+  // باقيةٌ حتى يُقلّمها ما بعدها.
+  if (restored || removed) {
+    await env.DB.prepare('UPDATE legal_imports SET reverted_at = ?, reverted_by = ? WHERE batch_id = ?')
+      .bind(Date.now(), opts.actorId ?? null, batchId)
+      .run();
+  }
+
+  return { restored, removed };
 }
 
 /** مادةٌ في القاعدة غابت عن دفعةٍ تامّة تحمل نظامها. */
