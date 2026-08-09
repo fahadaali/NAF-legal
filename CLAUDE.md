@@ -89,6 +89,12 @@ The reasons are technical, not aesthetic:
 - Screen readers announce them by unintended names
 - Directional emoji do not mirror in RTL
 
+**One exception, and it is narrow: third-party messaging surfaces.** Telegram, WhatsApp, SMS, Basecamp message boards and email bodies cannot render an SVG inline, so Lucide is not available there and the ban would leave those messages with no visual structure at all. Emoji are permitted in message bodies sent through such a channel — and nowhere else. Not in the web interface, not in a page the platform itself renders, not in a PDF it generates.
+
+The technical reasons for the ban still hold on those surfaces; they are simply unavoidable there. So keep the set small and conventional, never carry meaning by emoji alone, and make sure the sentence reads correctly with every emoji stripped out. A message that becomes ambiguous without its icons is written wrong.
+
+**One named exception inside an interface, and it is the only one: `👋` in the home greeting of `naf-id`.** It was chosen deliberately over `HandHeart` — an aesthetic call, made with the technical costs above in view, not in ignorance of them. It is registered in `naf-icons.md` with its limits, and those limits are the point: one screen, no skin-tone modifier, no meaning carried, end of the line rather than the start. It does not license a second emoji anywhere. A new one is a new decision, registered the same way, with its own written limits — and the burden is on the case for it, not against the ban.
+
 **Meaning comes from `naf-icons.md`.** One meaning, one icon, across all five platforms. Never pick an icon for a concept already mapped there.
 
 When you meet an emoji or a concept whose meaning is not in the map: do not invent a match, and do not use the nearest icon by shape. Show the surrounding context, ask for the decision, then add the approved mapping to `naf-icons.md` in the registry **before** applying it.
@@ -154,6 +160,10 @@ bg-primary  text-primary-foreground  hover:bg-primary/90
 **Elevated cards.** A card floating on `--surface-deep` needs more depth than the ordinary shadow scale carries. Use `--shadow-elevated`; do not write an `rgba` shadow to get there.
 
 **Soft state backgrounds.** `--primary-soft`, `--destructive-soft`, `--success-soft`, `--warning-soft`, `--info-soft` and `--secondary-soft` are derived from their base token by `color-mix` into the card surface, so they follow both modes from a single definition. Use them for status badges and quiet alerts. Never define your own soft value — a hand-picked tint is the exact drift that survives a palette change and then clashes with it.
+
+**Selection and highlight are two states, not one colour.** Selection is what the pointer is over right now and it goes when the hand lifts; a highlight is a mark the reader leaves behind. Use `--selection` with `--selection-foreground` for `::selection`, and `--highlight` with `--highlight-foreground` for a saved mark. Never reach for a `--*-soft` token for either: a platform that set selection to `--primary-soft` found it was also the user-bubble background, so readers selected their own text and saw nothing — colour drawn on the same colour.
+
+Both are opaque, and that is deliberate. A translucent selection composites differently over a card, a tinted bubble and a yellow highlight, so its text contrast cannot be guaranteed in all three; an opaque one covers what it sits on, stays legible everywhere, and the highlight reappears the moment the selection clears. Their hues are held apart — highlighter yellow against selection blue — because the difference between them cannot be carried by lightness alone.
 
 **Appearance follows the reader, and the reader may override it.** Both modes must work, and a platform that offers a switch uses the registered one: three states — system, light, dark — with system as the default, the choice persisted, and `.dark` toggled on the root element. Two states is a trap: a reader whose system is light and who picked light has no way back to "follow the system" when it changes. The terms are in `naf-terms.md` and the icons in `naf-icons.md`; the component is `naf-theme-toggle`.
 
