@@ -34,6 +34,25 @@ function pad(value: number): string {
   return String(value).padStart(2, "0")
 }
 
+/**
+ * يعزل قيمة اتجاهياً داخل نص عربي.
+ *
+ * للسلاسل الخام التي لا يصلح فيها <bdi>: رسائل confirm ونصوص الحالة
+ * والتنبيهات. في JSX استعمل <bdi> لا هذه.
+ *
+ * المحرفان U+2068 (عزل أول) و U+2069 (إنهاء العزل).
+ *
+ * القاعدة توجب عزل كل رقم وتاريخ ومبلغ، و<bdi> يغطّي JSX وحده — فبدون
+ * هذه الدالة تبقى كل رسالة فيها رقم منحرفة.
+ *
+ * @example
+ *   setMsg(`تم حذف ${isolate(count)} عنصراً`)
+ *   confirm(`حذف ${isolate(n)} عنصراً نهائياً؟`)
+ */
+export function isolate(value: string | number): string {
+  return `\u2068${value}\u2069`
+}
+
 /** المبلغ بلا رمز العملة: 12400 -> "12,400.00" */
 export function formatAmount(value: number): string {
   return AMOUNT_FORMAT.format(value)
@@ -62,11 +81,23 @@ export function formatDualDate(value: Date | string | number): string {
   return `${formatDate(value)} (${formatHijriDate(value)})`
 }
 
+/**
+ * الشهر والسنة لعناوين التقويم ومنتقي التاريخ: "2026/07".
+ *
+ * مشتقّة من الصيغة الميلادية المعتمدة بحذف اليوم — ليست صيغة جديدة.
+ * أسماء الأشهر العربية ليست صيغة معتمدة لعرض قيمة تاريخ.
+ */
+export function formatMonth(value: Date | string | number): string {
+  const date = toDate(value)
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}`
+}
+
 /** نظام ٢٤ ساعة: "14:30" */
 export function formatTime(value: Date | string | number): string {
   const date = toDate(value)
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
+
 
 /**
  * عنوان تجميع قائمة زمنية: "اليوم" · "أمس" · "2026/07/26"
@@ -95,4 +126,9 @@ export function formatPhone(value: string): string {
   const digits = value.replace(/\D/g, "").replace(/^00966|^966|^0/, "")
   if (digits.length !== 9) return value
   return `+966 ${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5)}`
+}
+
+/** الميلادي مع الوقت: "2026/07/26 14:30" */
+export function formatDateTime(value: Date | string | number): string {
+  return `${formatDate(value)} ${formatTime(value)}`
 }
