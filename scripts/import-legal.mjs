@@ -19,6 +19,8 @@
 //   --correction        وسمُ «تصحيح بيانات»: الفرق عن الاستيراد السابق خطأُ
 //                       سحبٍ لا تعديلٌ نظاميّ، فلا يقول السجلّ إن النظام
 //                       عُدِّل اليوم وهو عُدِّل بمرسومه قبل سنوات
+//   --check-only        مقارنةٌ بلا كتابة: يُقال ما سيتغيّر ثم يقف
+//   --no-preview        تخطّي المقارنة قبل الكتابة (لأتمتةٍ راجعت ملفَّها)
 //   --prune             حذفُ اليتيم بعد آخر جزء: ما بقي في القاعدة من أنظمة
 //                       هذه الدفعة ولم يرد فيها. ولا يقع بغيرها — الملف
 //                       يُرفع مقسَّماً، وقياسُ الزائد على جزءٍ منه محوُ نظام
@@ -58,6 +60,8 @@ const partial = args.has('partial');
 const buildEmbedText = args.has('build-embed-text');
 const correction = args.has('correction');
 const prune = args.has('prune');
+const checkOnly = args.has('check-only');
+const preview = !args.has('no-preview');
 // معرّفٌ يجمع أجزاء الملف الواحد. بلا هذا لا تُعرف الدفعة التامّة عند الختام.
 const batchId = randomUUID();
 
@@ -98,7 +102,49 @@ console.log(
 console.log(`بصمة الملف: ${sha256}`);
 console.log(`الوجهة: ${endpoint}\n`);
 
+/**
+ * المقارنة قبل الكتابة — الخطوة الأرخص وأنفعُ من أيّ تراجع.
+ *
+ * التراجع يُصلح بعد أن يقع، والمقارنة تمنع الوقوع: ملفٌّ ينقصه نصفُ نظام
+ * يظهر هنا «٢٥٠٠ غائبة» قبل أن يُكتب حرفٌ واحد. وهي تجري على الملف كلِّه لا
+ * على جزئه الأوّل — نصفُ ملفٍ لا يُقاس عليه غيابُ شيء.
+ */
+async function comparefirst() {
+  const res = await fetch(`${endpoint}&dry_run=1`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-ndjson', cookie },
+    body: lines.join('\n'),
+  });
+  const r = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error(`\nالمقارنة رُفضت (${res.status}): ${r.error ?? ''}`);
+    for (const g of r.error_summary ?? []) console.error(`  ${g.count} سطراً: ${g.error}`);
+    process.exit(1);
+  }
+  const d = r.diff ?? {};
+  console.log('── المقارنة قبل الكتابة ──');
+  console.log(`جديد ${d.added ?? 0} · متغيّر ${d.changed ?? 0} · بلا تغيير ${d.unchanged ?? 0} · غائب عن الملف ${d.missing ?? 0}`);
+  if (r.needs_review) console.log(`${r.needs_review} مادةً موسومة للمراجعة`);
+  if (r.amendment_pending) console.log(`${r.amendment_pending} مادةً نصُّها أصليّ وعليها تعديل`);
+  // الغائب يُقال بصوتٍ عالٍ: هو العلامة الوحيدة على ملفٍ ناقص قبل أن يُكتب.
+  if (d.missing) {
+    console.log(`\nتنبيه: ${d.missing} مادةً في القاعدة لأنظمة هذا الملف ولا وجود لها فيه.`);
+    console.log('  إن كان الملف تامّاً فهذا ما حُذف من المصدر — يُعالَج بـ--prune عند الختام.');
+    console.log('  وإن كان جزئياً فأنت على وشك رفعِ نصفِ نظام.');
+  }
+  console.log('');
+  return d;
+}
+
 const totals = { inserted: 0, updated: 0, failed: 0, pending: 0, withheld: 0, amendmentPending: 0, superseded: 0 };
+
+if (preview || checkOnly) {
+  await comparefirst();
+  if (checkOnly) {
+    console.log('مقارنةٌ بلا كتابة — لم يُكتب شيء.');
+    process.exit(0);
+  }
+}
 
 for (let start = 0; start < lines.length; start += batchSize) {
   const slice = lines.slice(start, start + batchSize);
