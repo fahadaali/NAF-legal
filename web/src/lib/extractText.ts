@@ -38,7 +38,7 @@ const MARK = /[\u064B-\u0655\u0670\u06D6-\u06ED]/;
  * والوحدة هي الرسم لا الحرف، لأن ما يملك موضعاً على الصفحة هو الرسم. وفكُّ
  * الرابطة يعطي حروفاً بلا مواضع، فترتيبُها بالموضع عبثٌ بترتيبٍ صحيح.
  */
-interface Unit { s: string; x: number; }
+interface Unit { s: string; x: number; r: number; size: number; }
 
 /** فرقٌ دون هذا في الإحداثيّ هو تطابقٌ — حوافُّ المربّعات تُقاس لا تُقارَب. */
 const EPS = 1e-6;
@@ -98,12 +98,14 @@ function isZeroWidth(span: [number, number] | null, c: string): boolean {
  * مطابقةٌ **حرفاً بحرف** في الأوّل، ورقمُ القضية `2291/ت/1447` والبريد
  * والهاتف والمبلغ مطابقةٌ في الثاني — وكلُّها كانت مبعثرة قبل هذا.
  */
-function toLogical(units: Unit[], rtlPage: boolean): string {
-  if (!rtlPage) return [...units].sort((a, b) => a.x - b.x).map((u) => u.s).join('');
-
-  /* ولا تُبدَّل مواضعُ الحروف داخل الرسم الواحد — انظر `isZeroWidth` ونسبةَ
-     التتمّات أدناه. الرسمُ وحدَه يُرتَّب بالإحداثيّ، وحروفُه تبقى كما نُسبت. */
-  const sorted = [...units].sort((a, b) => b.x - a.x);
+/**
+ * يُخرج مقطعاً واحداً — خليّةً أو سطراً — بترتيبه المنطقيّ.
+ *
+ * المقطعُ مرتَّبٌ بالإحداثيّ سلفاً، وما يبقى هو ردُّ الأرقام واللاتينية إلى
+ * قراءتها من اليسار داخل السطر العربيّ.
+ */
+function renderRun(sorted: Unit[], rtlPage: boolean): string {
+  if (!rtlPage) return sorted.map((u) => u.s).join('');
   const out: string[] = [];
   let i = 0;
   while (i < sorted.length) {
@@ -124,6 +126,54 @@ function toLogical(units: Unit[], rtlPage: boolean): string {
     }
   }
   return out.join('');
+}
+
+/**
+ * يعيد بناء الترتيب المنطقيّ من الترتيب البصريّ، ويفصل خلايا الجدول.
+ *
+ * **والمكتبة لم تكن ضعيفة — كنّا نقرأ مخرجها خطأً.** PDF صيغةٌ بصرية: تخزّن
+ * مواضع الرسوم لا نصّاً منطقياً، والمُخرِج يسلّم الحروف بترتيب الرسم. فقراءتُه
+ * كما هو تُعطي «‏12,400.00 ريال … المبلغ» مكان «المبلغ 12,400.00 ريال».
+ *
+ * **والفجوةُ هي حدُّ الخليّة.** لا يكتب الـ PDF حدوداً ولا فواصل بين خلايا
+ * الجدول — تُرسم الخطوط أشكالاً لا حروفاً — فيلتصق صفُّ الجدول كلمةً واحدة:
+ * «البندالمبلغالتاريخالحالة». وأسوأُ منه أن مقطعين رقميَّين متجاورين في
+ * خليّتين يُقرآن مقطعاً واحداً فيُعكسان معاً، فيتبادل المبلغُ والتاريخ مكانيهما.
+ *
+ * والفصلُ بالقياس لا بالتقدير: قِيس صفُّ جدولٍ فكانت الفجوة داخل الخليّة صفراً
+ * وأوسعُ فراغِ كلمةٍ ٣٫٣٤، وبين الخليّتين ٦٤ إلى ١٦٢ — أي أكثر من خمسة أضعاف
+ * قامة الخطّ. وقِيس مستندٌ حقيقيٌّ مضبوطُ المحاذاة من صفحتين: أوسعُ فجوةٍ فيه
+ * ٦٫٣٦، ولا واحدةَ من ٤٢٠٤ تجاوزت قامةَ الخطّ. فالحدُّ قامةٌ كاملة: لا يقع على
+ * نصٍّ متّصل بحال، ويقع على كلّ حدِّ خليّة.
+ *
+ * وتُفصل الخلايا بجدولة `\t` — وهي ما يُخرجه مستخرِجُ `docx` لحدِّ الخليّة —
+ * فيقرأ المساعد الصفَّ صفّاً والعمودَ عموداً.
+ */
+function toLogical(units: Unit[], rtlPage: boolean): string {
+  const sorted = [...units].sort((a, b) => (rtlPage ? b.x - a.x : a.x - b.x));
+  const cells: Unit[][] = [];
+  let cur: Unit[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0) {
+      const prev = sorted[i - 1];
+      const now = sorted[i];
+      const gap = rtlPage ? prev.x - now.r : now.x - prev.r;
+      if (gap > Math.max(prev.size, now.size)) { cells.push(cur); cur = []; }
+    }
+    cur.push(sorted[i]);
+  }
+  if (cur.length) cells.push(cur);
+
+  /* **وترتيبُ الأعمدة يتبع الصفَّ لا المستند.** جدولٌ إنجليزيّ في مستندٍ عربيّ
+     أعمدتُه من اليسار، فترتيبُها باتجاه المستند يقلبها: «Status ‖ Date ‖
+     Amount ‖ Item» مكان «Item ‖ Amount ‖ Date ‖ Status».
+     والحكمُ على الصفّ وحده — لا على السطر — مأمون: لا يقع إلّا حيث انقسم
+     السطرُ خلايا، أي حيث فجوةٌ بقامة خطّ. والسطرُ المتّصل خليّةٌ واحدة لا
+     ترتيبَ فيها، فيبقى نصٌّ إنجليزيّ داخل فقرةٍ عربية على حاله ونقطتُه في
+     آخره. وما فيه رقمٌ عربيّ أو حرفٌ عربيّ يبقى عربيَّ الترتيب. */
+  const rendered = cells.map((c) => renderRun(c, rtlPage));
+  if (rtlPage && cells.length > 1 && !rendered.some((t) => ARABIC.test(t))) rendered.reverse();
+  return rendered.join('\t');
 }
 
 /**
@@ -241,7 +291,7 @@ export async function extractPdfText(file: File): Promise<string | null> {
         if (it.block !== lastBlock) { last = null; lastSpan = null; held = []; lastBlock = it.block; }
 
         if (!it.zero) {
-          const fresh: Unit = { s: it.c + held.join(''), x: it.x };
+          const fresh: Unit = { s: it.c + held.join(''), x: it.x, r: it.span ? it.span[1] : it.x, size: it.size };
           held = [];
           last = fresh;
           lastSpan = it.span;
@@ -266,8 +316,18 @@ export async function extractPdfText(file: File): Promise<string | null> {
            ولا يحمل الفراغُ حركةً في نصٍّ سليم، فالفراغُ وحده يأذن بهذا. */
         if (last && lastSpan && lastBlank && Math.abs(it.x - lastSpan[0]) < EPS) { last.s = it.c + last.s; continue; }
 
-        // ٤ — وما لم يُعرف صاحبُه: يلحق بالسابق، ولا يُطرح محرفٌ من النصّ.
-        if (last) last.s += it.c; else held.unshift(it.c);
+        /* ٤ — وما لم يُعرف صاحبُه: يلحق بالسابق إن وُجد، وإلّا قام بموضعه وحده.
+           ولا يُطرح محرفٌ من النصّ بحال.
+           **ولا يُلصق بالتالي.** خطٌّ ناقصُ التجزئة قد يُسقط حرفاً ويُبقي شدّته
+           يتيمةً في أوّل الكتلة: «جدولٌ عربيّ» تُصدَر بلا ياء وبشدّةٍ سابقة،
+           فإلحاقُها بأوّل رسمٍ يليها يعطي «جّدولٌ عرب» — كلمةٌ أُفسدت لتُنقَذ
+           علامة. وقيامُها بموضعها يضعها حيث رُسمت في آخر السطر. */
+        if (last) last.s += it.c;
+        else {
+          const orphan: Unit = { s: it.c, x: it.x, r: it.span ? it.span[1] : it.x, size: it.size };
+          marks.push({ u: orphan, y: it.y });
+          sizeAt.set(it.y, Math.max(sizeAt.get(it.y) ?? 0, it.size));
+        }
       }
 
       /* العنقدة: تُرتَّب الإحداثيّات، ثم يُفتح عنقودٌ جديد كلّما جاوزت الفجوةُ
@@ -308,7 +368,13 @@ export async function extractPdfText(file: File): Promise<string | null> {
        **ويبقى نقصاً معلوماً:** فقرةٌ إنجليزية محاذاةُ سطورها من اليسار داخل
        مستندٍ عربيّ يُعكس ترتيبُ كلماتها. */
     for (const lines of raw) {
-      pages.push(lines.map((l) => toLogical(l, anyArabic).replace(/\s+/g, ' ').trim()).filter(Boolean));
+      pages.push(
+        lines
+          /* الجدولةُ تنجو من التسوية: هي حدُّ الخليّة، وردُّها فراغاً يُعيد
+             التصاق الأعمدة. وما حولها من فراغٍ يُطوى إليها. */
+          .map((l) => toLogical(l, anyArabic).replace(/[^\S\t]+/g, ' ').replace(/ ?\t ?/g, '\t').trim())
+          .filter(Boolean)
+      );
     }
 
     /* التوحيد إلى NFC: بعض الخطوط تُخرج الهمزة حرفاً مركَّباً، فتصير الكلمة

@@ -33,12 +33,22 @@ async function extractDocx(buf: ArrayBuffer): Promise<string> {
     .replace(/<\/w:p>/g, '\n')
     .replace(/<w:tab[^>]*\/>/g, '\t')
     .replace(/<w:br[^>]*\/>/g, '\n')
+    /* حدُّ الخليّة جدولة، وحدُّ الصفّ سطر.
+       وبلا هذا يذوب الجدول: كلُّ خليّة تصير سطراً قائماً بذاته، فيخرج صفٌّ من
+       أربع خلايا أربعةَ أسطر لا يُعرف أيُّ مبلغٍ منها لأيِّ بند. وهو العطبُ
+       نفسه الذي كان في الـ PDF، وقد فُصلت خلاياه بالجدولة أيضاً. */
+    .replace(/<\/w:tc>/g, '\t')
+    .replace(/<\/w:tr>/g, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+    /* الفقرةُ داخل الخليّة تركت سطراً قبل جدولتها، وآخرُ خليّةٍ تركت جدولةً
+       قبل سطر الصفّ — فتُطوى كلٌّ منهما في حدِّها. */
+    .replace(/\n+\t/g, '\t')
+    .replace(/\t+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
