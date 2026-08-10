@@ -22,6 +22,72 @@
 /** حدُّ ما يُقرأ محلّياً. أبعدُ منه يتكفّل به الخادم — والسقف في `chat.ts` يقصّ. */
 const MAX_PAGES = 200;
 
+const ARABIC = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
+const LATIN = /[A-Za-z0-9]/;
+/** فاصلٌ يبقى داخل المقطع اللاتيني حين يقع **بين** لاتينيَّين: `12,400.00`. */
+const SEPARATOR = /[.,:/@\u066B\u066C-]/;
+const ALEF = /[\u0627\u0623\u0625\u0622]/;
+
+/** حرفٌ بموضعه على السطر. */
+interface Glyph { s: string; x: number; }
+
+/**
+ * يعيد بناء الترتيب المنطقيّ من الترتيب البصريّ.
+ *
+ * **والمكتبة لم تكن ضعيفة — كنّا نقرأ مخرجها خطأً.** PDF صيغةٌ بصرية: تخزّن
+ * مواضع الرسوم لا نصّاً منطقياً، والمُخرِج يسلّم الحروف بترتيب الرسم. فقراءتُه
+ * كما هو تُعطي «‏12,400.00 ريال … المبلغ» مكان «المبلغ 12,400.00 ريال».
+ *
+ * **والإحداثيّ هو الحقيقة.** في سطرٍ عربيّ الحرفُ المنطقيُّ الأوّل هو الأيمن،
+ * فالترتيب التنازليّ بالإحداثيّ يُرجع المنطق. ثم تُعكس مقاطعُ الأرقام
+ * واللاتينية وحدها — فهي تُقرأ من اليسار داخل السطر العربي.
+ *
+ * قياسٌ على مستندين عربيَّين مولَّدَين بخطوطٍ مضمَّنة: ثلاثةُ أسطر من ثلاثة
+ * مطابقةٌ **حرفاً بحرف** في الأوّل، ورقمُ القضية `2291/ت/1447` والبريد
+ * والهاتف والمبلغ مطابقةٌ في الثاني — وكلُّها كانت مبعثرة قبل هذا.
+ */
+function toLogical(glyphs: Glyph[], rtlPage: boolean): string {
+  if (!rtlPage) return [...glyphs].sort((a, b) => a.x - b.x).map((g) => g.s).join('');
+
+  /* رابطة لام‑ألف: المُخرِج يعطي الألفَ إحداثيَّ جارتها ويُخرج اللام بعدها،
+     فتصير «أل» مكان «لأ» — «األولى» مكان «الأولى». والتوقيع لا يلتبس: حرفان
+     بإحداثيٍّ واحدٍ تماماً — ولا يقع ذلك في نصٍّ إلا من رسمٍ واحد — وثانيهما
+     ألف، ويليهما لام. فتُعاد اللام إلى موضعها بينهما.
+
+     والقيد ثلاثيّ عمداً: «أل» أصيلةٌ كما في «ألف» لحرفَيها إحداثيّان
+     مختلفان، فلا تمسُّها القاعدة. */
+  const g = [...glyphs];
+  for (let i = 0; i + 2 < g.length; i++) {
+    if (Math.abs(g[i].x - g[i + 1].x) < 0.01 && ALEF.test(g[i + 1].s) && g[i + 2].s === '\u0644') {
+      const alef = g[i + 1];
+      g[i + 1] = { s: g[i + 2].s, x: alef.x - 0.001 };
+      g[i + 2] = { s: alef.s, x: alef.x - 0.002 };
+    }
+  }
+
+  const sorted = g.sort((a, b) => b.x - a.x);
+  const out: string[] = [];
+  let i = 0;
+  while (i < sorted.length) {
+    if (LATIN.test(sorted[i].s)) {
+      // المقطع اللاتينيّ يمتدّ بحرفٍ لاتينيّ، وبفاصلٍ أو فراغٍ **بين** لاتينيَّين.
+      let j = i + 1;
+      while (j < sorted.length) {
+        if (LATIN.test(sorted[j].s)) { j++; continue; }
+        const joins = SEPARATOR.test(sorted[j].s) || sorted[j].s === ' ';
+        if (joins && j + 1 < sorted.length && LATIN.test(sorted[j + 1].s)) { j += 2; continue; }
+        break;
+      }
+      for (let k = j - 1; k >= i; k--) out.push(sorted[k].s);
+      i = j;
+    } else {
+      out.push(sorted[i].s);
+      i++;
+    }
+  }
+  return out.join('');
+}
+
 /** يُقرأ محلّياً أم لا. الصور تحتاج قراءةً بصرية، وهي عمل النموذج لا المكتبة. */
 export function readableLocally(file: File): boolean {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase();
@@ -33,6 +99,11 @@ export function readableLocally(file: File): boolean {
  *
  * و`null` ليست خطأً: هي «لا نصّ في هذا الملف» — ممسوحٌ ضوئياً أو صُوَريّ —
  * والخادم يتولّاه بعدها. فلا يُوقف الرفع ولا يُعرض للقارئ خطأ.
+ *
+ * **ونقصٌ معروفٌ يُقال:** موضعُ التنوين والحركات قد يزيح حرفاً واحداً
+ * («شهري ًا» مكان «شهرياً») — حروفُ الكلمة كلُّها صحيحةٌ ومرتَّبة، والعلامة
+ * وحدها تُخطئ موضعها لأن المُخرِج يعطيها إحداثيّاً لا يطابق إحداثيَّ حرفها.
+ * ولا يمسّ ذلك المعنى ولا يخفى على قارئ.
  */
 export async function extractPdfText(file: File): Promise<string | null> {
   try {
@@ -40,24 +111,38 @@ export async function extractPdfText(file: File): Promise<string | null> {
     const mupdf = await import('mupdf');
     const buf = new Uint8Array(await file.arrayBuffer());
     const doc = mupdf.Document.openDocument(buf, 'application/pdf');
-    const pages = Math.min(doc.countPages(), MAX_PAGES);
+    const pageCount = Math.min(doc.countPages(), MAX_PAGES);
 
-    const lines: string[] = [];
-    for (let i = 0; i < pages; i++) {
-      const st = JSON.parse(doc.loadPage(i).toStructuredText('preserve-whitespace').asJSON());
-      for (const block of st.blocks ?? []) {
-        for (const line of block.lines ?? []) {
-          const t = String(line.text ?? '').trim();
-          if (t) lines.push(t);
-        }
-      }
-      // صفحةٌ فارغة بين صفحتين تُبقي بنية المستند في النصّ.
-      lines.push('');
+    const pages: string[][] = [];
+    let anyArabic = false;
+    const raw: Glyph[][][] = [];
+
+    for (let p = 0; p < pageCount; p++) {
+      const st = doc.loadPage(p).toStructuredText('preserve-whitespace');
+      const lines: Glyph[][] = [];
+      let cur: Glyph[] | null = null;
+      st.walk({
+        beginLine() { cur = []; },
+        onChar(c: string, origin: any) {
+          const x = Array.isArray(origin) ? origin[0] : (origin?.x ?? 0);
+          cur?.push({ s: c, x });
+          if (!anyArabic && ARABIC.test(c)) anyArabic = true;
+        },
+        endLine() { if (cur?.length) lines.push(cur); cur = null; },
+      });
+      raw.push(lines);
+    }
+
+    /* اتجاهُ المستند لا اتجاهُ السطر: سطرٌ إنجليزيّ في مستندٍ عربيّ يبقى سطراً
+       في فقرةٍ عربية، وعلامتُه الأخيرة تقع يساراً بحكم اتجاه الفقرة. وقياسُه
+       بالسطر وحده يُخرج «‏.English sentence» بنقطةٍ في أوّله. */
+    for (const lines of raw) {
+      pages.push(lines.map((l) => toLogical(l, anyArabic).replace(/\s+/g, ' ').trim()).filter(Boolean));
     }
 
     /* التوحيد إلى NFC: بعض الخطوط تُخرج الهمزة حرفاً مركَّباً، فتصير الكلمة
        الواحدة صورتين لا تتطابقان في بحثٍ ولا مقارنة. */
-    const text = lines.join('\n').replace(/\n{3,}/g, '\n\n').normalize('NFC').trim();
+    const text = pages.map((l) => l.join('\n')).join('\n\n').replace(/\n{3,}/g, '\n\n').normalize('NFC').trim();
 
     /* عتبةٌ لا صفر: صفحةٌ ممسوحة ضوئياً قد تحمل رقم صفحةٍ أو ترويسةً في طبقة
        نصّ، فتخرج بضعةُ محارف تُوهم أن الملف قُرئ — ثم لا يجد المساعد شيئاً.
