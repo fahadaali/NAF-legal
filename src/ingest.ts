@@ -12,10 +12,17 @@ import type { Env } from './types';
  * (يسأل عن `pending`)، ولا المسؤول يعرف أنها تحتاج شيئاً.
  *
  * فما يخرج من هنا حالٌ مستقرّة دائماً: `ready` أو `pending` أو `error`.
+ *
+ * ويُردّ ما استقرّت عليه، لا `void`: المستدعي يعدّ ما ضُمِّن، وعدُّ وثيقةٍ
+ * انتهت إلى `error` مضمَّنةً يجعل الشاشة تقول «ضُمِّنت عشر» وعمودُها يقول
+ * «تعذّر التضمين» في ثلاثٍ منها. والعدد الذي يناقض الجدول تحته أسوأ من
+ * لا عدد.
  */
-export async function ingestDocument(env: Env, docId: string): Promise<void> {
+export type IngestOutcome = 'ready' | 'pending' | 'error';
+
+export async function ingestDocument(env: Env, docId: string): Promise<IngestOutcome> {
   try {
-    await runIngest(env, docId);
+    return await runIngest(env, docId);
   } catch {
     // السبب لا يُخزَّن: `kb_documents` بلا عمودٍ له، وإضافتُه قرارُ مخطَّطٍ
     // قائم بذاته. والحال وحدها تكفي لتُعاد الوثيقة بـ«إعادة تضمين».
@@ -23,10 +30,11 @@ export async function ingestDocument(env: Env, docId: string): Promise<void> {
       .bind(docId)
       .run()
       .catch(() => {});
+    return 'error';
   }
 }
 
-async function runIngest(env: Env, docId: string): Promise<void> {
+async function runIngest(env: Env, docId: string): Promise<IngestOutcome> {
   /* بلا فهرس متجهي لا يقع تضمين — والوثيقة تبقى **منتظرة** لا «جاهزة».
 
      وكانت تُوسم «جاهزة» بـ«المقاطع ٠»، فيقرأ المسؤول نجاحاً حيث لم يقع شيء:
@@ -44,7 +52,7 @@ async function runIngest(env: Env, docId: string): Promise<void> {
     await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'pending', chunk_count = 0 WHERE id = ?")
       .bind(docId)
       .run();
-    return;
+    return 'pending';
   }
   await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'processing' WHERE id = ?").bind(docId).run();
 
@@ -57,7 +65,7 @@ async function runIngest(env: Env, docId: string): Promise<void> {
   const text = textObj ? await textObj.text() : '';
   if (!text.trim()) {
     await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'error' WHERE id = ?").bind(docId).run();
-    return;
+    return 'error';
   }
 
   const chunks = chunkText(text);
@@ -99,6 +107,7 @@ async function runIngest(env: Env, docId: string): Promise<void> {
   await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'ready', chunk_count = ? WHERE id = ?")
     .bind(chunks.length, docId)
     .run();
+  return 'ready';
 }
 
 function extractArticleRef(chunk: string): string {

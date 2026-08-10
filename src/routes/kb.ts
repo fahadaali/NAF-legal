@@ -55,22 +55,27 @@ app.post('/documents/embed-pending', async (c) => {
     .all<{ id: string }>();
 
   let embedded = 0;
+  let failed = 0;
   for (const row of rows.results ?? []) {
     // وثيقةٌ تتعثّر لا توقف أخواتها: `ingestDocument` يَسِمها `error` بنفسه،
     // وهو ما يظهر في عمودها. والرمي هنا يُسقط ما بقي من الدفعة بلا سبب.
+    //
+    // ويُقرأ ما ردّه لا يُفترض النجاح: كان كلُّ نداءٍ يُعدّ مضمَّناً — وفيه
+    // ما انتهى إلى `error` — فتقول الشاشة «ضُمِّنت خمس» وعمودُها يقول
+    // «تعذّر التضمين» في اثنتين منها.
     try {
-      await ingestDocument(c.env, row.id);
-      embedded += 1;
+      if ((await ingestDocument(c.env, row.id)) === 'ready') embedded += 1;
+      else failed += 1;
     } catch {
-      // الحال مكتوبةٌ في الصفّ، ولا شيء يُقال هنا فوقها.
+      failed += 1;
     }
   }
 
   const left = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM kb_documents WHERE ingest_status = 'pending'"
   ).first<{ n: number }>();
-  await audit(c, 'kb.embed_pending', 'kb', { embedded, remaining: left?.n ?? 0 });
-  return c.json({ embedded, remaining: left?.n ?? 0 });
+  await audit(c, 'kb.embed_pending', 'kb', { embedded, failed, remaining: left?.n ?? 0 });
+  return c.json({ embedded, failed, remaining: left?.n ?? 0 });
 });
 
 // رفع وثيقة نظام: ملف أو نص → تخزين + استخراج + تصنيف تلقائي + جدولة التضمين

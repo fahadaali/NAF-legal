@@ -246,6 +246,8 @@ function KbStatusStrip({
   onDone: () => void;
 }) {
   const [draining, setDraining] = useState(false);
+  /** تعثّرت دفعةٌ في آخر شوط — يُقال، ولا يُترك العددُ الواقف يقوله وحده. */
+  const [stumbled, setStumbled] = useState(false);
 
   /* الفهرس واحد للطابورين، فحالُه يُقرأ من أيّهما ردّ أوّلاً — ولا يُدَّعى
      أنه مهيّأ قبل أن يردّ أحدهما. */
@@ -263,18 +265,24 @@ function KbStatusStrip({
    */
   const drain = async () => {
     setDraining(true);
+    setStumbled(false);
+    let stumble = false;
     try {
       for (;;) {
         const r = await api.legalEmbedPending(500);
+        if (r.failed) stumble = true;
         if (!r.embedded || !r.remaining) break;
       }
       for (;;) {
         const r = await api.kbEmbedPending(5);
+        if (r.failed) stumble = true;
         if (!r.embedded || !r.remaining) break;
       }
     } catch {
-      // يبقى المعلَّق معلَّقاً ويصرّفه الـCron — لا ضرر يستدعي إنذاراً.
+      // نداءٌ لم يصل تعثّرٌ كتعثّر الدفعة: المعلَّق باقٍ في الطابور.
+      stumble = true;
     } finally {
+      setStumbled(stumble);
       setDraining(false);
       onDone();
     }
@@ -312,6 +320,15 @@ function KbStatusStrip({
               'تضمين الآن'
             )}
           </button>
+        </p>
+      ) : null}
+
+      {/* سطرُ التعثّر تحت سطر الحال لا مكانه: العدد المنتظر يبقى معروضاً،
+          وهذا يقول لماذا وقف. ويزول عند أوّل شوطٍ يمضي. */}
+      {stumbled && !draining ? (
+        <p className="kb-index warn">
+          <Icon.failed size={ICON_SM} aria-hidden />
+          <span>تعذّر تضمين ما تبقّى — يبقى في الطابور ويُعاد تضمينه ليلاً، أو أعد «تضمين الآن».</span>
         </p>
       ) : null}
     </section>

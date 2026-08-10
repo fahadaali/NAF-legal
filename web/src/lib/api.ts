@@ -245,6 +245,24 @@ function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
+/**
+ * حصيلةُ شوطٍ من تصريف طابور التضمين — للطابورين معاً.
+ *
+ * و`failed` هنا لأن الشوط يمضي على دفعات معزولة: دفعةٌ تتعثّر تُترك في
+ * الطابور ولا توقف ما بعدها. فبلا هذا الحقل ينقص العدد قليلاً ثم يقف،
+ * ولا شيء في الشاشة يقول لماذا — فيعيد المسؤول الضغط ويظنّ الزرّ معطَّلاً.
+ */
+export interface EmbedDrain {
+  embedded: number;
+  remaining: number;
+  /** ما تعثّرت دفعتُه فبقي في الطابور. */
+  failed?: number;
+  /** سببُ أوّل تعثّر — للسجلّ لا للشاشة: نصُّه من وقت التشغيل. */
+  error?: string;
+  /** سبب التخطّي — الفهرس المتجهي غير مهيّأ. */
+  skipped?: string;
+}
+
 /** حالة المحتوى النظامي المستورد. */
 export interface LegalStats {
   chunks: number;
@@ -700,10 +718,7 @@ export const api = {
   reingestKbDocument: (id: string) => req(`/kb/documents/${id}/reingest`, { method: 'POST' }),
   /** يصرّف الوثائق المنتظرة للتضمين — نظير `legalEmbedPending` لمسار الرفع. */
   kbEmbedPending: (limit = 5) =>
-    req<{ embedded: number; remaining: number; skipped?: string }>(
-      `/kb/documents/embed-pending?limit=${limit}`,
-      { method: 'POST' }
-    ),
+    req<EmbedDrain>(`/kb/documents/embed-pending?limit=${limit}`, { method: 'POST' }),
   kbVersions: (id: string) => req<{ versions: any[] }>(`/kb/documents/${id}/versions`),
   kbTextUrl: (id: string) => `/api/kb/documents/${id}/text`,
   kbFileUrl: (id: string) => `/api/kb/documents/${id}/file`,
@@ -795,9 +810,7 @@ export const api = {
   legalAmendment: (id: string) =>
     req<{ amendment: LegalAmendment }>(`/legal/articles/${encodeURIComponent(id)}/amendment`),
   legalEmbedPending: (limit = 1000) =>
-    req<{ embedded: number; remaining: number; skipped?: string }>(`/legal/embed-pending?limit=${limit}`, {
-      method: 'POST',
-    }),
+    req<EmbedDrain>(`/legal/embed-pending?limit=${limit}`, { method: 'POST' }),
   /**
    * يستورد دفعة أسطر JSONL.
    *
