@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { extractPdfText, readableLocally } from '../lib/extractText';
 import { api, ConsultConfig } from '../lib/api';
 import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
 
@@ -10,7 +11,8 @@ export default function IntakeModal({
 }: {
   config: ConsultConfig;
   onClose: () => void;
-  onStart: (conversationId: string, message: string) => void;
+  /** ومعها معرِّفاتُ ما رُفع: تُختم برسالة البدء كما تُختم مرفقاتُ أيّ دور. */
+  onStart: (conversationId: string, message: string, attachmentIds: string[]) => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [file, setFile] = useState<File | null>(null);
@@ -49,10 +51,16 @@ export default function IntakeModal({
     setBusy(true);
     try {
       const conv = await api.createConversation(config.key);
+      const ids: string[] = [];
       if (config.file.enabled && file) {
-        await api.uploadFile(conv.id, file);
+        /* الاستخراج هنا كما في صندوق الكتابة سواء — وإلا كان ملفُّ نافذة البدء
+           وحده يمرّ على النموذج ويُكلِّف رموزاً لا يكلّفها الملفُّ نفسه لو
+           أُرفق بعد سطرٍ واحد من المحادثة. */
+        const local = readableLocally(file) ? await extractPdfText(file) : null;
+        const r = await api.uploadFile(conv.id, file, local);
+        ids.push(r.id);
       }
-      onStart(conv.id, composeMessage(config, values, file, pastedText));
+      onStart(conv.id, composeMessage(config, values, file, pastedText), ids);
     } catch (e: any) {
       setError(e.message ?? 'تعذّر البدء');
       setBusy(false);

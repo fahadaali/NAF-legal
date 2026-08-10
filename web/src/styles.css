@@ -595,6 +595,22 @@ a { color: var(--primary); }
 }
 .session-bar .btn-sm { background: var(--card); color: var(--foreground); }
 .modal-actions .btn-sm { display: inline-flex; align-items: center; gap: var(--space-1); }
+
+/* مبدّلة منظرَي المرفق — الملف والنصّ المستخرَج. زرّان متلاصقان لا تبويبان:
+   لوحان في نافذةٍ واحدة، والمحتوى تحتهما يتبدّل في مكانه. */
+.pane-switch { display: inline-flex; gap: 0; }
+.pane-switch .btn-sm { border-radius: 0; }
+.pane-switch .btn-sm:first-child {
+  border-start-start-radius: var(--radius-lg); border-end-start-radius: var(--radius-lg);
+}
+.pane-switch .btn-sm:last-child {
+  border-start-end-radius: var(--radius-lg); border-end-end-radius: var(--radius-lg);
+  margin-inline-start: -1px;
+}
+.pane-switch .btn-sm.on {
+  background: var(--primary); color: var(--primary-foreground);
+  border-color: var(--primary); position: relative;
+}
 .modal-body { flex: 1; overflow: auto; background: var(--background); }
 /* صفحات PDF بيضاء دائماً بغضّ النظر عن الثيم — القيمة خام عن قصد،
    بموجب استثناء «مستندات الطباعة و PDF» في CLAUDE.md §1. */

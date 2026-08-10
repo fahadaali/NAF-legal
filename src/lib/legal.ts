@@ -3237,7 +3237,17 @@ export async function legalStats(env: Env): Promise<LegalStats> {
             SUM(CASE WHEN ${EFFECTIVE_SQL} THEN 1 ELSE 0 END) AS effective,
             SUM(CASE WHEN c.is_repealed = 1 OR c.status = 'repealed' THEN 1 ELSE 0 END) AS repealed,
             COUNT(DISTINCT c.law_id) AS laws,
-            SUM(CASE WHEN c.embedded_at IS NULL THEN 1 ELSE 0 END) AS pending,
+            -- ما ينتظر التضمين فعلاً: بالشرط الذي يختار به embedPending لا
+            -- بـ embedded_at IS NULL وحده. والفرق ليس تجميلاً:
+            --
+            -- المادة الملغاة لا تُضمَّن بالتصميم — EMBEDDABLE_SQL يستثنيها،
+            -- و purgeRepealedVectors يحذف متجهها إن كان. فعدُّها «تنتظر
+            -- التضمين» يعرض على المسؤول عدداً لا يُنقصه شيء: يضغط «تضمين الآن»
+            -- فيدور ثم يقف بلا تغيير، ويعيد الضغط ويظنّ التضمين معطَّلاً —
+            -- والطابور فارغ من أوّله.
+            --
+            -- والعددُ المعروض هو ما يعمل عليه الزرّ، وإلا فهو ليس عدّاً بل لغز.
+            SUM(CASE WHEN ${EMBEDDABLE_SQL_C} AND c.embedded_at IS NULL THEN 1 ELSE 0 END) AS pending,
             SUM(CASE WHEN ${IN_QUEUE_SQL} THEN 1 ELSE 0 END) AS needs_review,
             SUM(CASE WHEN c.has_amendments = 1 AND c.amendment_applied = 0 THEN 1 ELSE 0 END) AS amendment_pending,
             -- توزيعُ حالِ الاسترجاع: الحقل الذي يُبنى عليه القرار، فتوزيعُه

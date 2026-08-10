@@ -171,10 +171,12 @@ export interface DocTemplate {
 /**
  * حال استخراج نصّ المرفق.
  *
- * `pending` يُقرأ ولم ينتهِ، و`ready` نصُّه يبلغ المساعد، و`error` ملفٌّ قائم
- * يُفتح ويُنزَّل ولا نصَّ له في السياق — والفروق الثلاثة تُعرض ولا تُخمَّن.
+ * `uploading` بايتاته في الطريق ولم تصل بعد — حالٌ **محلّية** لا يردّها الخادم:
+ * الشارة تولد مع اختيار الملف لا مع ردّ الرفع، وإلا مرّت لحظةٌ بلا شارة يُرسَل
+ * فيها السؤال بلا مرفقه. و`pending` وصل ونصُّه يُقرأ، و`ready` نصُّه يبلغ
+ * المساعد، و`error` ملفٌّ قائم يُفتح ويُنزَّل ولا نصَّ له في السياق.
  */
-export type ParseStatus = 'pending' | 'ready' | 'error';
+export type ParseStatus = 'uploading' | 'pending' | 'ready' | 'error';
 
 export interface Attachment {
   id: string;
@@ -685,9 +687,12 @@ export const api = {
    * `parse_status` في الردّ `pending` دائماً: الاستخراج يجري في الخادم بعده،
    * وتُسأل عنه `attachment` حتى يستقرّ.
    */
-  uploadFile: async (conversationId: string, file: File) => {
+  uploadFile: async (conversationId: string, file: File, extractedText?: string | null) => {
     const fd = new FormData();
     fd.append('file', file);
+    // نصٌّ اُستخرج في المتصفّح: الخادم يخزّنه ولا ينادي النموذج. وغيابُه يعني
+    // «اقرأه أنت» — صورةٌ أو ممسوحٌ ضوئياً.
+    if (extractedText) fd.append('text', extractedText);
     const res = await fetch(`/api/files/upload/${conversationId}`, { method: 'POST', body: fd, credentials: 'same-origin' });
     const data = await res.json().catch(() => ({}));
     if (handleAuthRedirect(res, data)) return pending<any>();
