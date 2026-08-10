@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { api, ConsultConfig, DocTemplate, FieldDef, FieldType, RegulationRequest } from '../lib/api';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { api, ConsultConfig, DocTemplate, FieldDef, FieldType, LegalStats, RegulationRequest } from '../lib/api';
 import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import { LegalImport } from './LegalImport';
@@ -7,8 +7,9 @@ import { LegalLaws } from './LegalLaws';
 import { LegalReview } from './LegalReview';
 import ClauseLibrary from './ClauseLibrary';
 import { RequestStatusPill } from './Support';
-import { formatDate, formatTime } from '../lib/format';
-import { Icon, ICON_SM } from '../lib/icons';
+import { formatDate, formatNumber, formatTime } from '../lib/format';
+import { Icon, ICON_MD, ICON_SM } from '../lib/icons';
+import { ScrollBoxProvider, useScrollReset } from '../lib/scrollBox';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
@@ -31,6 +32,9 @@ const TABS: [Tab, string][] = [
 export default function Admin() {
   const [tab, setTab] = useState<Tab>('kb');
   const [pendingRequests, setPendingRequests] = useState(0);
+  /* حاوية التمرير الوحيدة في الشاشة. تُمرَّر إلى الأبناء ليُعيدوها إلى أعلاها
+     عند تبدّل ما تعرضه — التفصيل في `lib/scrollBox.tsx`. */
+  const box = useRef<HTMLDivElement>(null);
 
   // عدّاد الطلبات المعلّقة على التبويب — ليعرف مسؤول النظام دون فتحه
   const loadPending = () =>
@@ -40,16 +44,18 @@ export default function Admin() {
   }, []);
 
   return (
-    <div className="admin-wrap">
+    <div className="admin-wrap" ref={box}>
+      <ScrollBoxProvider value={box}>
+      <AdminScrollReset tab={tab} />
       <div className="admin-inner">
-        <h1 style={{ fontSize: '1.5rem', marginTop: 0 }}>لوحة الإدارة</h1>
+        <h1 className="admin-title">لوحة الإدارة</h1>
         <div className="admin-tabs">
           {TABS.map(([t, label]) => (
             <button key={t} className={`admin-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
               {label}
               {t === 'requests' && pendingRequests > 0 && (
                 <span className="pill warn" title="طلبات بانتظار المراجعة">
-                  <bdi>{pendingRequests}</bdi>
+                  <bdi>{formatNumber(pendingRequests)}</bdi>
                 </span>
               )}
             </button>
@@ -66,41 +72,443 @@ export default function Admin() {
         {tab === 'settings' && <SettingsTab />}
         {tab === 'audit' && <AuditTab />}
       </div>
+      </ScrollBoxProvider>
     </div>
   );
 }
 
-function statusPill(s: string) {
+/** تبديل التبويب شاشةٌ أخرى، فتُفتح من أعلاها لا من موضع سابقتها. */
+function AdminScrollReset({ tab }: { tab: Tab }) {
+  useScrollReset(tab);
+  return null;
+}
+
+/**
+ * حالُ النظام في الواقع — أنافذٌ هو أم عُدّل أم أُلغي.
+ *
+ * محورٌ غيرُ محور التضمين أدناه: نظامٌ نافذ قد لا يكون مضمَّناً، وملغىً قد
+ * يكون مضمَّناً وقت إلغائه. وكانت شارةٌ واحدة تخدم العمودين فتُقرأ «ساري»
+ * جواباً عن «هل تُسترجَع؟».
+ *
+ * وألفاظُه هي المستعملة قبل هذا التغيير بلا مساس: تسويتُها مع «نافذ» و«ملغاة»
+ * المسجَّلتين لحال الاسترجاع قرارُ مفرداتٍ قائم بذاته، موسومٌ في `naf-terms.md`
+ * تحت «إدخال قاعدة المعرفة وتضمينها» ليُحسم بقراره لا عرَضاً.
+ */
+function docStatusPill(s: string) {
   const map: Record<string, [string, string]> = {
     active: ['active', 'ساري'],
     amended: ['warn', 'معدَّل'],
     repealed: ['error', 'ملغى'],
-    ready: ['ready', 'جاهز'],
-    pending: ['pending', 'قيد المعالجة'],
-    processing: ['pending', 'جارٍ'],
-    error: ['error', 'خطأ'],
   };
   const [cls, label] = map[s] ?? ['pending', s];
   return <span className={`pill ${cls}`}>{label}</span>;
 }
 
+/**
+ * حالُ الوثيقة في الفهرس المتجهي — أربعٌ لا خامسة، مسجَّلةٌ بأيقوناتها
+ * وألوانها في `naf-icons.md` تحت «تضمين الوثيقة المرفوعة».
+ *
+ * **و`pending` لا تُقرأ وحدها.** مع فهرسٍ مهيّأ هي عملٌ يجري الآن، ومع غير
+ * مهيّأ انتظارٌ لا ينتهي بلا تدخّل — والفرق بينهما هو الفرق بين «انتظرْ» و
+ * «افعلْ شيئاً». ولذلك يُمرَّر حالُ الفهرس مع الحال.
+ */
+function embedPill(status: string, vectorize: boolean) {
+  if (status === 'ready') {
+    return (
+      <span className="pill ready">
+        <Icon.vectorIndex size={ICON_SM} aria-hidden /> مضمَّنة
+      </span>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <span className="pill error">
+        <Icon.failed size={ICON_SM} aria-hidden /> تعذّر التضمين
+      </span>
+    );
+  }
+  if (!vectorize) {
+    return (
+      <span className="pill warn">
+        <Icon.awaitingIndex size={ICON_SM} aria-hidden /> بانتظار الفهرس
+      </span>
+    );
+  }
+  return (
+    <span className="pill pending">
+      <Icon.embedding size={ICON_SM} aria-hidden /> جارٍ التضمين
+    </span>
+  );
+}
+
+/**
+ * أقسام قاعدة المعرفة — ثلاثةٌ تتبع حياة النصّ لا أنواع الملفات.
+ *
+ * وكان شريطٌ واحد يجمع ثلاثة مصادرِ إدخال مع طابور المراجعة، بلا ما يقول
+ * للمسؤول أيُّها فعلٌ يقوم به وأيُّها مكانٌ يقرأ فيه. وتحته قائمتان ثابتتان
+ * تظهران في الأوضاع الأربعة — فمن يراجع مادةً يجد تحت شاشته جدولَ الأنظمة
+ * كلِّه وجدولَ الوثائق، ولا صلة لهما بما يفعل.
+ */
+const KB_SECTIONS: [KbSection, string][] = [
+  ['content', 'المحتوى'],
+  ['intake', 'الإضافة'],
+  ['review', 'مراجعة المواد'],
+];
+
+type KbSection = 'content' | 'intake' | 'review';
+
 function KbTab() {
-  const [docs, setDocs] = useState<any[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [section, setSection] = useState<KbSection>('content');
+  /* الحال يُقرأ في الأقسام الثلاثة، فيُحمَّل هنا مرّةً ويُمرَّر — لا في كل
+     قسمٍ نداءً على حدة. */
+  const [stats, setStats] = useState<LegalStats | null>(null);
+  const [docs, setDocs] = useState<KbDocs | null>(null);
+
+  const loadDocs = useCallback(
+    () => api.kbDocuments().then(setDocs).catch(() => {}),
+    []
+  );
+  const loadStats = useCallback(
+    () => api.legalStats().then(setStats).catch(() => {}),
+    []
+  );
+  const reload = useCallback(() => {
+    loadDocs();
+    loadStats();
+  }, [loadDocs, loadStats]);
+
+  useEffect(() => {
+    reload();
+    // التضمين يمضي في الخادم بعد الردّ، فحالُه يتغيّر بلا فعلٍ من الشاشة.
+    const t = setInterval(reload, 5000);
+    return () => clearInterval(t);
+  }, [reload]);
+
+  useScrollReset(section);
+
+  const pendingReview = stats?.needs_review ?? 0;
+
+  return (
+    <div>
+      <KbStatusStrip stats={stats} docs={docs} onDone={reload} />
+
+      <nav className="kb-nav" aria-label="أقسام قاعدة المعرفة">
+        {KB_SECTIONS.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={`kb-nav-item ${section === key ? 'on' : ''}`}
+            aria-current={section === key ? 'page' : undefined}
+            onClick={() => setSection(key)}
+          >
+            {label}
+            {/* عدّاد الطابور على اسمه: المراجعة عملٌ يتراكم، ومن لا يفتح
+                القسم لا يعرف أن فيه مئتين. */}
+            {key === 'review' && pendingReview > 0 ? (
+              <span className="pill warn"><bdi>{formatNumber(pendingReview)}</bdi></span>
+            ) : null}
+          </button>
+        ))}
+      </nav>
+
+      {section === 'content' ? (
+        <KbContent stats={stats} docs={docs} onChange={reload} />
+      ) : section === 'intake' ? (
+        <KbIntake onAdded={reload} />
+      ) : (
+        <LegalReview />
+      )}
+    </div>
+  );
+}
+
+/** ردّ `GET /kb/documents` — الوثائق ومعها حالُ الفهرس وعددُ المنتظر منها. */
+type KbDocs = { documents: any[]; vectorize: boolean; pending_embeddings: number };
+
+/**
+ * حال قاعدة المعرفة — أعلى التبويب، ظاهرٌ في أقسامه الثلاثة.
+ *
+ * **وموضعه هنا لأن الحال يعمّ الأقسام.** كان حالُ الفهرس مكتوباً في آخر شاشة
+ * الاستيراد وحدها: فمن يراجع المواد يبتّ في قراراتٍ سيبني عليها تضمينٌ لا
+ * يقع، ولا يمرّ بتلك الشاشة ليعلم. وحالٌ يظهر في مكانٍ واحدٍ من ثلاثة
+ * يُعلَم بالمصادفة.
+ *
+ * **ولا يُنبّه إلا حين يستحقّ التنبيه.** الفهرسُ مهيّأً ولا شيء ينتظر: أعدادٌ
+ * وحدها بلا شارة. وشارةٌ دائمة تُعلّم القارئ تجاهلَ الشارات.
+ */
+function KbStatusStrip({
+  stats,
+  docs,
+  onDone,
+}: {
+  stats: LegalStats | null;
+  docs: KbDocs | null;
+  onDone: () => void;
+}) {
+  const [draining, setDraining] = useState(false);
+
+  /* الفهرس واحد للطابورين، فحالُه يُقرأ من أيّهما ردّ أوّلاً — ولا يُدَّعى
+     أنه مهيّأ قبل أن يردّ أحدهما. */
+  const ready = docs?.vectorize ?? stats?.vectorize ?? null;
+  const waitingChunks = stats?.pending_embeddings ?? 0;
+  const waitingDocs = docs?.pending_embeddings ?? 0;
+  const waiting = waitingChunks + waitingDocs;
+
+  /**
+   * يصرّف ما ينتظر التضمين في الطابورين.
+   *
+   * دفعاتٌ متتابعة حتى ينتهي أو يتوقّف التقدّم: لكل مقطعٍ طلبٌ إلى نموذج
+   * التضمين وآخر إلى الفهرس، وللنداء الواحد سقف. والطابوران مساران مختلفان
+   * — مقاطعُ في جدول واحد، ووثائقُ تُقطَّع كلٌّ وحدها — فلكلٍّ نداؤه.
+   */
+  const drain = async () => {
+    setDraining(true);
+    try {
+      for (;;) {
+        const r = await api.legalEmbedPending(500);
+        if (!r.embedded || !r.remaining) break;
+      }
+      for (;;) {
+        const r = await api.kbEmbedPending(5);
+        if (!r.embedded || !r.remaining) break;
+      }
+    } catch {
+      // يبقى المعلَّق معلَّقاً ويصرّفه الـCron — لا ضرر يستدعي إنذاراً.
+    } finally {
+      setDraining(false);
+      onDone();
+    }
+  };
+
+  return (
+    <section className="kb-status" aria-label="حال قاعدة المعرفة">
+      <dl className="kb-counts">
+        <KbCount label="الأنظمة" value={stats?.laws} />
+        <KbCount label="المواد" value={stats?.chunks} />
+        <KbCount label="الوثائق" value={docs?.documents.length} />
+        <KbCount label="بانتظار المراجعة" value={stats?.needs_review} />
+        <KbCount label="ينتظر التضمين" value={stats ? waiting : undefined} />
+      </dl>
+
+      {ready === false ? (
+        <p className="kb-index warn">
+          <Icon.awaitingIndex size={ICON_SM} aria-hidden />
+          <span>
+            الفهرس المتجهي غير مهيّأ — البحث اللفظي في الأنظمة يعمل، والاسترجاع
+            الدلالي والوثائق المرفوعة لا تصل المساعد. يُهيَّأ بمنح صلاحية الفهرس
+            المتجهي لرمز النشر، ويصرّفه أوّل نشر تالٍ.
+          </span>
+        </p>
+      ) : ready === true && waiting > 0 ? (
+        <p className="kb-index">
+          <Icon.vectorIndex size={ICON_SM} aria-hidden />
+          <span>
+            الفهرس المتجهي مهيّأ — ينتظر التضمين <bdi>{formatNumber(waiting)}</bdi>
+          </span>
+          <button className="btn-sm" disabled={draining} onClick={drain}>
+            {draining ? (
+              <><span className="spinner" /> جارٍ التضمين</>
+            ) : (
+              'تضمين الآن'
+            )}
+          </button>
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * عددٌ في شريط الحال.
+ *
+ * وقبل وصول الردّ يُعرض شرطةٌ لا صفر: صفرٌ يُقرأ خبراً — «لا أنظمة في
+ * القاعدة» — ثم ينقلب إلى واحدٍ وسبعين بعد جزءٍ من الثانية.
+ */
+function KbCount({ label, value }: { label: string; value?: number }) {
+  return (
+    <div className="kb-count">
+      <dt>{label}</dt>
+      <dd>{value === undefined ? '—' : <bdi>{formatNumber(value)}</bdi>}</dd>
+    </div>
+  );
+}
+
+/**
+ * المحتوى — ما دخل القاعدة من مصدريه.
+ *
+ * والمصدران في قسمٍ واحد بعنوانين: المستورَد يدخل بحدود مواده، والمرفوع
+ * يُستخرج ويُقطَّع. وبلا العنوانين كان «لم تُرفع أي وثيقة بعد» يُقرأ نفياً
+ * للمحتوى كلِّه — وواحدٌ وسبعون نظاماً في القاعدة.
+ */
+function KbContent({
+  stats,
+  docs,
+  onChange,
+}: {
+  stats: LegalStats | null;
+  docs: KbDocs | null;
+  onChange: () => void;
+}) {
   const [versionsFor, setVersionsFor] = useState<string | null>(null);
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
-  // «استيراد» مسارٌ ثالث لا صيغةُ ملفٍ رابعة: المستورَد مقطوعٌ سلفاً بحدود
-  // مواده فلا يمرّ بالاستخراج ولا بالتقطيع ولا بالتصنيف. ولذلك هو وضعٌ قائم
-  // بذاته لا خانةٌ تُضاف إلى `accept` في رفع الملفات.
-  const [mode, setMode] = useState<'file' | 'text' | 'import' | 'review'>('file');
+
+  const viewDoc = (d: any) => {
+    const kind = fileKind(d.r2_key);
+    setViewer({ title: d.title, kind, fileUrl: api.kbFileUrl(d.id), textUrl: api.kbTextUrl(d.id) });
+  };
+
+  const del = async (id: string) => {
+    if (!confirm('حذف هذه الوثيقة ومتجهاتها؟')) return;
+    await api.deleteKbDocument(id);
+    onChange();
+  };
+
+  return (
+    <div>
+      <div className="kb-section">الأنظمة المستوردة</div>
+      <LegalLaws stats={stats} />
+
+      <div className="kb-section">الوثائق المرفوعة</div>
+      {/* قبل وصول الردّ هيكلٌ بارتفاع الجدول لا فراغ: الجدول يحلّ محلّه في
+          موضعه فلا يُزيح ما تحته، ولا يقرأ المسؤول شاشةً فارغة على قاعدةٍ
+          مملوءة. */}
+      {docs === null ? (
+        <KbSkeleton rows={3} />
+      ) : docs.documents.length === 0 ? (
+        <div className="empty-state">لم تُرفع أي وثيقة بعد. ابدأ برفع أول وثيقة.</div>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table kb-docs-table">
+            <thead>
+              <tr>
+                <th>النظام</th>
+                <th>التصنيف</th>
+                <th>الجهة</th>
+                <th>الحالة</th>
+                <th>التضمين</th>
+                <th>المقاطع</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {docs.documents.map((d) => (
+                <Fragment key={d.id}>
+                  <tr>
+                    <td className="kb-doc-title">
+                      <bdi>{d.title}</bdi>
+                      {/* محورٌ ثالث غيرُ حال النظام وغيرُ حال التضمين: التتبّع
+                          اليوميّ قابل النسخة بمصدرها فوجده تغيّر. وتأخذ أيقونة
+                          «تحذير» ولونها — خطرٌ لم يقع بعد. */}
+                      {d.needs_update ? (
+                        <span className="pill warn">
+                          <Icon.warning size={ICON_SM} aria-hidden /> يحتاج مراجعة
+                        </span>
+                      ) : null}
+                    </td>
+                    <td>{d.category ?? '—'}</td>
+                    <td>{d.source_authority ?? '—'}</td>
+                    {/* عمودان لمحورين: حالُ النظام في الواقع، وموضعُ الوثيقة
+                        في الفهرس عندنا. وشارةٌ واحدة تخدمهما معاً كانت تجعل
+                        «ساري» تُقرأ جواباً عن «هل تُسترجَع؟». */}
+                    <td>{docStatusPill(d.status)}</td>
+                    <td>{embedPill(d.ingest_status, docs.vectorize)}</td>
+                    <td><bdi>{formatNumber(d.chunk_count ?? 0)}</bdi></td>
+                    <td className="kb-doc-actions">
+                      <button className="btn-sm primary" onClick={() => viewDoc(d)}>عرض</button>{' '}
+                      <VersionUpload docId={d.id} version={d.version} onDone={onChange} />{' '}
+                      <button className="btn-sm" onClick={() => setVersionsFor(versionsFor === d.id ? null : d.id)}>
+                        السجل{d.version > 1 ? <> (<bdi>{formatNumber(d.version)}</bdi>)</> : null}
+                      </button>{' '}
+                      <button className="btn-sm" onClick={() => api.reingestKbDocument(d.id).then(onChange)}>
+                        إعادة تضمين
+                      </button>{' '}
+                      <button className="btn-sm" onClick={() => del(d.id)}>
+                        حذف
+                      </button>
+                    </td>
+                  </tr>
+                  {versionsFor === d.id && (
+                    <tr>
+                      <td colSpan={7} className="kb-doc-versions">
+                        <VersionsList docId={d.id} onView={setViewer} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {viewer && <KbViewer target={viewer} onClose={() => setViewer(null)} />}
+    </div>
+  );
+}
+
+/**
+ * مصادر الإضافة — ثلاثة مساراتٍ لا ثلاثُ صيغِ ملفّ.
+ *
+ * **والمكان واحد والمسارات معلَنة.** الفرق بينها ليس في الامتداد بل فيما
+ * يُصنع بالنصّ بعده: المرفوع يُستخرج ويُصنَّف ويُقطَّع ثم يُضمَّن، والمستورَد
+ * يدخل بحدود مواده كما وردت. فمنطقةُ إفلاتٍ واحدة تُوجّه بالامتداد تُخفي
+ * هذا الفرق في حرفين، ثم يُفاجَأ المستورِد بمادةٍ قُطّعت أو بوثيقةٍ دخلت
+ * بلا تصنيف. ولذلك بطاقةٌ لكلٍّ تحمل سطرَه.
+ */
+const KB_SOURCES: { key: KbSource; label: string; note: string; glyph: keyof typeof Icon }[] = [
+  {
+    key: 'file',
+    label: 'رفع وثيقة',
+    note: 'ملف PDF أو Word أو صورة أو نصّ — يُستخرج محتواه ويُصنَّف ويُقطَّع ثم يُضمَّن',
+    glyph: 'upload',
+  },
+  {
+    key: 'text',
+    label: 'لصق النصّ',
+    note: 'عنوانٌ ونصّ — يمرّان بما تمرّ به الوثيقة المرفوعة سواء',
+    glyph: 'pasteText',
+  },
+  {
+    key: 'import',
+    label: 'استيراد مواد',
+    note: 'سطرٌ لكل مادة — تدخل بحدودها كما وردت، بلا استخراج ولا تقطيع ولا تصنيف',
+    glyph: 'import',
+  },
+];
+
+type KbSource = 'file' | 'text' | 'import';
+
+function KbIntake({ onAdded }: { onAdded: () => void }) {
+  const [source, setSource] = useState<KbSource>('file');
+  const [busy, setBusy] = useState(false);
   const [pasteTitle, setPasteTitle] = useState('');
   const [pasteText, setPasteText] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
+  // تبدُّل المصدر يُبدّل نموذجاً بنموذج، وطولاهما مختلفان.
+  useScrollReset(source);
+
+  const upload = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setBusy(true);
+    try {
+      for (const f of Array.from(files)) {
+        const fd = new FormData();
+        fd.append('file', f);
+        const res = await fetch('/api/kb/documents', { method: 'POST', body: fd, credentials: 'same-origin' });
+        if (!res.ok) throw new Error((await res.json()).error);
+      }
+      onAdded();
+    } catch (e: any) {
+      alert(e.message ?? 'فشل الرفع');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const uploadText = async () => {
     if (!pasteText.trim()) return alert('الصق نص النظام/اللائحة');
     if (!pasteTitle.trim()) return alert('أدخل عنوان الوثيقة');
-    setUploading(true);
+    setBusy(true);
     try {
       const fd = new FormData();
       fd.append('text', pasteText);
@@ -109,48 +517,12 @@ function KbTab() {
       if (!res.ok) throw new Error((await res.json()).error);
       setPasteText('');
       setPasteTitle('');
-      load();
+      onAdded();
     } catch (e: any) {
       alert(e.message ?? 'فشل الحفظ');
     } finally {
-      setUploading(false);
+      setBusy(false);
     }
-  };
-
-  const viewDoc = (d: any) => {
-    const kind = fileKind(d.r2_key);
-    setViewer({ title: d.title, kind, fileUrl: api.kbFileUrl(d.id), textUrl: api.kbTextUrl(d.id) });
-  };
-
-  const load = () => api.kbDocuments().then((r) => setDocs(r.documents)).catch(() => {});
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 5000); // تحديث حالة التضمين
-    return () => clearInterval(t);
-  }, []);
-
-  const upload = async (files: FileList | null) => {
-    if (!files?.length) return;
-    setUploading(true);
-    try {
-      for (const f of Array.from(files)) {
-        const fd = new FormData();
-        fd.append('file', f);
-        const res = await fetch('/api/kb/documents', { method: 'POST', body: fd, credentials: 'same-origin' });
-        if (!res.ok) throw new Error((await res.json()).error);
-      }
-      load();
-    } catch (e: any) {
-      alert(e.message ?? 'فشل الرفع');
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const del = async (id: string) => {
-    if (!confirm('حذف هذه الوثيقة ومتجهاتها؟')) return;
-    await api.deleteKbDocument(id);
-    load();
   };
 
   return (
@@ -166,112 +538,85 @@ function KbTab() {
           e.target.value = '';
         }}
       />
-      <div className="intake-toggle" style={{ marginBottom: 8 }}>
-        <button className={`seg ${mode === 'file' ? 'on' : ''}`} onClick={() => setMode('file')}>رفع ملف</button>
-        <button className={`seg ${mode === 'text' ? 'on' : ''}`} onClick={() => setMode('text')}>لصق النص</button>
-        <button className={`seg ${mode === 'import' ? 'on' : ''}`} onClick={() => setMode('import')}>استيراد</button>
-        {/* المراجعة وضعٌ رابع لا خانةٌ في الاستيراد: المحجوب يبقى محجوباً بعد
-            أن ينتهي الاستيراد بأيام، ومن يراجعه غير من رفع الملف. */}
-        <button className={`seg ${mode === 'review' ? 'on' : ''}`} onClick={() => setMode('review')}>مراجعة المواد</button>
+
+      {/* البطاقات باقيةٌ بعد الاختيار: البديلان المتروكان يبقيان مقروءَين،
+          فمن اختار الرفع لملف مواد يرى سطرَ الاستيراد قبل أن يُخطئ. */}
+      <div className="kb-sources" role="radiogroup" aria-label="مصدر الإضافة">
+        {KB_SOURCES.map((s) => {
+          const Glyph = Icon[s.glyph];
+          return (
+            <button
+              key={s.key}
+              type="button"
+              role="radio"
+              aria-checked={source === s.key}
+              className={`kb-source ${source === s.key ? 'on' : ''}`}
+              disabled={busy}
+              onClick={() => setSource(s.key)}
+            >
+              <span className="kb-source-head">
+                <Glyph size={ICON_MD} aria-hidden />
+                {s.label}
+              </span>
+              <span className="kb-source-note">{s.note}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {mode === 'review' ? (
-        <LegalReview />
-      ) : mode === 'import' ? (
+      {source === 'import' ? (
         <LegalImport />
-      ) : mode === 'file' ? (
-        <div className="dropzone" onClick={() => fileInput.current?.click()}>
-          {uploading ? (
-            <>
-              <span className="spinner" /> جارٍ الرفع والتصنيف…
-            </>
+      ) : source === 'file' ? (
+        <div className="dropzone" onClick={() => !busy && fileInput.current?.click()}>
+          {busy ? (
+            <><span className="spinner" /> جارٍ الرفع</>
           ) : (
-            <><Icon.upload size={ICON_SM} aria-hidden /> ارفع وثيقة نظام/لائحة (PDF · DOCX · صورة · نص) — سيُستخرج محتواها ويُصنَّف ويُضمَّن تلقائيًا</>
+            <><Icon.upload size={ICON_SM} aria-hidden /> اختر ملفات — PDF أو Word أو صورة أو نصّ</>
           )}
         </div>
       ) : (
-        <div style={{ marginBottom: 16 }}>
-          <input
-            placeholder="عنوان الوثيقة (مثال: نظام العمل)"
-            value={pasteTitle}
-            onChange={(e) => setPasteTitle(e.target.value)}
-            style={{ width: '100%', padding: 12, marginBottom: 8, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface-2)', color: 'var(--foreground)', fontFamily: 'inherit', fontSize: '0.875rem' }}
-          />
+        <div className="kb-paste">
+          <div className="field">
+            <label htmlFor="kb-paste-title">عنوان الوثيقة</label>
+            <input
+              id="kb-paste-title"
+              placeholder="نظام العمل"
+              value={pasteTitle}
+              disabled={busy}
+              onChange={(e) => setPasteTitle(e.target.value)}
+            />
+          </div>
           <textarea
-            className="cfg-prompt"
-            style={{ minHeight: 180 }}
-            placeholder="الصق نص النظام/اللائحة هنا…"
+            aria-label="نصّ النظام أو اللائحة"
+            className="tool-textarea"
+            placeholder="الصق نصّ النظام أو اللائحة"
             value={pasteText}
+            disabled={busy}
             onChange={(e) => setPasteText(e.target.value)}
           />
-          <button className="btn-sm primary" style={{ marginTop: 8 }} onClick={uploadText} disabled={uploading}>
-            {uploading ? <><span className="spinner" /> جارٍ الحفظ والتصنيف…</> : 'حفظ النص وتضمينه'}
+          <button className="btn-sm primary" onClick={uploadText} disabled={busy}>
+            {busy ? <><span className="spinner" /> جارٍ الحفظ</> : 'حفظ'}
           </button>
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* المستورَد والمرفوع مصدران مختلفان في تبويب واحد. وبلا عنوانين كان
-          «لم تُرفع أي وثيقة بعد» يُقرأ نفياً للمحتوى كلِّه — وواحدٌ وسبعون
-          نظاماً في القاعدة. */}
-      <div className="kb-section">الأنظمة المستوردة</div>
-      <LegalLaws />
-
-      <div className="kb-section">الوثائق المرفوعة</div>
-      {docs.length === 0 ? (
-        <div className="empty-state">لم تُرفع أي وثيقة بعد. ابدأ برفع أول وثيقة.</div>
-      ) : (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>النظام</th>
-              <th>التصنيف</th>
-              <th>الجهة</th>
-              <th>الحالة</th>
-              <th>التضمين</th>
-              <th>المقاطع</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {docs.map((d) => (
-              <Fragment key={d.id}>
-                <tr>
-                  <td style={{ fontWeight: 600 }}>
-                    {d.title}
-                    {d.needs_update ? <span className="pill warn" style={{ marginInlineStart: 8 }}>يحتاج مراجعة</span> : null}
-                  </td>
-                  <td>{d.category ?? '—'}</td>
-                  <td>{d.source_authority ?? '—'}</td>
-                  <td>{statusPill(d.status)}</td>
-                  <td>{statusPill(d.ingest_status)}</td>
-                  <td>{d.chunk_count ?? 0}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    <button className="btn-sm primary" onClick={() => viewDoc(d)}>عرض</button>{' '}
-                    <VersionUpload docId={d.id} version={d.version} onDone={load} />{' '}
-                    <button className="btn-sm" onClick={() => setVersionsFor(versionsFor === d.id ? null : d.id)}>
-                      السجل{d.version > 1 ? ` (${d.version})` : ''}
-                    </button>{' '}
-                    <button className="btn-sm" onClick={() => api.reingestKbDocument(d.id).then(load)}>
-                      إعادة تضمين
-                    </button>{' '}
-                    <button className="btn-sm" onClick={() => del(d.id)}>
-                      حذف
-                    </button>
-                  </td>
-                </tr>
-                {versionsFor === d.id && (
-                  <tr>
-                    <td colSpan={7} style={{ background: 'var(--surface-2)' }}>
-                      <VersionsList docId={d.id} onView={setViewer} />
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {viewer && <KbViewer target={viewer} onClose={() => setViewer(null)} />}
+/**
+ * هيكلٌ يشغل موضع المحتوى ريثما يصل.
+ *
+ * والغرض منعُ الإزاحة لا تزيينُ الانتظار: محتوىً يُحقَن في موضعٍ فارغ يدفع
+ * ما تحته، فيقرأ المسؤول شيئاً ثم يجده قد انتقل. وقياسُه تقريبيّ بطبعه —
+ * ثلاثةُ صفوفٍ لا تساوي واحداً وسبعين — لكن الأثر يقلّ ولا يبقى الفراغُ
+ * صفراً.
+ */
+function KbSkeleton({ rows }: { rows: number }) {
+  return (
+    <div className="kb-skeleton" aria-hidden>
+      {Array.from({ length: rows }, (_, i) => (
+        <span key={i} className="kb-skeleton-row" />
+      ))}
     </div>
   );
 }

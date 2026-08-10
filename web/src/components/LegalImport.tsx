@@ -4,10 +4,11 @@
 // تتحقّق من الأسطر بنفسها: التحقّق في الخادم وحده، ونسخُه هنا يخلق مصدرين
 // للحقيقة يفترقان أوّل تعديل في العقد. مهمّتها إيصال الأسطر وعرض تقريرها.
 //
-// ولا أيقونة في هذه الشاشة: «استيراد» ليس له مقابل مسجَّل في naf-icons.md،
-// واستعارة `Upload` تصادم «رفع» المسجَّلة لمعنى آخر.
+// ولا أيقونة في متن هذه الشاشة: أيقونة «استيراد» (`Import`) على بطاقة مصدرها
+// في «الإضافة» وحدها، فهي تفرّق المسار عن أخويه عند الاختيار. وتكرارُها هنا
+// يعلو نموذجاً اختير سلفاً — والمختار لا يُعرَّف بنفسه ثانيةً.
 import { useEffect, useRef, useState } from 'react';
-import { api, type LegalImportDiff, type LegalImportRecord, type LegalImportReport, type LegalStats } from '../lib/api';
+import { api, type LegalImportDiff, type LegalImportRecord, type LegalImportReport } from '../lib/api';
 import { ImportCompare } from './ImportCompare';
 import { formatDate } from '../lib/format';
 import { formatNumber } from '../lib/format';
@@ -46,7 +47,6 @@ export function LegalImport() {
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState<{ name: string; file: number; files: number; batch: number; batches: number } | null>(null);
   const [results, setResults] = useState<FileResult[]>([]);
-  const [stats, setStats] = useState<LegalStats | null>(null);
   /* الخياران مفعَّلان افتراضياً في الشاشة، ويُنزَعان بنقرة.
      
      والمقصد أن يمضي إدخال الأنظمة بلا وقوفٍ عند كل خانةٍ تختلف. وما يفعله
@@ -64,7 +64,6 @@ export function LegalImport() {
      بنقرةٍ يعرف صاحبها ما يقول. */
   const [correction, setCorrection] = useState(false);
   const [history, setHistory] = useState<LegalImportRecord[]>([]);
-  const [draining, setDraining] = useState(false);
   /* نافذة إعادة الرفع تُوقف الحلقة حتى يقرّر المستورِد. والوعد هو ما يوقفها:
      الحلقة تنتظر جوابه، والنافذة هي التي تُحلّه. */
   const [conflict, setConflict] = useState<
@@ -72,32 +71,14 @@ export function LegalImport() {
   >(null);
   const input = useRef<HTMLInputElement>(null);
 
-  const loadStats = () => {
-    api.legalStats().then(setStats).catch(() => {});
+  /* سجلّ الاستيراد وحده يُقرأ هنا: حالُ المتن وحالُ الفهرس وزرُّ «تضمين الآن»
+     انتقلت إلى شريط حال قاعدة المعرفة وقسم «المحتوى». وكانت هذه الشاشة تعرض
+     أعدادَ الشريط نفسها في آخرها، فيُقرأ العدد الواحد في موضعين ويُصدَّق
+     أحدثُهما — وحالُ الفهرس لا يبلغ من لا يفتح الاستيراد أصلاً. */
+  const loadHistory = () => {
     api.legalImports().then((r) => setHistory(r.imports)).catch(() => {});
   };
-  useEffect(loadStats, []);
-
-  /**
-   * يصرّف ما ينتظر التضمين الآن بدل انتظار الـCron.
-   *
-   * دفعاتٌ متتابعة حتى ينتهي أو يتوقّف التقدّم: نداءٌ واحد لا يسع آلاف
-   * المقاطع — لكلٍّ منها طلبٌ إلى نموذج التضمين وآخر إلى الفهرس، وللنداء سقف.
-   */
-  const drain = async () => {
-    setDraining(true);
-    try {
-      for (;;) {
-        const r = await api.legalEmbedPending(500);
-        if (!r.embedded || !r.remaining) break;
-      }
-    } catch {
-      // يبقى المعلَّق معلَّقاً ويصرّفه الـCron — لا ضرر يستدعي إنذاراً.
-    } finally {
-      setDraining(false);
-      loadStats();
-    }
-  };
+  useEffect(loadHistory, []);
 
   /**
    * يستورد ملفاً واحداً.
@@ -199,7 +180,7 @@ export function LegalImport() {
     } finally {
       setBusy(false);
       setNow(null);
-      loadStats();
+      loadHistory();
     }
   };
 
@@ -259,7 +240,9 @@ export function LegalImport() {
             ) : null}
           </>
         ) : (
-          <>اختر ملفات JSONL — سطر مستقل لكل مادة، تُستورَد كما هي ولا يُعاد تقطيعها</>
+          // السطر الشارح على بطاقة المصدر فوقها، فلا يُعاد هنا: منطقة الإفلات
+          // تقول ما يُختار لا ما يقع به.
+          <>اختر ملفات JSONL</>
         )}
       </div>
 
@@ -389,46 +372,6 @@ export function LegalImport() {
         </>
       )}
 
-      {stats && stats.chunks === 0 && !busy ? (
-        <div className="empty-state">لا محتوى نظامي بعد. استورد أول ملف.</div>
-      ) : null}
-
-      {stats && stats.chunks > 0 ? (
-        <div className="table-scroll"><table className="data-table">
-          <thead>
-            <tr>
-              <th>الأنظمة</th>
-              <th>المقاطع</th>
-              <th>السارية</th>
-              <th>المنسوخة</th>
-              <th>بانتظار المراجعة</th>
-              <th>تعديل غير مطبَّق</th>
-              <th>ينتظر التضمين</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><bdi>{formatNumber(stats.laws)}</bdi></td>
-              <td><bdi>{formatNumber(stats.chunks)}</bdi></td>
-              <td><bdi>{formatNumber(stats.effective)}</bdi></td>
-              <td><bdi>{formatNumber(stats.repealed)}</bdi></td>
-              <td><bdi>{formatNumber(stats.needs_review)}</bdi></td>
-              <td><bdi>{formatNumber(stats.amendment_pending)}</bdi></td>
-              <td>
-                <bdi>{formatNumber(stats.pending_embeddings)}</bdi>
-                {/* الفهرس المتجهي غير مهيّأ: البحث اللفظي يعمل والدلاليّ لا.
-                    تُقال هنا لأن رقماً معلَّقاً لا ينقص بلا سبب ظاهر يُقلق. */}
-                {!stats.vectorize ? <span className="pill pending">الفهرس المتجهي غير مهيّأ</span> : null}
-                {stats.vectorize && stats.pending_embeddings > 0 ? (
-                  <button className="btn-sm" disabled={draining} onClick={drain}>
-                    {draining ? <><span className="spinner" /> جارٍ التضمين</> : 'تضمين الآن'}
-                  </button>
-                ) : null}
-              </td>
-            </tr>
-          </tbody>
-        </table></div>
-      ) : null}
     </div>
   );
 }

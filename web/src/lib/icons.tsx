@@ -10,7 +10,12 @@ import {
   ArrowDown,
   Ban,
   BookX,
+  Boxes,
+  ClipboardPaste,
   Copy,
+  Import as ImportIcon,
+  LoaderCircle,
+  Unplug,
   ExternalLink,
   FileClock,
   FileDiff,
@@ -92,6 +97,8 @@ export const Icon = {
   delete: Trash2,          // حذف
   search: Search,          // بحث
   upload: Upload,          // رفع
+  pasteText: ClipboardPaste, // لصق النصّ — وليست ClipboardList (سجلّ النظام)
+  import: ImportIcon,      // استيراد
   download: Download,      // تنزيل
   export: FileOutput,      // تصدير
   share: Share2,           // مشاركة
@@ -124,6 +131,12 @@ export const Icon = {
   systemCheck: Activity,   // فحص النظام — الفعل
   connected: Link2,        // مربوط
   disconnected: Link2Off,  // غير مربوط
+  vectorIndex: Boxes,      // الفهرس المتجهي — وليست Database (قاعدة بيانات)
+  // حالات تضمين الوثيقة المرفوعة — naf-icons.md تحت «تضمين الوثيقة المرفوعة».
+  // و«مضمَّنة» تأخذ `vectorIndex` أعلاه — أيقونةَ المكان الذي صارت فيه — فلا
+  // صفّ لها، ولا `CircleCheck`: صحٌّ أخضر على وثيقةٍ لم تُقرأ يُقرأ اعتماداً.
+  embedding: LoaderCircle, // جارٍ التضمين — عملٌ يجري، كـ«جارٍ التنفيذ»
+  awaitingIndex: Unplug,   // بانتظار الفهرس — مرفقٌ لم يُوصَل، وليست Clock ولا Link2Off
   // الحالات
   approved: CircleCheck,   // معتمد
   pendingReview: Clock,    // بانتظار المراجعة
