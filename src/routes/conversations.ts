@@ -64,8 +64,12 @@ app.get('/:id', async (c) => {
   )
     .bind(id)
     .all();
+  /* `message_id` و`parse_status` معهما: الشاشة تقسم المرفقات بهما.
+     ما له رسالةٌ يُعرض في فقاعتها، وما لا رسالة له يعود إلى صندوق الكتابة —
+     رُفع ولم يُرسَل، فيراه صاحبُه حيث تركه لا في مكانٍ لا يُعرَف. */
   const attachments = await c.env.DB.prepare(
-    'SELECT id, filename, mime, size, created_at FROM attachments WHERE conversation_id = ? ORDER BY created_at ASC'
+    `SELECT id, message_id, filename, mime, size, parse_status, created_at
+     FROM attachments WHERE conversation_id = ? ORDER BY created_at ASC`
   )
     .bind(id)
     .all();

@@ -167,11 +167,22 @@ export interface DocTemplate {
   marginSideMm: number;
 }
 
+/**
+ * حال استخراج نصّ المرفق.
+ *
+ * `pending` يُقرأ ولم ينتهِ، و`ready` نصُّه يبلغ المساعد، و`error` ملفٌّ قائم
+ * يُفتح ويُنزَّل ولا نصَّ له في السياق — والفروق الثلاثة تُعرض ولا تُخمَّن.
+ */
+export type ParseStatus = 'pending' | 'ready' | 'error';
+
 export interface Attachment {
   id: string;
+  /** الرسالة التي أُرسل معها. `null` — رُفع ولم يُرسَل، فمكانُه صندوق الكتابة. */
+  message_id: string | null;
   filename: string;
   mime: string;
   size: number;
+  parse_status: ParseStatus;
   created_at: number;
 }
 
@@ -645,6 +656,12 @@ export const api = {
   deleteConversation: (id: string) => req(`/conversations/${id}`, { method: 'DELETE' }),
 
   // الملفات
+  /**
+   * يرفع ملفاً ويردّ قبل استخراج نصّه.
+   *
+   * `parse_status` في الردّ `pending` دائماً: الاستخراج يجري في الخادم بعده،
+   * وتُسأل عنه `attachment` حتى يستقرّ.
+   */
   uploadFile: async (conversationId: string, file: File) => {
     const fd = new FormData();
     fd.append('file', file);
@@ -652,8 +669,17 @@ export const api = {
     const data = await res.json().catch(() => ({}));
     if (handleAuthRedirect(res, data)) return pending<any>();
     if (!res.ok) throw new Error((data as any).error ?? 'فشل الرفع');
-    return data;
+    return data as { id: string; filename: string; size: number; mime: string; parse_status: ParseStatus };
   },
+  /** حال المرفق — تُسأل ما دامت الشارة تدور. */
+  attachment: (id: string) => req<Attachment>(`/files/attachments/${id}`),
+  /** الملف كما رُفع — للنافذة العائمة. و`download` يقلب الترويسة إلى تنزيل. */
+  attachmentFileUrl: (id: string, download = false) =>
+    `/api/files/attachments/${id}/file${download ? '?download=1' : ''}`,
+  /** النصّ المستخرَج — لِما لا يُعرض في إطار. */
+  attachmentTextUrl: (id: string) => `/api/files/attachments/${id}/text`,
+  /** يحذف مرفقاً لم يُرسَل بعد. والمرسَل جزءٌ من سجلّ المحادثة فلا يُحذف. */
+  deleteAttachment: (id: string) => req<{ ok: true }>(`/files/attachments/${id}`, { method: 'DELETE' }),
   exportUrl: (messageId: string, format: 'docx' | 'txt') => `/api/files/export/${messageId}?format=${format}`,
   /** قالب المستند وهل رُفعت رأسية — تقرأهما نافذة الطباعة قبل أن تبني الصفحة. */
   docTemplate: () => req<{ template: DocTemplate; letterhead: boolean }>('/files/doc-template'),
@@ -959,18 +985,30 @@ export interface StreamHandlers {
   onError?: (err: string) => void;
 }
 
+/** ما يحمله الدور إلى الخادم. */
+export interface ChatTurn {
+  message: string;
+  forceInternet: boolean;
+  bilingual: boolean;
+  /** مرفقاتُ هذا الدور. يختمها الخادم برسالته فتلزمها ولا تلحق بما بعدها. */
+  attachmentIds?: string[];
+}
+
 export async function streamChat(
   conversationId: string,
-  message: string,
-  forceInternet: boolean,
-  bilingual: boolean,
+  turn: ChatTurn,
   handlers: StreamHandlers
 ): Promise<void> {
   const res = await fetch(`/api/chat/${conversationId}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ message, force_internet: forceInternet, bilingual }),
+    body: JSON.stringify({
+      message: turn.message,
+      force_internet: turn.forceInternet,
+      bilingual: turn.bilingual,
+      attachment_ids: turn.attachmentIds ?? [],
+    }),
   });
 
   if (!res.ok || !res.body) {

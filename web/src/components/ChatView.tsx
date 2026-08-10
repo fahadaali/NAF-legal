@@ -18,6 +18,7 @@ import RegulationRequestModal from './RegulationRequestModal';
 import MessageContent from './MessageContent';
 import SelectionToolbar, { type SelectionAnchor } from './SelectionToolbar';
 import SourceModal, { isOpenableCitation } from './SourceModal';
+import AttachmentViewer from './AttachmentViewer';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD, ICON_LG } from '../lib/icons';
 
 interface Props {
@@ -89,6 +90,8 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   const [generating, setGenerating] = useState(false);
   /** المصدر المفتوح في النافذة، إن فُتح. */
   const [source, setSource] = useState<Citation | null>(null);
+  /** المرفق المفتوح في النافذة العائمة، إن فُتح. */
+  const [openAttachment, setOpenAttachment] = useState<Attachment | null>(null);
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const messagesEnd = useRef<HTMLDivElement>(null);
   const messagesBox = useRef<HTMLDivElement>(null);
@@ -284,6 +287,31 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     return map;
   }, [highlights]);
 
+  /* ══ المرفقات: بابان لا واحد ══
+   *
+   * `message_id` يقسمها. ما له رسالةٌ يُعرض في فقاعتها — هناك ذهب الملف،
+   * ومع هذا السؤال بعينه لحق. وما لا رسالة له يبقى في صندوق الكتابة
+   * منتظراً إرساله، ويُحذف من هناك.
+   *
+   * وكان القسمان واحداً: كلُّ مرفقات المحادثة فوق الصندوق أبداً. فالشارة
+   * تقول «لم يُرسَل» عن ملفٍّ أُرسل قبل عشرة أدوار، ولا شيء في الشاشة يقول
+   * أين ذهب — وهو ما يجعل الملف «مرفوعاً في مكانٍ لا يُعرَف». */
+  const pendingAttachments = useMemo(
+    () => attachments.filter((a) => !a.message_id),
+    [attachments]
+  );
+
+  const attachmentsByMessage = useMemo(() => {
+    const map = new Map<string, Attachment[]>();
+    for (const a of attachments) {
+      if (!a.message_id) continue;
+      const list = map.get(a.message_id) ?? [];
+      list.push(a);
+      map.set(a.message_id, list);
+    }
+    return map;
+  }, [attachments]);
+
   /* ══ التحديد ══
    *
    * النصّ في المحادثة قابلٌ للتحديد كأي نصّ، وشريطُ التحديد يظهر فوق ما
@@ -448,7 +476,18 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     try {
       for (const f of Array.from(files)) {
         const r = await api.uploadFile(conversationId, f);
-        setAttachments((a) => [...a, { id: r.id, filename: r.filename, mime: r.mime, size: r.size, created_at: Date.now() }]);
+        setAttachments((a) => [
+          ...a,
+          {
+            id: r.id,
+            message_id: null,
+            filename: r.filename,
+            mime: r.mime,
+            size: r.size,
+            parse_status: r.parse_status,
+            created_at: Date.now(),
+          },
+        ]);
       }
     } catch (e: any) {
       alert(e.message ?? 'فشل رفع الملف');
@@ -457,16 +496,68 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     }
   };
 
+  /* استخراج النصّ يجري في الخادم بعد ردّ الرفع، فتُسأل حالُه حتى تستقرّ.
+     والسؤال يقف عند أوّل شارةٍ تستقرّ لا يمضي بلا نهاية: `pending` وحدها
+     تُسأل، ومن يفتح الشاشة بلا مرفقٍ منتظر لا يرسل نداءً أصلاً. */
+  const parsingIds = pendingAttachments
+    .filter((a) => a.parse_status === 'pending')
+    .map((a) => a.id)
+    .join(',');
+  useEffect(() => {
+    if (!parsingIds) return;
+    let live = true;
+    const tick = window.setInterval(async () => {
+      const rows = await Promise.all(
+        parsingIds.split(',').map((id) => api.attachment(id).catch(() => null))
+      );
+      if (!live) return;
+      const settled = rows.filter((r): r is Attachment => !!r && r.parse_status !== 'pending');
+      if (settled.length) {
+        setAttachments((list) =>
+          list.map((a) => settled.find((s) => s.id === a.id) ?? a)
+        );
+      }
+    }, 2000);
+    return () => {
+      live = false;
+      window.clearInterval(tick);
+    };
+  }, [parsingIds]);
+
+  /** يحذف مرفقاً لم يُرسَل بعد — من صندوق الكتابة كما وُضع فيه. */
+  const removeAttachment = async (id: string) => {
+    try {
+      await api.deleteAttachment(id);
+      setAttachments((list) => list.filter((a) => a.id !== id));
+    } catch (e: any) {
+      // رسالةُ الخادم إن جاءت — «المرفق مُرسَل مع رسالته ولا يُحذف منها» تقول
+      // السبب، والعامّة تقول ما العمل. وكلتاهما مسجَّلة.
+      alert(e.message ?? 'تعذّر حذف المرفق. أعد المحاولة بعد قليل');
+    }
+  };
+
+  /* دورٌ لا يُرسَل ونصُّ مرفقه يُقرأ بعد.
+     المرفق أُلحق **بهذا السؤال**، وإرسالُه قبل أن يُقرأ يُنتج جواباً لا يراه —
+     ثم يُعاد السؤال. والشارة تقول لماذا الزرُّ معطَّل، فلا يحتاج سطراً ثانياً. */
+  const attachmentsParsing = pendingAttachments.some((a) => a.parse_status === 'pending');
+
   const send = (explicit?: string) => {
     const text = (explicit ?? input).trim();
-    if (!text || !conversationId || sending) return;
+    if (!text || !conversationId || sending || attachmentsParsing) return;
     if (!explicit) setInput('');
     if (textarea.current) textarea.current.style.height = 'auto';
+
+    /* المرفقات تُرسل بمعرِّفاتها وتغادر صندوق الكتابة في اللحظة نفسها.
+       الخادم يختمها برسالة هذا الدور، والشاشة تُسقطها من الصندوق فوراً —
+       ولا تنتظر جولةً إلى الخادم وعودة: شارةٌ تبقى ثانيةً بعد الإرسال تقول
+       إن الملف لم يُرسَل، وهو مرسَل. وتعود إلى فقاعتها عند أوّل جلبة. */
+    const sentIds = pendingAttachments.map((a) => a.id);
+    if (sentIds.length) setAttachments((list) => list.filter((a) => !sentIds.includes(a.id)));
 
     // دورٌ سابق انقطع فبقي معروضاً: يُمسح عند بدء التالي لا قبله.
     if (getChatStream(conversationId)) clearChatStream(conversationId);
     pinned.current = true;
-    startChatStream({ conversationId, message: text, internet, bilingual });
+    startChatStream({ conversationId, message: text, internet, bilingual, attachmentIds: sentIds });
   };
 
   // تسجيل صوتي للوقائع ثم تفريغه عربيًا (§3)
@@ -622,6 +713,16 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
               <div className="msg-avatar">{m.role === 'user' ? 'أنت' : 'ن'}</div>
               <div className="msg-body">
                 <div className="msg-role">{m.role === 'user' ? 'أنت' : 'مستشار ناف'}</div>
+                {/* مرفقاتُ هذه الرسالة، فوق نصِّها كما أُرسلت معه. وهي منفذ
+                    النافذة العائمة: لا زرَّ ثالث في الفقاعة، الشارةُ نفسها
+                    تفتح ما تسمّيه. */}
+                {(attachmentsByMessage.get(m.id) ?? []).length > 0 && (
+                  <div className="attachments-row">
+                    {attachmentsByMessage.get(m.id)!.map((a) => (
+                      <AttachChip key={a.id} attachment={a} onOpen={() => setOpenAttachment(a)} />
+                    ))}
+                  </div>
+                )}
                 <div className="msg-content">
                   {m.streaming && !m.content ? (
                     <div className="typing-dots">
@@ -750,12 +851,15 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       ) : (
       <div className="composer">
         <div className="composer-inner">
-          {attachments.length > 0 && (
+          {pendingAttachments.length > 0 && (
             <div className="attachments-row">
-              {attachments.map((a) => (
-                <span key={a.id} className="attach-chip">
-                  <Icon.attachment size={ICON_SM} aria-hidden /> <bdi>{a.filename}</bdi>
-                </span>
+              {pendingAttachments.map((a) => (
+                <AttachChip
+                  key={a.id}
+                  attachment={a}
+                  onOpen={() => setOpenAttachment(a)}
+                  onRemove={() => removeAttachment(a.id)}
+                />
               ))}
             </div>
           )}
@@ -773,7 +877,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             />
             <button
               className="icon-btn"
-              title="رفع ملف"
+              title="إرفاق ملف"
               onClick={() => fileInput.current?.click()}
               disabled={uploading}
             >
@@ -819,7 +923,11 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
               placeholder="اكتب رسالتك… (Enter للإرسال، Shift+Enter لسطر جديد)"
               rows={1}
             />
-            <button className="send-btn" onClick={() => send()} disabled={sending || !input.trim()}>
+            <button
+              className="send-btn"
+              onClick={() => send()}
+              disabled={sending || attachmentsParsing || !input.trim()}
+            >
               {sending ? <span className="spinner" /> : <Icon.send size={ICON_MD} aria-hidden />}
             </button>
           </div>
@@ -878,6 +986,67 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           }
         />
       )}
+
+      {openAttachment && (
+        <AttachmentViewer attachment={openAttachment} onClose={() => setOpenAttachment(null)} />
+      )}
     </>
+  );
+}
+
+/**
+ * شارةُ مرفق — في صندوق الكتابة قبل الإرسال، وفي فقاعة رسالته بعده.
+ *
+ * **وواحدةٌ للموضعين لا اثنتان.** الشارة نفسها تنتقل من الصندوق إلى الفقاعة
+ * عند الإرسال، وشكلان لها يجعلان الانتقال يبدو استبدالاً — ملفٌّ اختفى وآخر
+ * ظهر. والفرق بين الموضعين زرُّ الحذف وحده: يُعرض لما لم يُرسَل، ولا يُعرض
+ * لما صار جزءاً من سجلّ المحادثة.
+ *
+ * **والشارة زرٌّ يفتح، لا وسمٌ يُقرأ.** بلا ذلك لا منفذ إلى الملف أصلاً:
+ * يُرفع ويُرسَل ولا يراه صاحبُه ثانيةً.
+ */
+function AttachChip({
+  attachment,
+  onOpen,
+  onRemove,
+}: {
+  attachment: Attachment;
+  onOpen: () => void;
+  onRemove?: () => void;
+}) {
+  const parsing = attachment.parse_status === 'pending';
+  const failed = attachment.parse_status === 'error';
+
+  return (
+    <span className={`attach-chip ${failed ? 'warn' : ''}`}>
+      <button
+        type="button"
+        className="attach-open"
+        onClick={onOpen}
+        title={failed ? 'تعذّر استخراج النصّ من هذا الملف. يبقى مرفقاً يُفتح ويُنزَّل، ولا يبلغ نصُّه المساعد.' : undefined}
+      >
+        <Icon.attachment size={ICON_SM} aria-hidden />
+        <bdi className="attach-name">{attachment.filename}</bdi>
+      </button>
+
+      {/* حالٌ واحدة تُقال في كل مرّة، ولا وسمَ على النجاح: شارةٌ بلا وسمٍ
+          تعني أن نصّ الملف بلغ المساعد. */}
+      {parsing && (
+        <span className="attach-state" role="status">
+          <span className="spinner" /> جارٍ استخراج النصّ
+        </span>
+      )}
+      {failed && (
+        <span className="attach-state warn">
+          <Icon.failed size={ICON_SM} aria-hidden /> تعذّر استخراج النصّ
+        </span>
+      )}
+
+      {onRemove && (
+        <button type="button" className="attach-remove" onClick={onRemove} title="حذف المرفق" aria-label="حذف المرفق">
+          <Icon.delete size={ICON_SM} aria-hidden />
+        </button>
+      )}
+    </span>
   );
 }

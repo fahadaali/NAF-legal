@@ -50,7 +50,7 @@ const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }
 app.post('/:conversationId', async (c) => {
   const user = c.get('user');
   const conversationId = c.req.param('conversationId');
-  const { message, force_internet, bilingual } = await c.req.json().catch(() => ({}));
+  const { message, force_internet, bilingual, attachment_ids } = await c.req.json().catch(() => ({}));
   if (!message?.trim()) return c.json({ error: 'الرسالة فارغة' }, 400);
 
   // تحقّق الملكية
@@ -75,21 +75,52 @@ app.post('/:conversationId', async (c) => {
      مخرجٍ من هذا المسار: الاستيضاح، وفشل فتح البثّ، وختام الدور. */
   await markGenerating(c.env, conversationId);
 
-  // المرفقات المرتبطة بالمحادثة (نصّها المستخرَج)
-  const atts = await c.env.DB.prepare(
-    'SELECT filename, parsed_text FROM attachments WHERE conversation_id = ? AND parsed_text IS NOT NULL'
-  )
-    .bind(conversationId)
-    .all<{ filename: string; parsed_text: string }>();
-  const hasAttachments = (atts.results?.length ?? 0) > 0;
+  /* المرفقات المرسَلة مع هذا الدور تُختم برسالته.
+     والختم مقيَّدٌ بثلاثة: أن يكون المرفق في هذه المحادثة، وأن يكون لم
+     يُرسَل بعد (`message_id IS NULL`) — فمرفقُ دورٍ سابق لا يُنتزَع من
+     فقاعته ليُعاد هنا، ولو أرسلت الشاشة معرِّفه. */
+  const sentIds: string[] = Array.isArray(attachment_ids)
+    ? attachment_ids.filter((x: unknown) => typeof x === 'string').slice(0, 10)
+    : [];
+  if (sentIds.length) {
+    await c.env.DB.batch(
+      sentIds.map((attId) =>
+        c.env.DB.prepare(
+          'UPDATE attachments SET message_id = ? WHERE id = ? AND conversation_id = ? AND message_id IS NULL'
+        ).bind(userMsgId, attId, conversationId)
+      )
+    );
+  }
 
   // سجل الرسائل السابق (سياق المحادثة) — نأخذ أحدث 40 رسالة ثم نعيد ترتيبها زمنيًا
   const historyDesc = await c.env.DB.prepare(
-    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 40'
+    'SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 40'
   )
     .bind(conversationId)
-    .all<{ role: string; content: string }>();
+    .all<{ id: string; role: string; content: string }>();
   const history = { results: (historyDesc.results ?? []).slice().reverse() };
+
+  /* نصوص المرفقات — لرسائل هذه النافذة وحدها، لا للمحادثة كلِّها.
+     الرسالة تخرج من النافذة فيخرج مرفقُها معها، وإدراجُ نصِّ ملفٍّ سقط
+     سياقُه يُبقي الجواب مبنيّاً على ما لم يعد أحد يراه. */
+  const msgIds = (history.results ?? []).map((m) => m.id);
+  const attRows = msgIds.length
+    ? await c.env.DB.prepare(
+        `SELECT message_id, filename, parsed_text FROM attachments
+         WHERE message_id IN (${msgIds.map(() => '?').join(',')})
+           AND parsed_text IS NOT NULL AND parsed_text != ''`
+      )
+        .bind(...msgIds)
+        .all<{ message_id: string; filename: string; parsed_text: string }>()
+    : { results: [] as { message_id: string; filename: string; parsed_text: string }[] };
+
+  const attByMessage = new Map<string, { filename: string; parsed_text: string }[]>();
+  for (const row of attRows.results ?? []) {
+    const list = attByMessage.get(row.message_id) ?? [];
+    list.push({ filename: row.filename, parsed_text: row.parsed_text });
+    attByMessage.set(row.message_id, list);
+  }
+  const hasAttachments = attByMessage.size > 0;
 
   // [1] المُخطِّط
   const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet, user.id, history.results);
@@ -144,9 +175,18 @@ app.post('/:conversationId', async (c) => {
   const effectiveConfig = await getEffectiveConfig(c.env, plan.consultation_type);
   let system = effectiveConfig.system_prompt;
   if (bilingual) system += BILINGUAL_INSTRUCTION;
-  // نصوص المرفقات تُدرَج في كل دور (لأنها غير محفوظة داخل سجل الرسائل)، لذا
-  // نضبط سقفًا للحجم الكلّي حتى لا يتضخّم البرومبت مع تعدّد الملفات.
-  const attachmentsBlock = hasAttachments ? buildAttachmentsBlock(atts.results!) : '';
+  /* نصُّ المرفق يُدرَج **عند دوره** لا في كل دور.
+
+     وكان يُدرَج في كل دورٍ لأن المرفق كان مربوطاً بالمحادثة ولا يعرف أيُّ
+     سؤالٍ حمله. فمحادثةٌ بخمسة ملفات تعيد نصوصها الخمسة كاملةً في كل سؤال
+     — كلفةً تتضاعف بطول المحادثة، وسياقاً يقرأ فيه المساعد عقداً أُرسل قبل
+     عشرة أدوار كأنه أُرسل الآن. والآن لكلِّ رسالةٍ مرفقاتُها، فتُدرَج معها
+     حيث وقعت.
+
+     والسقف يبقى: يُحسب لكل دورٍ على حدة لأنه سقفُ رسالةٍ واحدة. */
+  const attachmentsBlock = attByMessage.has(userMsgId)
+    ? buildAttachmentsBlock(attByMessage.get(userMsgId)!)
+    : '';
 
   const userContent = `${ragContext}${attachmentsBlock}\n\n${message}`.trim();
 
@@ -154,7 +194,13 @@ app.post('/:conversationId', async (c) => {
     ...(history.results ?? [])
       .filter((m) => m.role !== 'system')
       .slice(0, -1) // نستثني آخر رسالة (وهي رسالة المستخدم الحالية) لنُدرجها مع السياق
-      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      .map((m) => {
+        const own = attByMessage.get(m.id);
+        return {
+          role: m.role as 'user' | 'assistant',
+          content: own ? `${buildAttachmentsBlock(own)}\n\n${m.content}`.trim() : m.content,
+        };
+      }),
     { role: 'user' as const, content: userContent },
   ];
 
