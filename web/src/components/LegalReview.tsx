@@ -23,6 +23,8 @@ import {
 import { DiffText } from '../lib/diff';
 import { formatDate, formatNumber, formatTime } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
+import { useScrollReset } from '../lib/scrollBox';
+import { docTypeLabel } from '../lib/labels';
 import { ReviewStatusPill } from './LegalArticleView';
 
 /**
@@ -99,6 +101,13 @@ export function LegalReview() {
   }, [queue, filters]);
 
   useEffect(load, [load]);
+
+  /* تبدُّل الطابور أو المرشِّح يُبدّل كلَّ ما تحت اللوحة، فتُفتح الشاشة من
+     أعلاها. ولا تُعاد على `at`: بطاقة المادة أسفل الشاشة والمراجع ينظر
+     إليها أصلاً، فإعادتُه إلى الأعلى مع كل «التالي» تُبعده عن عمله. */
+  useScrollReset(
+    [queue ?? '', filters.lawId ?? '', filters.capturedAt ?? '', filters.docType ?? ''].join('|')
+  );
 
   /* أخوات الرقم الواحد تُعرض مجتمعة: الحكم عليها لا يصحّ إلا كذلك — أهي مادة
      مضافة مشروعة أم خطأ تقطيع؟ لا يُعرف إلا بقراءة الاثنتين. والمجموعة
@@ -195,7 +204,19 @@ export function LegalReview() {
     }
   };
 
-  if (!dash) return null;
+  /* هيكلٌ لا `null` ريثما تصل اللوحة. وكانت الشاشة تُرسَم بلا شيء ثم تُحقَن
+     اللوحةُ والطوابيرُ والمرشّحاتُ دفعةً واحدة **فوق** ما تحتها، فيقفز
+     ما يقرؤه المراجع. */
+  if (!dash) {
+    return (
+      <div className="kb-skeleton" aria-hidden>
+        <span className="kb-skeleton-row" />
+        <span className="kb-skeleton-row" />
+        <span className="kb-skeleton-row" />
+        <span className="kb-skeleton-row" />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -289,9 +310,12 @@ export function LegalReview() {
             }}
           >
             <option value="">كل الأنواع</option>
+            {/* القيمة هي المخزَّن — التصفية تُطابق ما في ملفّ الاستيراد —
+                والمعروض لفظُه العربيّ. وكانت القائمة تعرض `law` بجانب جدولٍ
+                يقول «نظام» عن الشيء نفسه في التبويب نفسه. */}
             {docTypes.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {docTypeLabel(t)}
               </option>
             ))}
           </select>

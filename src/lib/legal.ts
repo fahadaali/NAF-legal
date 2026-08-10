@@ -210,6 +210,16 @@ const HIT_COLUMNS = `c.seq, c.id, c.law_id, c.parent_law_id, c.doc_type, c.artic
 const EMBED_MAX_CHARS = 8000;
 
 /**
+ * نصوصُ نداء التضمين الواحد.
+ *
+ * عشرةٌ لا عشرون: النداء يحمل حتى `AI_BATCH × EMBED_MAX_CHARS` حرفاً —
+ * بثمانين ألفاً عند عشرة ومئةٍ وستين ألفاً عند عشرين — وكِبَرُ الحمولة هو ما
+ * يستدعي المهلة وحدَّ المعدّل من Workers AI. والدفعة الصغيرة تخسر أقلّ حين
+ * تتعثّر: عشرةُ مقاطع تُعاد لا عشرون.
+ */
+const AI_BATCH = 10;
+
+/**
  * تنبيه المادة المعدَّلة التي لم يُطبَّق تعديلها.
  *
  * نصُّه مسجَّل في `naf-terms.md` تحت «تنبيهات المادة»، ويرافق النتيجة من طبقة
@@ -1927,6 +1937,10 @@ export interface EmbedResult {
   purged?: number;
   /** سبب التخطّي إن لم يُنفَّذ التضمين — الفهرس المتجهي غير مهيّأ. */
   skipped?: string;
+  /** مقاطعُ تعثّرت دفعتُها فبقيت بلا متجه — تُعاد في الشوط التالي. */
+  failed?: number;
+  /** سببُ أوّل دفعةٍ تعثّرت. يُقال ولا يُخمَّن. */
+  error?: string;
 }
 
 /**
@@ -1977,37 +1991,56 @@ export async function embedPending(env: Env, limit = 200): Promise<EmbedResult> 
 
   const pending = rows.results ?? [];
   let embedded = 0;
-  const AI_BATCH = 20;
+  let failed = 0;
+  let firstError: string | undefined;
 
   for (let i = 0; i < pending.length; i += AI_BATCH) {
     const slice = pending.slice(i, i + AI_BATCH);
-    // القصّ هنا يمسّ **مدخل المتجه وحده** — المقطع يبقى مقطعاً واحداً،
-    // ونصّه المعروض كاملاً كما ورد. ويُحصى في تقرير الاستيراد ليُرى.
-    const vectors = await embedBatch(env, slice.map((r) => r.embed_text.slice(0, EMBED_MAX_CHARS)));
-    await env.VECTORIZE.upsert(
-      slice.map((r, j) => ({
-        id: vectorId(r.seq),
-        values: vectors[j],
-        // بيانات وصفية للاطّلاع ولتصفيةٍ مستقبلية على مستوى الفهرس. وصحّة
-        // التصفية لا تعتمد عليها: الشرط يُطبَّق في SQL بعد الاسترجاع.
-        metadata: {
-          kind: 'legal',
-          law_id: r.law_id ?? '',
-          doc_type: r.doc_type ?? '',
-          status: r.status,
-          is_repealed: r.is_repealed,
-          article_no: r.article_no_norm ?? '',
-        },
-      }))
-    );
-    const now = Date.now();
-    await env.DB.batch(
-      slice.map((r) => env.DB.prepare('UPDATE legal_chunks SET embedded_at = ? WHERE seq = ?').bind(now, r.seq))
-    );
-    embedded += slice.length;
+    /* الدفعة معزولة: تعثّرها يُحصى ولا يُسقط ما بعدها.
+
+       وكانت الحلقة بلا حرس، فرميةٌ واحدة — حدُّ معدّل من Workers AI، أو نصٌّ
+       يرفضه النموذج — تخرج من `embedPending` كلِّها. فيقف الـCron وتقف
+       «تضمين الآن» عند أوّل عثرة، ويبقى الباقي معلَّقاً بلا سبب ظاهر. */
+    try {
+      // القصّ هنا يمسّ **مدخل المتجه وحده** — المقطع يبقى مقطعاً واحداً،
+      // ونصّه المعروض كاملاً كما ورد. ويُحصى في تقرير الاستيراد ليُرى.
+      const vectors = await embedBatch(env, slice.map((r) => r.embed_text.slice(0, EMBED_MAX_CHARS)));
+      await env.VECTORIZE.upsert(
+        slice.map((r, j) => ({
+          id: vectorId(r.seq),
+          values: vectors[j],
+          // بيانات وصفية للاطّلاع ولتصفيةٍ مستقبلية على مستوى الفهرس. وصحّة
+          // التصفية لا تعتمد عليها: الشرط يُطبَّق في SQL بعد الاسترجاع.
+          metadata: {
+            kind: 'legal',
+            law_id: r.law_id ?? '',
+            doc_type: r.doc_type ?? '',
+            status: r.status,
+            is_repealed: r.is_repealed,
+            article_no: r.article_no_norm ?? '',
+          },
+        }))
+      );
+      /* الوسم **بعد** نجاح الرفع لا قبله ولا بمعزلٍ عنه.
+
+         وكان يقع في كل حال: تُرفع الدفعة أو تفشل، ثم تُوسم صفوفُها
+         `embedded_at` على أي حال. فمقطعٌ بلا متجه — أو بمتجهٍ `undefined`
+         مرّره العقدُ القديم بلا فحص — يخرج من عدّ المنتظر ولا يعود إليه
+         أبداً. عطبٌ صامت لا يُصلحه إلا إعادة تضمينٍ يدوية لا يعرف أحد
+         أنها لازمة. */
+      const now = Date.now();
+      await env.DB.batch(
+        slice.map((r) => env.DB.prepare('UPDATE legal_chunks SET embedded_at = ? WHERE seq = ?').bind(now, r.seq))
+      );
+      embedded += slice.length;
+    } catch (e: any) {
+      // بلا وسم: الصفوف تبقى منتظرة فيلتقطها الشوط التالي أو الـCron.
+      failed += slice.length;
+      firstError ??= String(e?.message ?? e);
+    }
   }
 
-  return { embedded, remaining: await pendingCount(), purged };
+  return { embedded, remaining: await pendingCount(), purged, failed, error: firstError };
 }
 
 /**

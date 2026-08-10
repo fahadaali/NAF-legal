@@ -1,4 +1,5 @@
 // عميل API للواجهة
+import { loginWithReturn, rememberLoginUrl, sessionLost } from './session';
 
 /** أدوار هذه المنصة، وألفاظها في naf-terms.md §١٠. لا رابع لها. */
 export type PlatformRole = 'admin' | 'editor' | 'viewer';
@@ -167,11 +168,22 @@ export interface DocTemplate {
   marginSideMm: number;
 }
 
+/**
+ * حال استخراج نصّ المرفق.
+ *
+ * `pending` يُقرأ ولم ينتهِ، و`ready` نصُّه يبلغ المساعد، و`error` ملفٌّ قائم
+ * يُفتح ويُنزَّل ولا نصَّ له في السياق — والفروق الثلاثة تُعرض ولا تُخمَّن.
+ */
+export type ParseStatus = 'pending' | 'ready' | 'error';
+
 export interface Attachment {
   id: string;
+  /** الرسالة التي أُرسل معها. `null` — رُفع ولم يُرسَل، فمكانُه صندوق الكتابة. */
+  message_id: string | null;
   filename: string;
   mime: string;
   size: number;
+  parse_status: ParseStatus;
   created_at: number;
 }
 
@@ -191,37 +203,29 @@ export interface Attachment {
    ============================================================ */
 
 /**
- * وجهة العودة تُصحَّح من موضع المتصفّح.
+ * يقرأ فرعَي المنع. يعيد `true` إن تولّى الأمر — وعندها لا يُكمل النداء ولا
+ * يُظهر خطأً: إمّا أن الصفحة على وشك أن تُغادر، وإمّا أن الشريط رُفع.
  *
- * الوسيط يبني `next` من مسار الطلب — وهو مسار برمجي (`/api/auth/me` مثلاً).
- * فالعودة بعده تضع القارئ أمام ردّ JSON خام. والمتصفّح وحده يعرف موضعه
- * الحقيقي، فمنه تُؤخذ الوجهة.
+ * **والتحويل يتبع من بدأ النداء.** نداءٌ بدأه القارئ — إرسالٌ أو حفظ أو فتحُ
+ * شاشة — يُحوَّل عنده فوراً: هو واقفٌ أمام نتيجة لن تأتي. ونداءٌ بدأه مؤقّتٌ
+ * في الخلفية — إشعاراتٌ كلَّ دقيقة، أو جسُّ دورٍ يجري — لا ينتظره أحد، فتحويلُه
+ * ينتزع الشاشة من تحت عين قارئها بلا سبب يراه. ذاك يرفع شريطاً ويترك الشاشة.
  *
- * ومسار الرفض يُستثنى: وضعُه وجهةً يعيد القارئ إلى الرفض بعد الدخول، فتدور
- * الحلقة ولا تُقرأ الرسالة أصلاً.
+ * ووجهة العودة من موضع المتصفّح لا من مسار الطلب: الوسيط يبني `next` من
+ * المسار — وهو مسار برمجي (`/api/auth/me` مثلاً) — فالعودة بعده تضع القارئ
+ * أمام ردّ JSON خام.
  */
-function withCurrentNext(login: string): string {
-  try {
-    const url = new URL(login, window.location.origin);
-    if (window.location.pathname === '/denied') url.searchParams.delete('next');
-    else url.searchParams.set('next', window.location.pathname + window.location.search);
-    return url.toString();
-  } catch {
-    return login;
-  }
-}
-
-/**
- * يقرأ فرعَي المنع. يعيد `true` إن بدأ تحويل — وعندها لا يُكمل النداء ولا
- * يُظهر خطأً: الصفحة على وشك أن تُغادر، ورسالةُ خطأ تومض قبلها ضجيج.
- */
-function handleAuthRedirect(res: Response, data: unknown): boolean {
+function handleAuthRedirect(res: Response, data: unknown, background = false): boolean {
   const body = (data ?? {}) as { login?: string; denied?: string };
 
   if (res.status === 401 && body.login) {
-    window.location.href = withCurrentNext(body.login);
+    rememberLoginUrl(body.login);
+    if (background) sessionLost();
+    else loginWithReturn(body.login);
     return true;
   }
+  // الرفض حكمٌ على العضوية لا انتهاءُ رمز: لا يُصلحه دخولٌ جديد، فلا شريط
+  // يَعِد بالعودة. وصفحةُ الرفض تقول السبب، وهي وجهةٌ بذاتها.
   if (res.status === 403 && body.denied) {
     window.location.href = body.denied;
     return true;
@@ -232,6 +236,24 @@ function handleAuthRedirect(res: Response, data: unknown): boolean {
 /** وعدٌ لا يُحلّ: التحويل جارٍ، فلا نتيجة بعده ولا خطأ. */
 function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
+}
+
+/**
+ * حصيلةُ شوطٍ من تصريف طابور التضمين — للطابورين معاً.
+ *
+ * و`failed` هنا لأن الشوط يمضي على دفعات معزولة: دفعةٌ تتعثّر تُترك في
+ * الطابور ولا توقف ما بعدها. فبلا هذا الحقل ينقص العدد قليلاً ثم يقف،
+ * ولا شيء في الشاشة يقول لماذا — فيعيد المسؤول الضغط ويظنّ الزرّ معطَّلاً.
+ */
+export interface EmbedDrain {
+  embedded: number;
+  remaining: number;
+  /** ما تعثّرت دفعتُه فبقي في الطابور. */
+  failed?: number;
+  /** سببُ أوّل تعثّر — للسجلّ لا للشاشة: نصُّه من وقت التشغيل. */
+  error?: string;
+  /** سبب التخطّي — الفهرس المتجهي غير مهيّأ. */
+  skipped?: string;
 }
 
 /** حالة المحتوى النظامي المستورد. */
@@ -572,14 +594,20 @@ export interface LegalImportReport {
   error?: string;
 }
 
-async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
+/**
+ * `background` يوسم نداءً بدأه مؤقّتٌ لا قارئ.
+ *
+ * وهو الوسم الوحيد الذي يفرّق مسارَي ٤٠١، فلا يُوضع إلا على جَسٍّ دوريّ. ووضعُه
+ * على نداءٍ ينتظره القارئ يجعله يقف أمام شاشةٍ لا تتحرّك.
+ */
+async function req<T>(path: string, opts: RequestInit = {}, background = false): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...opts,
     headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
     credentials: 'same-origin',
   });
   const data = await res.json().catch(() => ({}));
-  if (handleAuthRedirect(res, data)) return pending<T>();
+  if (handleAuthRedirect(res, data, background)) return pending<T>();
   if (!res.ok) throw new Error((data as any).error ?? 'خطأ في الاتصال');
   return data as T;
 }
@@ -632,19 +660,31 @@ export const api = {
   },
   createConversation: (consultation_type: string) =>
     req<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ consultation_type }) }),
-  getConversation: (id: string) =>
+  /**
+   * جلبةُ محادثة — بفتحها، أو بجَسِّ دورٍ يجري كلَّ أربع ثوانٍ.
+   *
+   * و`background` بيد المستدعي لأن النداء واحد والباعث اثنان: من فتح المحادثة
+   * ينتظر ظهورها، ومن يجسّ دوراً يجري لا ينتظر شيئاً.
+   */
+  getConversation: (id: string, background = false) =>
     req<{
       conversation: Conversation;
       messages: Message[];
       attachments: Attachment[];
       /** دورٌ يجري في الخلفية الآن — بثُّه ذهب مع الصفحة وردُّه في الطريق. */
       generating?: boolean;
-    }>(`/conversations/${id}`),
+    }>(`/conversations/${id}`, {}, background),
   renameConversation: (id: string, title: string) =>
     req(`/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteConversation: (id: string) => req(`/conversations/${id}`, { method: 'DELETE' }),
 
   // الملفات
+  /**
+   * يرفع ملفاً ويردّ قبل استخراج نصّه.
+   *
+   * `parse_status` في الردّ `pending` دائماً: الاستخراج يجري في الخادم بعده،
+   * وتُسأل عنه `attachment` حتى يستقرّ.
+   */
   uploadFile: async (conversationId: string, file: File) => {
     const fd = new FormData();
     fd.append('file', file);
@@ -652,8 +692,17 @@ export const api = {
     const data = await res.json().catch(() => ({}));
     if (handleAuthRedirect(res, data)) return pending<any>();
     if (!res.ok) throw new Error((data as any).error ?? 'فشل الرفع');
-    return data;
+    return data as { id: string; filename: string; size: number; mime: string; parse_status: ParseStatus };
   },
+  /** حال المرفق — تُسأل ما دامت الشارة تدور. */
+  attachment: (id: string) => req<Attachment>(`/files/attachments/${id}`, {}, true),
+  /** الملف كما رُفع — للنافذة العائمة. و`download` يقلب الترويسة إلى تنزيل. */
+  attachmentFileUrl: (id: string, download = false) =>
+    `/api/files/attachments/${id}/file${download ? '?download=1' : ''}`,
+  /** النصّ المستخرَج — لِما لا يُعرض في إطار. */
+  attachmentTextUrl: (id: string) => `/api/files/attachments/${id}/text`,
+  /** يحذف مرفقاً لم يُرسَل بعد. والمرسَل جزءٌ من سجلّ المحادثة فلا يُحذف. */
+  deleteAttachment: (id: string) => req<{ ok: true }>(`/files/attachments/${id}`, { method: 'DELETE' }),
   exportUrl: (messageId: string, format: 'docx' | 'txt') => `/api/files/export/${messageId}?format=${format}`,
   /** قالب المستند وهل رُفعت رأسية — تقرأهما نافذة الطباعة قبل أن تبني الصفحة. */
   docTemplate: () => req<{ template: DocTemplate; letterhead: boolean }>('/files/doc-template'),
@@ -661,16 +710,27 @@ export const api = {
   letterheadUrl: () => '/api/files/letterhead',
 
   // الإدارة
-  kbDocuments: () => req<{ documents: any[] }>('/kb/documents'),
+  /**
+   * وثائق قاعدة المعرفة، ومعها حالُ الفهرس المتجهي وعددُ المنتظر منها.
+   *
+   * `vectorize` جزءٌ من الردّ لا نداءٌ ثانٍ: حالُ الوثيقة `pending` لا تُقرأ
+   * إلا به — مع فهرسٍ مهيّأ هي «جارٍ التضمين»، ومع غير مهيّأ «بانتظار
+   * الفهرس»، وبينهما فرقُ عملٍ يجري وعملٍ لن يجري.
+   */
+  kbDocuments: (background = false) =>
+    req<{ documents: any[]; vectorize: boolean; pending_embeddings: number }>('/kb/documents', {}, background),
   deleteKbDocument: (id: string) => req(`/kb/documents/${id}`, { method: 'DELETE' }),
   reingestKbDocument: (id: string) => req(`/kb/documents/${id}/reingest`, { method: 'POST' }),
+  /** يصرّف الوثائق المنتظرة للتضمين — نظير `legalEmbedPending` لمسار الرفع. */
+  kbEmbedPending: (limit = 5) =>
+    req<EmbedDrain>(`/kb/documents/embed-pending?limit=${limit}`, { method: 'POST' }),
   kbVersions: (id: string) => req<{ versions: any[] }>(`/kb/documents/${id}/versions`),
   kbTextUrl: (id: string) => `/api/kb/documents/${id}/text`,
   kbFileUrl: (id: string) => `/api/kb/documents/${id}/file`,
   kbVersionTextUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/text`,
   kbVersionFileUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/file`,
   // المحتوى النظامي المستورد — عقد الاستيراد في docs/legal-import.md
-  legalStats: () => req<LegalStats>('/legal/stats'),
+  legalStats: (background = false) => req<LegalStats>('/legal/stats', {}, background),
   legalLaws: () => req<{ laws: LegalLaw[] }>('/legal/laws'),
   /** بحث المسؤول في المحتوى النظامي — لفظيّ بلا نموذج تضمين. */
   legalSearch: (q: string, limit = 20) =>
@@ -755,9 +815,7 @@ export const api = {
   legalAmendment: (id: string) =>
     req<{ amendment: LegalAmendment }>(`/legal/articles/${encodeURIComponent(id)}/amendment`),
   legalEmbedPending: (limit = 1000) =>
-    req<{ embedded: number; remaining: number; skipped?: string }>(`/legal/embed-pending?limit=${limit}`, {
-      method: 'POST',
-    }),
+    req<EmbedDrain>(`/legal/embed-pending?limit=${limit}`, { method: 'POST' }),
   /**
    * يستورد دفعة أسطر JSONL.
    *
@@ -876,7 +934,9 @@ export const api = {
   deleteDeadline: (id: string) => req(`/deadlines/${id}`, { method: 'DELETE' }),
 
   // الإشعارات
-  notifications: () => req<{ notifications: any[]; unread: number }>('/notifications'),
+  /* جَسٌّ كلَّ دقيقة ما دامت الصفحة مفتوحة — وهو أوّل من يكتشف انتهاء الرمز،
+     وأبعدُ ما يكون عن فعلٍ بدأه القارئ. */
+  notifications: () => req<{ notifications: any[]; unread: number }>('/notifications', {}, true),
   markNotificationsRead: (id?: string) => req('/notifications/read', { method: 'POST', body: JSON.stringify({ id }) }),
 
   // المسوّدات: النُسخ والتحرير والاعتماد
@@ -945,18 +1005,30 @@ export interface StreamHandlers {
   onError?: (err: string) => void;
 }
 
+/** ما يحمله الدور إلى الخادم. */
+export interface ChatTurn {
+  message: string;
+  forceInternet: boolean;
+  bilingual: boolean;
+  /** مرفقاتُ هذا الدور. يختمها الخادم برسالته فتلزمها ولا تلحق بما بعدها. */
+  attachmentIds?: string[];
+}
+
 export async function streamChat(
   conversationId: string,
-  message: string,
-  forceInternet: boolean,
-  bilingual: boolean,
+  turn: ChatTurn,
   handlers: StreamHandlers
 ): Promise<void> {
   const res = await fetch(`/api/chat/${conversationId}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ message, force_internet: forceInternet, bilingual }),
+    body: JSON.stringify({
+      message: turn.message,
+      force_internet: turn.forceInternet,
+      bilingual: turn.bilingual,
+      attachment_ids: turn.attachmentIds ?? [],
+    }),
   });
 
   if (!res.ok || !res.body) {

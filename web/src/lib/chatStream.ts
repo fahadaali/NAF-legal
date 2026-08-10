@@ -133,6 +133,8 @@ export interface StartChatOptions {
   message: string;
   internet: boolean;
   bilingual: boolean;
+  /** معرِّفات المرفقات المرسَلة مع هذا الدور — تُختم برسالته في الخادم. */
+  attachmentIds?: string[];
 }
 
 /**
@@ -176,7 +178,12 @@ async function run(conversationId: string, opts: StartChatOptions) {
   };
 
   try {
-    await streamChat(conversationId, opts.message, opts.internet, opts.bilingual, {
+    await streamChat(conversationId, {
+      message: opts.message,
+      forceInternet: opts.internet,
+      bilingual: opts.bilingual,
+      attachmentIds: opts.attachmentIds,
+    }, {
       onMeta: (m) => {
         meta = m;
       },

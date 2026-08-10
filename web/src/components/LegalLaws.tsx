@@ -7,8 +7,10 @@
 // يضيع عند أوّل إعادة رفع للنظام — الاستبدال على `id` يكتب فوقها. فما
 // يُصحَّح يُصحَّح في الملف ثم يُعاد استيراده.
 import { Fragment, useEffect, useState } from 'react';
-import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw } from '../lib/api';
+import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw, type LegalStats } from '../lib/api';
 import { formatDate, formatNumber } from '../lib/format';
+import { useScrollReset } from '../lib/scrollBox';
+import { docTypeLabel } from '../lib/labels';
 import { ArticleCard, ArticleFlags, ArticleNotices, groupArticleParts } from './LegalArticleView';
 
 /** أسماء الحقول التي تُقارَن، بالعربية — كما في نافذة إعادة الرفع. */
@@ -26,22 +28,6 @@ const FIELD_LABELS: Record<string, string> = {
 const PAGE = 25;
 
 /**
- * أنواع الأدوات النظامية بالعربية.
- *
- * `doc_type` يأتي من الملف كما كتبه مُعِدُّه، وعرضُ `law` في ترويسةٍ عربية
- * ركاكة. والمقابلات هنا للعرض وحده — المخزَّن يبقى كما ورد، فالتصفية على
- * النوع تُطابق ما في الملف لا ما نعرضه.
- */
-const DOC_TYPE_LABELS: Record<string, string> = {
-  law: 'نظام',
-  regulation: 'لائحة',
-  decision: 'قرار',
-  circular: 'تعميم',
-};
-
-const docTypeLabel = (t: string | null) => (t ? (DOC_TYPE_LABELS[t] ?? t) : '—');
-
-/**
  * موضع المادة من نظامها: الباب والفصل والعنوان الحرّ.
  *
  * نصُّها من الملف كما ورد — «الباب الخامس: علاقات العمل» — فلا لفظَ من عندنا
@@ -49,7 +35,7 @@ const docTypeLabel = (t: string | null) => (t ? (DOC_TYPE_LABELS[t] ?? t) : '—
  */
 const sectionHeading = (a: LegalArticle) => [a.book, a.chapter, a.section].filter(Boolean).join(' — ');
 
-export function LegalLaws() {
+export function LegalLaws({ stats }: { stats?: LegalStats | null }) {
   const [laws, setLaws] = useState<LegalLaw[] | null>(null);
   const [openLaw, setOpenLaw] = useState<string | null>(null);
   const [q, setQ] = useState('');
@@ -58,6 +44,10 @@ export function LegalLaws() {
   useEffect(() => {
     api.legalLaws().then((r) => setLaws(r.laws)).catch(() => setLaws([]));
   }, []);
+
+  /* فتحُ نظامٍ والرجوعُ منه شاشتان تتبادلان الموضع نفسه: من فتح النظام
+     الحادي والسبعين من آخر الجدول كان يجد صفحته مفتوحةً من وسطها. */
+  useScrollReset(openLaw ?? 'list');
 
   /* البحث في المحتوى: لفظيٌّ بلا نموذج تضمين — بحثُ مسؤولٍ في نصٍّ مفهرس
      لا استرجاعٌ لإجابة. والاسم يُرشَّح هنا في الصفحة، فقائمة الأنظمة عندها
@@ -74,7 +64,15 @@ export function LegalLaws() {
   }, [q]);
 
   if (openLaw) return <LawDetail lawId={openLaw} onBack={() => setOpenLaw(null)} onOpen={setOpenLaw} />;
-  if (!laws?.length) return null;
+
+  /* ريثما يصل الردّ هيكلٌ لا فراغ، وبعده جدولٌ أو دعوةٌ إلى العمل.
+     وكان يُرجع `null` في الحالين: فتُرسَم الشاشة بلا هذا القسم، ثم يصل
+     واحدٌ وسبعون نظاماً فتُحقَن **فوق** ما يقرأه المسؤول — وهو أصلُ
+     «تطلع محتويات فوق لم تكن ظاهرة». */
+  if (laws === null) return <div className="kb-skeleton" aria-hidden><span className="kb-skeleton-row" /><span className="kb-skeleton-row" /><span className="kb-skeleton-row" /></div>;
+  if (!laws.length) {
+    return <div className="empty-state">لم يُستورد أي نظام بعد. ابدأ باستيراد أول ملف مواد.</div>;
+  }
 
   /* الأنظمة المطابقة تُشتقّ من المواد التي طابقت: الفهرس اللفظي يحوي اسم
      النظام ورقم المادة مع نصّها، فالبحث بالاسم يُصيب مواده. ولا يُعاد
@@ -84,6 +82,27 @@ export function LegalLaws() {
 
   return (
     <>
+      {/* حالُ المتن — ما يُسترجَع منه وما خرج وما ينتظر دمج تعديله. كان في
+          آخر شاشة الاستيراد بجانب أعداد شريط الحال نفسها، فيُقرأ العدد
+          الواحد في موضعين. وموضعه هنا: وصفُ ما في القاعدة لا وصفُ إضافةٍ
+          تجري. */}
+      {stats && stats.chunks > 0 ? (
+        <dl className="kb-counts kb-counts--inline">
+          <div className="kb-count">
+            <dt>الداخلة في الاسترجاع</dt>
+            <dd><bdi>{formatNumber(stats.effective)}</bdi></dd>
+          </div>
+          <div className="kb-count">
+            <dt>المنسوخة</dt>
+            <dd><bdi>{formatNumber(stats.repealed)}</bdi></dd>
+          </div>
+          <div className="kb-count">
+            <dt>تعديل غير مطبَّق</dt>
+            <dd><bdi>{formatNumber(stats.amendment_pending)}</bdi></dd>
+          </div>
+        </dl>
+      ) : null}
+
       <div className="search-page-box">
         <input placeholder="ابحث باسم النظام أو في نصّ مواده" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>

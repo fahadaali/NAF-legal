@@ -358,8 +358,44 @@ a { color: var(--primary); }
   background: var(--card);
 }
 .composer-inner { max-width: 840px; margin: 0 auto; }
-.attachments-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.attach-chip { font-size: 0.875rem; background: var(--muted); border: 1px solid var(--border); padding: 4px 8px; border-radius: var(--radius-lg); display: flex; align-items: center; gap: 8px; }
+/* ══ شارة المرفق ══
+ *
+ * موضعان بشكلٍ واحد: فوق صندوق الكتابة قبل الإرسال، وفي فقاعة الرسالة بعده.
+ * والفرق بينهما زرُّ الحذف وحده — انظر `AttachChip` في `ChatView.tsx`.
+ *
+ * والصفُّ في الفقاعة يأخذ هامشه السفلي نفسه، فيفصل المرفقات عن نصِّ الرسالة
+ * كما يفصلها عن الصندوق. */
+.attachments-row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); }
+.attach-chip {
+  font-size: var(--text-sm); background: var(--muted); border: 1px solid var(--border);
+  padding-block: var(--space-1); padding-inline: var(--space-2);
+  border-radius: var(--radius-lg); display: flex; align-items: center; gap: var(--space-2);
+  max-width: 100%;
+}
+/* التعذّر يُلوَّن ولا يُلوَّن وحده: الأيقونة والنصّ معه في `.attach-state`.
+   واللون `warning` لا `destructive` — الملف قائمٌ يُفتح ويُنزَّل. */
+.attach-chip.warn { border-color: var(--warning); background: var(--warning-soft); }
+
+/* الشارة زرٌّ يفتح النافذة، فلا حدود له ولا خلفية: هو الشارة نفسها. */
+.attach-open {
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+  background: none; border: none; padding: 0; margin: 0;
+  color: inherit; font: inherit; cursor: pointer; text-align: start;
+}
+.attach-open:hover .attach-name { text-decoration: underline; }
+.attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 18rem; }
+
+.attach-state {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  font-size: var(--text-xs); color: var(--muted-foreground); white-space: nowrap;
+}
+.attach-state.warn { color: var(--warning-strong); }
+
+.attach-remove {
+  display: grid; place-items: center; background: none; border: none; padding: 0;
+  color: var(--muted-foreground); cursor: pointer; line-height: 1;
+}
+.attach-remove:hover { color: var(--destructive); }
 .composer-box {
   display: flex; align-items: flex-end; gap: 8px; border: 1px solid var(--border);
   border-radius: var(--radius-xl); padding: 8px 8px; background: var(--input); transition: border-color 0.2s;
@@ -425,7 +461,11 @@ a { color: var(--primary); }
 /* ── لوحة الإدارة والأدوات ── */
 .admin-wrap { flex: 1; overflow-y: auto; padding: 32px; }
 .admin-inner { max-width: 1020px; margin: 0 auto; }
-.admin-inner > h1 {
+/* عنوان اللوحة من السلّم لا بقيمةٍ في السطر: كان `1.5rem` مكتوباً في
+   `style` فلا يتبع السلّم ولا يظهر في بحث الانحراف. */
+.admin-title {
+  margin-top: 0;
+  font-size: var(--text-2xl); line-height: var(--text-2xl--line-height);
   font-weight: 700; color: var(--foreground);
 }
 .admin-tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
@@ -538,6 +578,23 @@ a { color: var(--primary); }
   color: var(--foreground); line-height: 1; display: grid; place-items: center;
 }
 .modal-close:hover { border-color: var(--destructive); color: var(--destructive); }
+/* أزرار ترويسة النافذة — كانت `style` سطريّة بقيمٍ خام في `KbViewer`. */
+.modal-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+/* ══ شريط انتهاء الجلسة ══
+ *
+ * فوق الهيكل كلِّه ويدفعه لا يطفو عليه: طبقةٌ عائمة تغطّي ترويسةً أو صندوق
+ * كتابة، والشريط يبقى إلى أن يضغط القارئ — فتغطيتُه دائمة لا لحظية.
+ * ولونه `warning`: العمل قائمٌ وما كُتب محفوظ، والدخول يستأنفه. */
+.session-bar {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: var(--space-2); padding: var(--space-2) var(--space-4);
+  background: var(--warning-soft); color: var(--warning-strong);
+  border-block-end: 1px solid var(--warning);
+  font-size: var(--text-sm); text-align: center;
+}
+.session-bar .btn-sm { background: var(--card); color: var(--foreground); }
+.modal-actions .btn-sm { display: inline-flex; align-items: center; gap: var(--space-1); }
 .modal-body { flex: 1; overflow: auto; background: var(--background); }
 /* صفحات PDF بيضاء دائماً بغضّ النظر عن الثيم — القيمة خام عن قصد،
    بموجب استثناء «مستندات الطباعة و PDF» في CLAUDE.md §1. */
@@ -738,6 +795,113 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .law-pager { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-block: var(--space-4); color: var(--muted-foreground); font-size: 0.875rem; }
 /* عنوان قسمٍ داخل التبويب: يفصل المستورَد عن المرفوع فلا يُقرأ أحدهما مكان الآخر. */
 .kb-section { margin-block: var(--space-6) var(--space-2); font-size: 0.875rem; font-weight: 700; color: var(--muted-foreground); }
+
+/* ── قاعدة المعرفة: شريط الحال، ثم الأقسام، ثم مصادر الإضافة ── */
+
+/* شريط الحال — أعلى التبويب، ظاهرٌ في الأقسام الثلاثة. */
+.kb-status {
+  display: grid; gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-4);
+}
+/* الأعداد تلتفّ ولا تُقصّ: خمسةٌ لا تسع سطراً واحداً عند 375px. */
+.kb-counts { display: flex; flex-wrap: wrap; gap: var(--space-5); margin: 0; }
+.kb-count { display: grid; gap: var(--space-1); }
+.kb-count dt { font-size: var(--text-xs); line-height: var(--text-xs--line-height); color: var(--muted-foreground); }
+.kb-count dd {
+  margin: 0; font-size: var(--text-lg); line-height: var(--text-lg--line-height);
+  font-weight: 700; color: var(--foreground); font-variant-numeric: tabular-nums;
+}
+/* أعدادٌ داخل قسمٍ لا في الشريط: أصغر وأخفت، فلا تزاحم الشريط في الرتبة. */
+.kb-counts--inline { gap: var(--space-4); margin-bottom: var(--space-3); }
+.kb-counts--inline .kb-count dd { font-size: var(--text-base); line-height: var(--text-base--line-height); }
+
+/* حال الفهرس — سطرٌ يظهر حين يستحقّ الظهور وحده. */
+.kb-index {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  margin: 0; padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--muted); color: var(--muted-foreground);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height);
+}
+.kb-index > span { flex: 1 1 16rem; }
+.kb-index svg { flex: none; }
+/* غيرُ المهيّأ تحذير: المسؤول رفع وثيقةً يظنّها وصلت ولم تصل. */
+.kb-index.warn { background: var(--warning-soft); color: var(--warning-strong); }
+
+/* أقسام قاعدة المعرفة — تنقّلٌ داخل التبويب، فرتبتُه دون شريط التبويبات. */
+.kb-nav {
+  display: flex; flex-wrap: wrap; gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--muted); border-radius: var(--radius-lg);
+  margin-bottom: var(--space-4);
+}
+.kb-nav-item {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: none; background: none; border-radius: var(--radius-md);
+  color: var(--muted-foreground); font-family: inherit;
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 600;
+  transition: color 0.18s var(--motion-ease, ease-out), background 0.18s var(--motion-ease, ease-out);
+}
+.kb-nav-item:hover { color: var(--foreground); }
+.kb-nav-item.on { background: var(--card); color: var(--foreground); box-shadow: var(--shadow-xs); }
+
+/* مصادر الإضافة — ثلاث بطاقات، تبقى بعد الاختيار ليُقرأ المتروك. */
+.kb-sources { display: grid; gap: var(--space-3); grid-template-columns: 1fr; margin-bottom: var(--space-4); }
+@media (min-width: 720px) { .kb-sources { grid-template-columns: repeat(3, 1fr); } }
+.kb-source {
+  display: grid; gap: var(--space-2); align-content: start;
+  padding: var(--space-4);
+  text-align: start;
+  border: 1px solid var(--border); border-radius: var(--radius-xl);
+  background: var(--card); color: var(--muted-foreground); font-family: inherit;
+  transition: border-color 0.18s var(--motion-ease, ease-out), box-shadow 0.18s var(--motion-ease, ease-out);
+}
+.kb-source:hover:not(:disabled) { border-color: var(--primary); }
+.kb-source:disabled { opacity: 0.6; }
+/* المختار يُعرف بالحدّ والظلّ لا باللون وحده: قاعدةُ «لا تعتمد على اللون
+   وحده» تسري على الاختيار كما تسري على الحالة. */
+.kb-source.on {
+  border-color: var(--primary); box-shadow: var(--shadow-sm);
+  background: var(--primary-soft);
+}
+.kb-source-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  color: var(--foreground); font-weight: 700;
+  font-size: var(--text-base); line-height: var(--text-base--line-height);
+}
+.kb-source.on .kb-source-head { color: var(--primary-strong); }
+.kb-source-note { font-size: var(--text-sm); line-height: var(--text-sm--line-height); }
+
+/* نموذج لصق النصّ */
+.kb-paste { display: grid; gap: var(--space-3); }
+.kb-paste .field { margin-bottom: 0; }
+.kb-paste .btn-sm { justify-self: start; }
+
+/* هيكلُ الانتظار — يشغل موضع المحتوى فلا يُزيحه وصولُه. */
+.kb-skeleton { display: grid; gap: var(--space-2); margin-block: var(--space-3); }
+.kb-skeleton-row {
+  display: block; height: var(--space-7);
+  border-radius: var(--radius-md); background: var(--muted);
+  animation: kb-skeleton-breath 1.6s var(--motion-ease, ease-in-out) infinite;
+}
+@keyframes kb-skeleton-breath { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+/* من يطلب تقليل الحركة يرى الهيكل ساكناً — وهو يؤدّي غرضه ساكناً. */
+@media (prefers-reduced-motion: reduce) { .kb-skeleton-row { animation: none; } }
+
+/* جدول الوثائق — سبعة أعمدة وخمسة أزرار لا تسع عرض اللوحة، فيُمرَّر الجدول
+   كتلةً واحدة داخل حاويته. وبلا حدٍّ أدنى كان يُضغط بدل أن يُمرَّر: عمود
+   العنوان ينهار إلى كلمةٍ في السطر، وشارةُ «بانتظار الفهرس» تنكسر نصفين. */
+.kb-docs-table { min-width: 56rem; }
+.kb-doc-title { min-width: 12rem; font-weight: 600; }
+.kb-doc-title .pill { margin-inline-start: var(--space-2); }
+.kb-doc-actions { white-space: nowrap; }
+.kb-doc-versions { background: var(--muted); }
+/* شارةُ الحال لا تنكسر: «بانتظار الفهرس» في سطرين تُقرأ حالين. */
+.data-table .pill { white-space: nowrap; }
 /* ── مقارنة إعادة الرفع: القديم والجديد جنباً إلى جنب ── */
 .compare-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .compare-row h4 { margin: 0 0 var(--space-2); font-size: 0.875rem; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }

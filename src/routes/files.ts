@@ -1,5 +1,5 @@
 // مسارات الملفات: الرفع والاستخراج والتصدير — §11
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { extractText } from '../lib/extract';
@@ -11,11 +11,25 @@ import type { Env, Variables } from '../types';
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth);
 
+type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
+
 const MAX_SIZE = 15 * 1024 * 1024; // 15MB
 const ALLOWED = ['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg', 'image/webp'];
 const ALLOWED_EXT = ['pdf', 'txt', 'md', 'docx', 'png', 'jpg', 'jpeg', 'webp'];
 
-// رفع ملف إلى محادثة + استخراج نصّه
+/**
+ * يرفع ملفاً إلى محادثة، ويردّ **قبل** استخراج نصّه.
+ *
+ * **والاستخراج بعد الردّ لأنه نداءٌ إلى نموذج لا قراءةُ ملف.** ملفُّ PDF أو
+ * صورةٍ يمرّ على `extractViaClaude` — ثوانٍ عشرٌ أو أكثر — وكان يقع بين وصول
+ * البايتات وردِّ الخادم. فيرى الرافع دائرةً تدور بلا خبر، ويظنّ الرفع متعثّراً
+ * فيُلغيه ويعيده، فيقع النداءُ مرّتين ويطول مرّتين.
+ *
+ * فالبايتات تُحفَظ في R2 والصفُّ يُكتب `pending`، ويردّ الخادم فوراً بمعرِّفٍ
+ * تعرضه الشاشة شارةً. ثم يجري الاستخراج في `ctx.waitUntil` وتسأل الشاشة عن
+ * حاله. والملف مرفوعٌ ومحفوظٌ ويُنزَّل في كل هذه المدّة، أَخرج نصُّه أم لم
+ * يخرج.
+ */
 app.post('/upload/:conversationId', async (c) => {
   const user = c.get('user');
   const conversationId = c.req.param('conversationId');
@@ -41,29 +55,152 @@ app.post('/upload/:conversationId', async (c) => {
   const r2Key = `uploads/${user.id}/${conversationId}/${id}-${sanitize(file.name)}`;
   await c.env.R2.put(r2Key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
 
-  let parsedText = '';
-  let parseError: string | null = null;
-  try {
-    parsedText = await extractText(c.env, buf, file.type, file.name);
-  } catch (e: any) {
-    parseError = String(e?.message ?? e);
-  }
-
+  // `message_id` يبقى فارغاً: مرفوعٌ في صندوق الكتابة ولم يُرسَل بعد.
   await c.env.DB.prepare(
-    'INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parsed_text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    `INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parsed_text, parse_status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', ?)`
   )
-    .bind(id, conversationId, r2Key, file.name, file.type, file.size, parsedText || null, Date.now())
+    .bind(id, conversationId, r2Key, file.name, file.type, file.size, Date.now())
     .run();
+
+  c.executionCtx.waitUntil(runExtract(c.env, id, buf, file.type, file.name));
 
   return c.json({
     id,
     filename: file.name,
     size: file.size,
     mime: file.type,
-    extracted_chars: parsedText.length,
-    parse_error: parseError,
+    parse_status: 'pending',
   });
 });
+
+/**
+ * يستخرج نصّ المرفق ويَسِم حالَه، ولا يترك صفّاً معلَّقاً مهما وقع.
+ *
+ * رميةٌ من تحت `ctx.waitUntil` تُبتلع في العامل بلا أثر، فيبقى الصفُّ
+ * `pending` أبداً وتبقى الشارة تدور. فما يخرج من هنا حالٌ مستقرّة دائماً:
+ * `ready` أو `error`.
+ *
+ * ونصٌّ فارغ حالُه `error` كتعثّر النداء سواء: نتيجتُهما على القارئ واحدة —
+ * ملفٌّ قائمٌ يُنزَّل ولا يبلغ نصُّه المساعد — وحالان لنتيجةٍ واحدة تفترقان
+ * أوّل شاشة.
+ */
+async function runExtract(env: Env, id: string, buf: ArrayBuffer, mime: string, filename: string): Promise<void> {
+  let text = '';
+  let error: string | null = null;
+  try {
+    text = await extractText(env, buf, mime, filename);
+  } catch (e: any) {
+    error = String(e?.message ?? e);
+  }
+  if (!text.trim() && !error) error = 'لم يُستخرَج نصّ من الملف';
+
+  await env.DB.prepare('UPDATE attachments SET parsed_text = ?, parse_status = ?, parse_error = ? WHERE id = ?')
+    .bind(error ? null : text, error ? 'error' : 'ready', error, id)
+    .run()
+    .catch(() => {});
+}
+
+/** حال المرفق — تسألها الشاشة ما دامت الشارة تدور. */
+app.get('/attachments/:id', async (c) => {
+  const att = await ownedAttachment(c);
+  if (!att) return c.json({ error: 'المرفق غير موجود' }, 404);
+  return c.json({
+    id: att.id,
+    filename: att.filename,
+    mime: att.mime,
+    size: att.size,
+    message_id: att.message_id,
+    parse_status: att.parse_status,
+    created_at: att.created_at,
+  });
+});
+
+/**
+ * الملف كما رُفع — للنافذة العائمة وللتنزيل.
+ *
+ * وكان لا مسار له أصلاً: يُرفع الملف إلى R2 ولا شيء في المنصة يُخرجه منها.
+ * فالشارة تقول إن ملفاً هناك ولا سبيل إلى رؤيته — «مرفوعٌ في مكانٍ لا يُعرَف».
+ *
+ * و`inline` لا `attachment`: النافذة تعرضه في إطارها، وزرُّ التنزيل يطلب
+ * `?download=1` فيقلبها. وترويسةٌ واحدة تخدم البابين تجعل العرض تنزيلاً.
+ */
+app.get('/attachments/:id/file', async (c) => {
+  const att = await ownedAttachment(c);
+  if (!att) return c.json({ error: 'المرفق غير موجود' }, 404);
+
+  const obj = await c.env.R2.get(att.r2_key);
+  if (!obj) return c.json({ error: 'المرفق غير موجود' }, 404);
+
+  const disposition = c.req.query('download') ? 'attachment' : 'inline';
+  return new Response(obj.body, {
+    headers: {
+      'content-type': att.mime || 'application/octet-stream',
+      // الاسم عربيٌّ غالباً، و`filename` وحدها لا تحمل غير ASCII.
+      'content-disposition': `${disposition}; filename*=UTF-8''${encodeURIComponent(att.filename)}`,
+      'cache-control': 'private, max-age=300',
+    },
+  });
+});
+
+/** النصّ المستخرَج — تعرضه النافذة لِما لا يُعرض في إطار (docx ونصّ). */
+app.get('/attachments/:id/text', async (c) => {
+  const att = await ownedAttachment(c);
+  if (!att) return c.json({ error: 'المرفق غير موجود' }, 404);
+  return new Response(att.parsed_text ?? '', {
+    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+  });
+});
+
+/**
+ * حذف مرفقٍ **لم يُرسَل بعد**.
+ *
+ * والقيد مقصود: المرفق المرسَل جزءٌ من سجلّ المحادثة — الرسالة تقول إنها
+ * حملته والمساعد بنى عليه — وحذفُه يترك فقاعةً تشير إلى ملفٍّ لا وجود له.
+ * وما لم يُرسَل بعدُ ملكُ صاحبه وحده، يزيله من صندوق كتابته كما وضعه.
+ */
+app.delete('/attachments/:id', async (c) => {
+  const att = await ownedAttachment(c);
+  if (!att) return c.json({ error: 'المرفق غير موجود' }, 404);
+  if (att.message_id) return c.json({ error: 'المرفق مُرسَل مع رسالته ولا يُحذف منها' }, 409);
+
+  await c.env.R2.delete(att.r2_key).catch(() => {});
+  await c.env.DB.prepare('DELETE FROM attachments WHERE id = ?').bind(att.id).run();
+  return c.json({ ok: true });
+});
+
+interface AttachmentRow {
+  id: string;
+  conversation_id: string;
+  message_id: string | null;
+  r2_key: string;
+  filename: string;
+  mime: string | null;
+  size: number | null;
+  parsed_text: string | null;
+  parse_status: string;
+  created_at: number;
+}
+
+/**
+ * يقرأ المرفق بشرط ملكيته.
+ *
+ * والملكية تُقرأ من المحادثة لا من المرفق: `attachments` بلا `user_id`،
+ * والمعرِّف وحده يفتح ملفَّ غيرِك لو لم يُقيَّد. والقيد في `JOIN` واحد
+ * يمرّ به كلُّ مسارٍ هنا — لا في كلِّ مسارٍ على حدة حيث يُنسى واحد.
+ */
+async function ownedAttachment(c: AppContext): Promise<AttachmentRow | null> {
+  const user = c.get('user');
+  return await c.env.DB.prepare(
+    `SELECT a.id, a.conversation_id, a.message_id, a.r2_key, a.filename, a.mime, a.size,
+            a.parsed_text, a.parse_status, a.created_at
+     FROM attachments a
+     JOIN conversations cv ON cv.id = a.conversation_id
+     WHERE a.id = ? AND cv.user_id = ?`
+  )
+    .bind(c.req.param('id'), user.id)
+    .first<AttachmentRow>();
+}
 
 // تصدير رسالة إلى Word أو نص (GET ليعمل مع روابط التنزيل المباشرة)
 app.get('/export/:messageId', async (c) => {
