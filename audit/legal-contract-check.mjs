@@ -1643,6 +1643,40 @@ await check('٢١ · صحّة القاعدة عدٌّ حيّ: توزيعُ ال�
   assert.match(cron, /missing_vector/, 'ولا ما ينقصه متجه');
 });
 
+await check('٢١ · والعدد المعروض هو ما يصرّفه الزرّ — لا عددٌ لا يُنقصه شيء', async () => {
+  /* «ينتظر التضمين» في شريط قاعدة المعرفة يقابله زرُّ «تضمين الآن». فإن عدّ
+     الشريط ما لا يختاره الزرّ ظهر عددٌ لا يتحرّك: يُضغط الزرّ فيدور ثم يقف،
+     ويُعاد الضغط، ويُظنّ التضمين معطَّلاً — والطابور فارغ من أوّله.
+
+     وهو ما وقع: الشريط كان يعدّ `embedded_at IS NULL` وحده، والمادةُ الملغاة
+     لا تُضمَّن بالتصميم — `EMBEDDABLE_SQL` يستثنيها و`purgeRepealedVectors`
+     يحذف متجهها. فكل ملغاةٍ غيرِ مضمَّنة تجلس في العدد إلى الأبد. */
+  const st = await lib.legalStats(env);
+  const drainable = q(
+    `SELECT COUNT(*) AS n FROM legal_chunks
+     WHERE embedded_at IS NULL AND retrieval_status <> 'repealed' AND is_repealed = 0`
+  )[0].n;
+  assert.equal(st.pending_embeddings, drainable, 'الشريط يعدّ ما لا يصرّفه الزرّ');
+
+  // وشرطُ الوثائق المرفوعة كشرط تصريفها: `pending` لا معها `processing`.
+  const kb = readFileSync(path.join(ROOT, 'src', 'routes', 'kb.ts'), 'utf8');
+  const listed = kb.slice(kb.indexOf("app.get('/documents'"), kb.indexOf("app.post('/documents/embed-pending'"));
+  assert.ok(
+    !/ingest_status IN \('pending', 'processing'\)/.test(listed),
+    'عدُّ الوثائق المنتظرة يشمل `processing` ولا يصرّفها الزرّ'
+  );
+
+  /* وهذا الفحص لا يجوز أن يصير فارغاً.
+     الشرطان يتساويان تلقائياً في قاعدةٍ لا ملغاةَ فيها بلا متجه، فيمرّ الفحص
+     على علّةٍ قائمة. فيُشترط أن تكون في البيانات واحدةٌ على الأقل — وإلا كان
+     الحارس حراسةَ بابٍ لا أحد يمرّ به. */
+  const repealedUnembedded = q(
+    `SELECT COUNT(*) AS n FROM legal_chunks
+     WHERE embedded_at IS NULL AND (retrieval_status = 'repealed' OR is_repealed = 1)`
+  )[0].n;
+  assert.ok(repealedUnembedded > 0, 'لا ملغاةَ بلا متجه في البيانات — الفحص أعلاه لا يفحص شيئاً');
+});
+
 await check('٢١ · وسجلّ الدفعات يقول أثرها وبصمتَها', () => {
   const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
   const q0 = routes.slice(routes.indexOf("app.get('/imports'"), routes.indexOf("app.get('/imports'") + 700);

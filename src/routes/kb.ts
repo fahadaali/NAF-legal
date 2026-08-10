@@ -22,8 +22,13 @@ app.get('/documents', async (c) => {
             version, last_verified, needs_update, chunk_count, ingest_status, r2_key, created_at
      FROM kb_documents ORDER BY created_at DESC LIMIT 200`
   ).all();
+  /* `pending` وحدها لا معها `processing` — العدد المعروض هو ما يصرّفه الزرّ.
+     `/documents/embed-pending` يختار `pending` فقط، فوثيقةٌ في `processing`
+     تُعدّ ولا تُصرَّف: يضغط المسؤول «تضمين الآن» فلا ينقص العدد. و`processing`
+     حالٌ عابرة بثوانٍ — `ingestDocument` يضمن ألّا تبقى — فغيابُها عن العدّ
+     لحظةٌ لا تُلحَظ، ووجودُها فيه لغزٌ يبقى. */
   const pending = await c.env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM kb_documents WHERE ingest_status IN ('pending', 'processing')"
+    "SELECT COUNT(*) AS n FROM kb_documents WHERE ingest_status = 'pending'"
   ).first<{ n: number }>();
   return c.json({
     documents: rows.results,
