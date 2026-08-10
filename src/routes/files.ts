@@ -15,7 +15,8 @@ type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
 const MAX_SIZE = 15 * 1024 * 1024; // 15MB
 
-/** سقفُ النصّ القادم من المتصفّح. مئتا ألف حرفٍ تسع مستنداً من مئتَي صفحة. */
+/** سقفُ النصّ القادم من المتصفّح — يوافق `ATTACH_PER_FILE_MAX` في `chat.ts`.
+    وتجاوزُه هنا تخزينٌ لما لن يُقرأ، ونقصانُه قصٌّ قبل أن يصل السقف الحقيقي. */
 const MAX_TEXT = 200_000;
 const ALLOWED = ['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg', 'image/webp'];
 const ALLOWED_EXT = ['pdf', 'txt', 'md', 'docx', 'png', 'jpg', 'jpeg', 'webp'];

@@ -479,8 +479,16 @@ function toCitation(r: RagResult) {
 }
 
 // يبني كتلة الملفات المرفوعة بسقف كلّي للحجم (يوزَّع على الملفات)
-const ATTACH_TOTAL_BUDGET = 60_000; // حروف
-const ATTACH_PER_FILE_MAX = 20_000;
+/* سقوفُ نصّ المرفقات — وقد رُفعت لأنها كانت تقصّ المستند إلى صفحاتٍ قليلة.
+   عشرون ألف حرفٍ للملف الواحد ≈ ثماني صفحاتٍ عربية، وستّون ألفاً موزَّعةً على
+   عشرة ملفّات تعطي ستّة آلافٍ لكلٍّ ≈ صفحتين. فيُرفع عقدٌ من ثلاثين صفحة
+   ويُجاب عن أوّله وحده — بلا سطرٍ يقول إن الباقي لم يُقرأ.
+
+   وكانت مضبوطةً حين كان الملفُّ كلُّه يُرسَل بايتاتِه إلى النموذج ليقرأه.
+   والقراءة الآن تقع في المتصفّح مجّاناً، فالكلفة كلفةُ سياقٍ لا كلفةُ قراءة:
+   مئتا ألف حرفٍ عربيّ ≈ سبعون ألف رمز، في نافذةٍ سعتُها مليون. */
+const ATTACH_TOTAL_BUDGET = 400_000; // حروف
+const ATTACH_PER_FILE_MAX = 200_000;
 
 function buildAttachmentsBlock(atts: { filename: string; parsed_text: string }[]): string {
   const perFile = Math.max(2_000, Math.min(ATTACH_PER_FILE_MAX, Math.floor(ATTACH_TOTAL_BUDGET / atts.length)));

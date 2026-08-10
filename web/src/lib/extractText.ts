@@ -26,10 +26,40 @@ const ARABIC = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
 const LATIN = /[A-Za-z0-9]/;
 /** فاصلٌ يبقى داخل المقطع اللاتيني حين يقع **بين** لاتينيَّين: `12,400.00`. */
 const SEPARATOR = /[.,:/@\u066B\u066C-]/;
-const ALEF = /[\u0627\u0623\u0625\u0622]/;
+/** علاماتُ التشكيل: عرضُها صفر، وتصدر **قبل** حرفها بالإحداثيّ نفسه. */
+const MARK = /[\u064B-\u0655\u0670\u06D6-\u06ED]/;
 
-/** حرفٌ بموضعه على السطر. */
+/** حرفٌ — أو حرفٌ بعلاماته — بموضعه على السطر. */
 interface Glyph { s: string; x: number; }
+
+/**
+ * يضمّ كلَّ علامةِ تشكيلٍ إلى حرفها.
+ *
+ * **والعلامة تصدر قبل حرفها لا بعده.** قِيست: الضمّة في «سُئل» تخرج قبل السين
+ * وبالإحداثيّ نفسه — 527.7 لكليهما. وترتيبُها وحدها بموضعها يقذفها خارج
+ * كلمتها: «ُسئل» مكان «سُئل»، و«بأ ّنها» مكان «بأنّها».
+ *
+ * فتُضمّ إلى **تاليها** إن تشاركا الموضع، وإلى سابقها إن لم يكن — والثانية
+ * للخطوط التي تُصدرها بعد حرفها.
+ */
+function clusterMarks(chars: Glyph[]): Glyph[] {
+  const out: Glyph[] = [];
+  for (let i = 0; i < chars.length; i++) {
+    if (!MARK.test(chars[i].s)) { out.push({ ...chars[i] }); continue; }
+    const marks = [chars[i].s];
+    while (i + 1 < chars.length && MARK.test(chars[i + 1].s)) marks.push(chars[++i].s);
+    const next = chars[i + 1];
+    if (next && Math.abs(next.x - chars[i].x) < 0.5) {
+      out.push({ s: next.s + marks.join(''), x: next.x });
+      i++;
+    } else if (out.length) {
+      out[out.length - 1].s += marks.join('');
+    } else {
+      out.push({ s: marks.join(''), x: chars[i].x });
+    }
+  }
+  return out;
+}
 
 /**
  * يعيد بناء الترتيب المنطقيّ من الترتيب البصريّ.
@@ -47,25 +77,17 @@ interface Glyph { s: string; x: number; }
  * والهاتف والمبلغ مطابقةٌ في الثاني — وكلُّها كانت مبعثرة قبل هذا.
  */
 function toLogical(glyphs: Glyph[], rtlPage: boolean): string {
-  if (!rtlPage) return [...glyphs].sort((a, b) => a.x - b.x).map((g) => g.s).join('');
+  if (!rtlPage) return clusterMarks(glyphs).sort((a, b) => a.x - b.x).map((u) => u.s).join('');
 
-  /* رابطة لام‑ألف: المُخرِج يعطي الألفَ إحداثيَّ جارتها ويُخرج اللام بعدها،
-     فتصير «أل» مكان «لأ» — «األولى» مكان «الأولى». والتوقيع لا يلتبس: حرفان
-     بإحداثيٍّ واحدٍ تماماً — ولا يقع ذلك في نصٍّ إلا من رسمٍ واحد — وثانيهما
-     ألف، ويليهما لام. فتُعاد اللام إلى موضعها بينهما.
+  /* ولا تُبدَّل مواضعُ الحروف داخل الكلمة.
+     كانت هنا قاعدةٌ تردّ رابطة لام‑ألف إلى نصابها («األولى» ← «الأولى»)،
+     فأصلحت كلمةً وأفسدت أخرى: «الإصلاح» صارت «الإلاصح». والتوقيع الذي بُنيت
+     عليه — حرفان بإحداثيٍّ واحد — يقع في رابطتين متجاورتين فيُطبَّق مرّتين
+     على موضعٍ واحد. وإفسادُ كلمةٍ في نصٍّ قانونيّ أسوأ من همزةٍ في غير
+     موضعها: الأولى تُقرأ خطأً، والثانية تُقرأ صحيحةً على قبحها. */
+  const g = clusterMarks(glyphs);
 
-     والقيد ثلاثيّ عمداً: «أل» أصيلةٌ كما في «ألف» لحرفَيها إحداثيّان
-     مختلفان، فلا تمسُّها القاعدة. */
-  const g = [...glyphs];
-  for (let i = 0; i + 2 < g.length; i++) {
-    if (Math.abs(g[i].x - g[i + 1].x) < 0.01 && ALEF.test(g[i + 1].s) && g[i + 2].s === '\u0644') {
-      const alef = g[i + 1];
-      g[i + 1] = { s: g[i + 2].s, x: alef.x - 0.001 };
-      g[i + 2] = { s: alef.s, x: alef.x - 0.002 };
-    }
-  }
-
-  const sorted = g.sort((a, b) => b.x - a.x);
+  const sorted = [...g].sort((a, b) => b.x - a.x);
   const out: string[] = [];
   let i = 0;
   while (i < sorted.length) {
