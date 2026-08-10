@@ -1,4 +1,5 @@
 // عميل API للواجهة
+import { loginWithReturn, rememberLoginUrl, sessionLost } from './session';
 
 /** أدوار هذه المنصة، وألفاظها في naf-terms.md §١٠. لا رابع لها. */
 export type PlatformRole = 'admin' | 'editor' | 'viewer';
@@ -202,37 +203,29 @@ export interface Attachment {
    ============================================================ */
 
 /**
- * وجهة العودة تُصحَّح من موضع المتصفّح.
+ * يقرأ فرعَي المنع. يعيد `true` إن تولّى الأمر — وعندها لا يُكمل النداء ولا
+ * يُظهر خطأً: إمّا أن الصفحة على وشك أن تُغادر، وإمّا أن الشريط رُفع.
  *
- * الوسيط يبني `next` من مسار الطلب — وهو مسار برمجي (`/api/auth/me` مثلاً).
- * فالعودة بعده تضع القارئ أمام ردّ JSON خام. والمتصفّح وحده يعرف موضعه
- * الحقيقي، فمنه تُؤخذ الوجهة.
+ * **والتحويل يتبع من بدأ النداء.** نداءٌ بدأه القارئ — إرسالٌ أو حفظ أو فتحُ
+ * شاشة — يُحوَّل عنده فوراً: هو واقفٌ أمام نتيجة لن تأتي. ونداءٌ بدأه مؤقّتٌ
+ * في الخلفية — إشعاراتٌ كلَّ دقيقة، أو جسُّ دورٍ يجري — لا ينتظره أحد، فتحويلُه
+ * ينتزع الشاشة من تحت عين قارئها بلا سبب يراه. ذاك يرفع شريطاً ويترك الشاشة.
  *
- * ومسار الرفض يُستثنى: وضعُه وجهةً يعيد القارئ إلى الرفض بعد الدخول، فتدور
- * الحلقة ولا تُقرأ الرسالة أصلاً.
+ * ووجهة العودة من موضع المتصفّح لا من مسار الطلب: الوسيط يبني `next` من
+ * المسار — وهو مسار برمجي (`/api/auth/me` مثلاً) — فالعودة بعده تضع القارئ
+ * أمام ردّ JSON خام.
  */
-function withCurrentNext(login: string): string {
-  try {
-    const url = new URL(login, window.location.origin);
-    if (window.location.pathname === '/denied') url.searchParams.delete('next');
-    else url.searchParams.set('next', window.location.pathname + window.location.search);
-    return url.toString();
-  } catch {
-    return login;
-  }
-}
-
-/**
- * يقرأ فرعَي المنع. يعيد `true` إن بدأ تحويل — وعندها لا يُكمل النداء ولا
- * يُظهر خطأً: الصفحة على وشك أن تُغادر، ورسالةُ خطأ تومض قبلها ضجيج.
- */
-function handleAuthRedirect(res: Response, data: unknown): boolean {
+function handleAuthRedirect(res: Response, data: unknown, background = false): boolean {
   const body = (data ?? {}) as { login?: string; denied?: string };
 
   if (res.status === 401 && body.login) {
-    window.location.href = withCurrentNext(body.login);
+    rememberLoginUrl(body.login);
+    if (background) sessionLost();
+    else loginWithReturn(body.login);
     return true;
   }
+  // الرفض حكمٌ على العضوية لا انتهاءُ رمز: لا يُصلحه دخولٌ جديد، فلا شريط
+  // يَعِد بالعودة. وصفحةُ الرفض تقول السبب، وهي وجهةٌ بذاتها.
   if (res.status === 403 && body.denied) {
     window.location.href = body.denied;
     return true;
@@ -601,14 +594,20 @@ export interface LegalImportReport {
   error?: string;
 }
 
-async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
+/**
+ * `background` يوسم نداءً بدأه مؤقّتٌ لا قارئ.
+ *
+ * وهو الوسم الوحيد الذي يفرّق مسارَي ٤٠١، فلا يُوضع إلا على جَسٍّ دوريّ. ووضعُه
+ * على نداءٍ ينتظره القارئ يجعله يقف أمام شاشةٍ لا تتحرّك.
+ */
+async function req<T>(path: string, opts: RequestInit = {}, background = false): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...opts,
     headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
     credentials: 'same-origin',
   });
   const data = await res.json().catch(() => ({}));
-  if (handleAuthRedirect(res, data)) return pending<T>();
+  if (handleAuthRedirect(res, data, background)) return pending<T>();
   if (!res.ok) throw new Error((data as any).error ?? 'خطأ في الاتصال');
   return data as T;
 }
@@ -661,14 +660,20 @@ export const api = {
   },
   createConversation: (consultation_type: string) =>
     req<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ consultation_type }) }),
-  getConversation: (id: string) =>
+  /**
+   * جلبةُ محادثة — بفتحها، أو بجَسِّ دورٍ يجري كلَّ أربع ثوانٍ.
+   *
+   * و`background` بيد المستدعي لأن النداء واحد والباعث اثنان: من فتح المحادثة
+   * ينتظر ظهورها، ومن يجسّ دوراً يجري لا ينتظر شيئاً.
+   */
+  getConversation: (id: string, background = false) =>
     req<{
       conversation: Conversation;
       messages: Message[];
       attachments: Attachment[];
       /** دورٌ يجري في الخلفية الآن — بثُّه ذهب مع الصفحة وردُّه في الطريق. */
       generating?: boolean;
-    }>(`/conversations/${id}`),
+    }>(`/conversations/${id}`, {}, background),
   renameConversation: (id: string, title: string) =>
     req(`/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteConversation: (id: string) => req(`/conversations/${id}`, { method: 'DELETE' }),
@@ -690,7 +695,7 @@ export const api = {
     return data as { id: string; filename: string; size: number; mime: string; parse_status: ParseStatus };
   },
   /** حال المرفق — تُسأل ما دامت الشارة تدور. */
-  attachment: (id: string) => req<Attachment>(`/files/attachments/${id}`),
+  attachment: (id: string) => req<Attachment>(`/files/attachments/${id}`, {}, true),
   /** الملف كما رُفع — للنافذة العائمة. و`download` يقلب الترويسة إلى تنزيل. */
   attachmentFileUrl: (id: string, download = false) =>
     `/api/files/attachments/${id}/file${download ? '?download=1' : ''}`,
@@ -712,8 +717,8 @@ export const api = {
    * إلا به — مع فهرسٍ مهيّأ هي «جارٍ التضمين»، ومع غير مهيّأ «بانتظار
    * الفهرس»، وبينهما فرقُ عملٍ يجري وعملٍ لن يجري.
    */
-  kbDocuments: () =>
-    req<{ documents: any[]; vectorize: boolean; pending_embeddings: number }>('/kb/documents'),
+  kbDocuments: (background = false) =>
+    req<{ documents: any[]; vectorize: boolean; pending_embeddings: number }>('/kb/documents', {}, background),
   deleteKbDocument: (id: string) => req(`/kb/documents/${id}`, { method: 'DELETE' }),
   reingestKbDocument: (id: string) => req(`/kb/documents/${id}/reingest`, { method: 'POST' }),
   /** يصرّف الوثائق المنتظرة للتضمين — نظير `legalEmbedPending` لمسار الرفع. */
@@ -725,7 +730,7 @@ export const api = {
   kbVersionTextUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/text`,
   kbVersionFileUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/file`,
   // المحتوى النظامي المستورد — عقد الاستيراد في docs/legal-import.md
-  legalStats: () => req<LegalStats>('/legal/stats'),
+  legalStats: (background = false) => req<LegalStats>('/legal/stats', {}, background),
   legalLaws: () => req<{ laws: LegalLaw[] }>('/legal/laws'),
   /** بحث المسؤول في المحتوى النظامي — لفظيّ بلا نموذج تضمين. */
   legalSearch: (q: string, limit = 20) =>
@@ -929,7 +934,9 @@ export const api = {
   deleteDeadline: (id: string) => req(`/deadlines/${id}`, { method: 'DELETE' }),
 
   // الإشعارات
-  notifications: () => req<{ notifications: any[]; unread: number }>('/notifications'),
+  /* جَسٌّ كلَّ دقيقة ما دامت الصفحة مفتوحة — وهو أوّل من يكتشف انتهاء الرمز،
+     وأبعدُ ما يكون عن فعلٍ بدأه القارئ. */
+  notifications: () => req<{ notifications: any[]; unread: number }>('/notifications', {}, true),
   markNotificationsRead: (id?: string) => req('/notifications/read', { method: 'POST', body: JSON.stringify({ id }) }),
 
   // المسوّدات: النُسخ والتحرير والاعتماد

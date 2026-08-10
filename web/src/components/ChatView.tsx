@@ -55,6 +55,31 @@ const POLL_MS = 4000;
 /** مرجعٌ ثابت لرسالةٍ بلا تظليل — حتى لا يُعاد الرسم مع كل إعادة بناء. */
 const NO_HIGHLIGHTS: RenderableHighlight[] = [];
 
+/**
+ * مسوّدةُ الصندوق — محفوظةٌ بمحادثتها.
+ *
+ * بمحادثتها لا بمفتاحٍ واحد: من كتب سؤالاً في محادثةٍ ثم فتح أخرى لا يجد
+ * سؤاله في غير موضعه. و«محادثة جديدة» لها مفتاحُها كذلك.
+ */
+const draftKey = (id: string | null) => `naf.draft.${id ?? 'new'}`;
+
+function readDraft(id: string | null): string {
+  try {
+    return sessionStorage.getItem(draftKey(id)) ?? '';
+  } catch {
+    return ''; // تخزينٌ ممنوع في المتصفّح: الصندوق يبدأ فارغاً ولا شيء ينكسر.
+  }
+}
+
+function writeDraft(id: string | null, text: string): void {
+  try {
+    if (text) sessionStorage.setItem(draftKey(id), text);
+    else sessionStorage.removeItem(draftKey(id));
+  } catch {
+    // ممتلئٌ أو ممنوع — الكتابة تمضي والمسوّدة لا تُحفَظ. ولا يُوقَف الإرسال لأجلها.
+  }
+}
+
 /** أقربُ فقاعةِ نصٍّ تحتوي هذه العقدة. */
 function hostOf(node: Node | null): HTMLElement | null {
   const el = node instanceof HTMLElement ? node : (node?.parentElement ?? null);
@@ -81,7 +106,12 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   const [folders, setFolders] = useState<Folder[]>([]);
   const [convFolder, setConvFolder] = useState<string>('');
   const [feedback, setFeedback] = useState<Record<string, number>>({});
-  const [input, setInput] = useState('');
+  /* ما كُتب ولم يُرسَل يعيش خارج هذه الشاشة أيضاً.
+     الجلسة تنتهي فتُحوَّل الصفحة إلى المركز وتعود — تنقّلٌ كامل يهدم الحالة —
+     وصفحةٌ كتبها المحامي في الصندوق تذهب معها. و«ما كتبته محفوظ» في شريط
+     انتهاء الجلسة وعدٌ يُوفى هنا أو لا يُقال. والتخزين للجلسة لا دائم: مسوّدةٌ
+     تركها في حاسوبٍ مشترك لا تبقى فيه بعد إغلاق التبويب. */
+  const [input, setInput] = useState(() => readDraft(conversationId));
   const [internet, setInternet] = useState(false);
   const [bilingual, setBilingual] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -103,6 +133,9 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   useEffect(() => {
     api.folders().then((r) => setFolders(r.folders)).catch(() => {});
   }, []);
+
+  // الحفظ مع كل حرف: التحويل يقع بلا إنذار، فلا فرصة لحفظٍ مؤجَّل.
+  useEffect(() => writeDraft(conversationId, input), [conversationId, input]);
 
   /* ══ الدور الجاري يعيش خارج هذه الشاشة ══
    *
@@ -126,11 +159,14 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   const loadToken = useRef(0);
 
   /** يجلب المحادثة من القاعدة. تُستدعى عند الفتح، وعند ختام دور، وفي الجسّ. */
-  const load = useCallback(async (opts: { withFeedback?: boolean } = {}) => {
+  /* `background` يمرّ إلى `api` ولا يُستعمل هنا: النداء واحد والباعث اثنان —
+     من فتح المحادثة ينتظر ظهورها، ومن يجسّ دوراً يجري لا ينتظر شيئاً. وانتهاءُ
+     الرمز أثناء الجسّ يرفع شريطاً؛ وأثناء الفتح يُحوِّل. */
+  const load = useCallback(async (opts: { withFeedback?: boolean; background?: boolean } = {}) => {
     if (!conversationId) return;
     const token = ++loadToken.current;
     try {
-      const r = await api.getConversation(conversationId);
+      const r = await api.getConversation(conversationId, opts.background === true);
       // استجابةٌ تخصّ محادثةً غادرها القارئ: لا تُبنى الرسائل فوقه.
       if (token !== loadToken.current) return;
       setConvType(r.conversation.consultation_type);
@@ -244,7 +280,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
      يجري يدفع كلفةً مرّتين ويعطي إجابتين لسؤال واحد. */
   useEffect(() => {
     if (!conversationId || !generating || stream) return;
-    const t = window.setInterval(() => void load({ withFeedback: false }), POLL_MS);
+    const t = window.setInterval(() => void load({ withFeedback: false, background: true }), POLL_MS);
     return () => window.clearInterval(t);
   }, [conversationId, generating, stream, load]);
 

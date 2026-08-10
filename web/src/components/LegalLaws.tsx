@@ -10,6 +10,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw, type LegalStats } from '../lib/api';
 import { formatDate, formatNumber } from '../lib/format';
 import { useScrollReset } from '../lib/scrollBox';
+import { docTypeLabel } from '../lib/labels';
 import { ArticleCard, ArticleFlags, ArticleNotices, groupArticleParts } from './LegalArticleView';
 
 /** أسماء الحقول التي تُقارَن، بالعربية — كما في نافذة إعادة الرفع. */
@@ -25,22 +26,6 @@ const FIELD_LABELS: Record<string, string> = {
 
 /** مواد الصفحة الواحدة في التصفّح. */
 const PAGE = 25;
-
-/**
- * أنواع الأدوات النظامية بالعربية.
- *
- * `doc_type` يأتي من الملف كما كتبه مُعِدُّه، وعرضُ `law` في ترويسةٍ عربية
- * ركاكة. والمقابلات هنا للعرض وحده — المخزَّن يبقى كما ورد، فالتصفية على
- * النوع تُطابق ما في الملف لا ما نعرضه.
- */
-const DOC_TYPE_LABELS: Record<string, string> = {
-  law: 'نظام',
-  regulation: 'لائحة',
-  decision: 'قرار',
-  circular: 'تعميم',
-};
-
-const docTypeLabel = (t: string | null) => (t ? (DOC_TYPE_LABELS[t] ?? t) : '—');
 
 /**
  * موضع المادة من نظامها: الباب والفصل والعنوان الحرّ.

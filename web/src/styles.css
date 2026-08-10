@@ -580,6 +580,20 @@ a { color: var(--primary); }
 .modal-close:hover { border-color: var(--destructive); color: var(--destructive); }
 /* أزرار ترويسة النافذة — كانت `style` سطريّة بقيمٍ خام في `KbViewer`. */
 .modal-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+/* ══ شريط انتهاء الجلسة ══
+ *
+ * فوق الهيكل كلِّه ويدفعه لا يطفو عليه: طبقةٌ عائمة تغطّي ترويسةً أو صندوق
+ * كتابة، والشريط يبقى إلى أن يضغط القارئ — فتغطيتُه دائمة لا لحظية.
+ * ولونه `warning`: العمل قائمٌ وما كُتب محفوظ، والدخول يستأنفه. */
+.session-bar {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: var(--space-2); padding: var(--space-2) var(--space-4);
+  background: var(--warning-soft); color: var(--warning-strong);
+  border-block-end: 1px solid var(--warning);
+  font-size: var(--text-sm); text-align: center;
+}
+.session-bar .btn-sm { background: var(--card); color: var(--foreground); }
 .modal-actions .btn-sm { display: inline-flex; align-items: center; gap: var(--space-1); }
 .modal-body { flex: 1; overflow: auto; background: var(--background); }
 /* صفحات PDF بيضاء دائماً بغضّ النظر عن الثيم — القيمة خام عن قصد،

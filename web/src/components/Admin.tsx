@@ -10,6 +10,8 @@ import { RequestStatusPill } from './Support';
 import { formatDate, formatNumber, formatTime } from '../lib/format';
 import { Icon, ICON_MD, ICON_SM } from '../lib/icons';
 import { ScrollBoxProvider, useScrollReset } from '../lib/scrollBox';
+import { spendTypeLabel, usageKindLabel } from '../lib/labels';
+import { labelIfKnown } from '../lib/consultations';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
@@ -165,22 +167,25 @@ function KbTab() {
   const [docs, setDocs] = useState<KbDocs | null>(null);
 
   const loadDocs = useCallback(
-    () => api.kbDocuments().then(setDocs).catch(() => {}),
+    (background = false) => api.kbDocuments(background).then(setDocs).catch(() => {}),
     []
   );
   const loadStats = useCallback(
-    () => api.legalStats().then(setStats).catch(() => {}),
+    (background = false) => api.legalStats(background).then(setStats).catch(() => {}),
     []
   );
-  const reload = useCallback(() => {
-    loadDocs();
-    loadStats();
+  const reload = useCallback((background = false) => {
+    loadDocs(background);
+    loadStats(background);
   }, [loadDocs, loadStats]);
 
   useEffect(() => {
     reload();
-    // التضمين يمضي في الخادم بعد الردّ، فحالُه يتغيّر بلا فعلٍ من الشاشة.
-    const t = setInterval(reload, 5000);
+    /* التضمين يمضي في الخادم بعد الردّ، فحالُه يتغيّر بلا فعلٍ من الشاشة.
+       والجسُّ موسومٌ خلفيةً: انتهاءُ الرمز بينما المسؤول يقرأ جدولَ الوثائق
+       يرفع شريطاً ولا ينتزع الشاشة منه. والجلبة الأولى فعلُه هو — فتحُ
+       التبويب — فتُحوِّل إن انتهت جلستُه قبلها. */
+    const t = setInterval(() => reload(true), 5000);
     return () => clearInterval(t);
   }, [reload]);
 
@@ -1120,19 +1125,26 @@ function AnalyticsTab() {
         <div className="stat-card"><div className="stat-val">${cost}</div><div className="stat-lbl">التكلفة التقديرية</div></div>
       </div>
 
+      {/* المفاتيح مخزَّنة بالإنجليزية وتُعرض بألفاظها المسجَّلة. وما لا لفظ له
+          يُعرض بمفتاحه ليُرى فيُسجَّل — لا يُنسب إلى أقرب المسجَّل شكلاً. */}
       <div className="section-title">حسب نوع العملية</div>
       <table className="data-table">
         <thead><tr><th>العملية</th><th>العدد</th><th>التكلفة</th></tr></thead>
         <tbody>{(data.by_kind ?? []).map((k: any) => (
-          <tr key={k.kind}><td>{k.kind}</td><td><bdi>{k.n}</bdi></td><td><bdi>${(Number(k.cost) || 0).toFixed(3)}</bdi></td></tr>
+          <tr key={k.kind}><td>{usageKindLabel(k.kind)}</td><td><bdi>{k.n}</bdi></td><td><bdi>${(Number(k.cost) || 0).toFixed(3)}</bdi></td></tr>
         ))}</tbody>
       </table>
 
+      {/* الأدوات تُنفق على النموذج ولا تُنشئ محادثة، فتقع في هذا العمود مع
+          الاستشارات — ولذلك «النوع» لا «نوع الاستشارة». */}
       <div className="section-title">أكثر أنواع الاستشارات طلبًا</div>
       <table className="data-table">
         <thead><tr><th>النوع</th><th>العدد</th></tr></thead>
         <tbody>{(data.by_type ?? []).map((k: any) => (
-          <tr key={k.consultation_type}><td>{k.consultation_type}</td><td><bdi>{k.n}</bdi></td></tr>
+          <tr key={k.consultation_type ?? 'none'}>
+            <td>{spendTypeLabel(k.consultation_type, labelIfKnown)}</td>
+            <td><bdi>{k.n}</bdi></td>
+          </tr>
         ))}</tbody>
       </table>
 

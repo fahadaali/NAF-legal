@@ -14,9 +14,36 @@ import Denied from './components/Denied';
 import Members from './components/Members';
 import AccountMenu from './components/AccountMenu';
 import NotificationBell from './components/NotificationBell';
+import SessionBar from './components/SessionBar';
 import { useTheme } from './lib/theme';
 import { subscribeChatActivity } from './lib/chatStream';
 import { Icon, ICON_MD, ICON_LG } from './lib/icons';
+
+type View = 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search';
+
+const VIEWS: View[] = ['chat', 'admin', 'members', 'tools', 'deadlines', 'case', 'support', 'search'];
+
+/** الشاشة من العنوان، و«المحادثة» لكل ما لا يُعرف — عنوانٌ عُبث به لا يُعطّل. */
+function readView(): View {
+  const v = new URLSearchParams(window.location.search).get('v');
+  return (VIEWS as string[]).includes(v ?? '') ? (v as View) : 'chat';
+}
+
+/**
+ * يكتب الموضع في العنوان بلا إدخالٍ في سجلّ الرجوع.
+ *
+ * `replaceState` لا `pushState`: تبديلُ المحادثات فعلٌ داخل الشاشة لا تنقّلٌ
+ * بينها، و«رجوع» بعد عشر محادثات يجب أن يُخرج القارئ من المنصة لا أن يمشي
+ * بها محادثةً محادثة.
+ */
+function writePlace(view: View, conv: string | null): void {
+  const url = new URL(window.location.href);
+  if (view === 'chat') url.searchParams.delete('v');
+  else url.searchParams.set('v', view);
+  if (conv) url.searchParams.set('c', conv);
+  else url.searchParams.delete('c');
+  if (url.toString() !== window.location.href) window.history.replaceState(null, '', url);
+}
 
 export default function App() {
   // صفحة الرفض — عامة، وإليها يحوّل وسيط الدخول الموحّد من رُدّ على الباب.
@@ -30,10 +57,20 @@ export default function App() {
   const [theme, setTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search'>('chat');
+  /* ══ الموضع في العنوان لا في الحالة وحدها ══
+   *
+   * الرمز يعيش خمس عشرة دقيقة، ولوحةٌ مفتوحة أطول من ذلك تعود إلى المركز
+   * لتأخذ رمزاً جديداً — تنقّلٌ كاملٌ يهدم الحالة كلَّها. وكان الموضع في
+   * `useState` وحدها، و`next` يحمل `/`، فيعود القارئ إلى **الرئيسية** لا إلى
+   * محادثته. وهو ما يُقرأ «يخرجني ويحيدني للصفحة الرئيسية».
+   *
+   * والقراءة الأولى من العنوان، فالعائد يجد ما تركه. */
+  const [view, setView] = useState<View>(() => readView());
   // نصّ البحث يُرفع من الشريط الجانبي إلى الشاشة: يُكتب مرّة ولا يُعاد.
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeConv, setActiveConv] = useState<string | null>(null);
+  const [activeConv, setActiveConv] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get('c')
+  );
   const [pendingInitial, setPendingInitial] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -56,6 +93,10 @@ export default function App() {
      والختام — لا على كل مقطعٍ من النصّ: الشريط لا يُعاد بناؤه مئة مرّة في
      الدور الواحد. */
   useEffect(() => subscribeChatActivity(refreshConversations), [refreshConversations]);
+
+  // الموضع يُكتب في العنوان مع كل تغيّر — فما يحمله `next` عند العودة إلى
+  // المركز هو ما كان على الشاشة، لا الجذر.
+  useEffect(() => writePlace(view, activeConv), [view, activeConv]);
 
   const handleLogout = async () => {
     await api.logout();
@@ -147,6 +188,10 @@ export default function App() {
       />
 
       <div className="naf-main">
+        {/* أعلى عمود العمل لا أعلى الهيكل: `.naf-shell` صفٌّ أفقيّ — الشريط
+            الجانبي ثم المحتوى — فابنٌ ثالثٌ فيه يقف عموداً بجانبهما. وهو فوق
+            الترويسة لأنه يعمّ الشاشات: الجلسة انتهت أيّاً كان المعروض. */}
+        <SessionBar />
         {/* الترويسة الموحّدة — زرّ القائمة دون نقطة الانكسار، والإشعارات
             وقائمة الحساب في نهايتها. تسجيل الخروج داخل القائمة لا زرّاً
             في أسفل الشريط كما كان. */}

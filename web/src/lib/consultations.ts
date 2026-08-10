@@ -67,6 +67,16 @@ export const CONSULTATIONS: ConsultationOption[] = [
 export function labelFor(type: string | null | undefined): string {
   return CONSULTATIONS.find((c) => c.type === type)?.label ?? 'استشارة';
 }
+/**
+ * اللفظ إن كان النوع مسجَّلاً، و`undefined` إن لم يكن.
+ *
+ * `labelFor` تردّ «استشارة» لكل ما لا تعرفه — وهو صحيح في ترويسة محادثةٍ
+ * بعينها، وكذبٌ في جدولٍ يعدّ الأنواع: ثلاثُ أدواتٍ مختلفة تصير صفّاً واحداً
+ * اسمه «استشارة». فمن يحتاج التفريق يسأل هذه، ومن يحتاج لفظاً دائماً يسأل تلك.
+ */
+export function labelIfKnown(type: string | null | undefined): string | undefined {
+  return CONSULTATIONS.find((c) => c.type === type)?.label;
+}
 export function optionFor(type: string | null | undefined): ConsultationOption | undefined {
   return CONSULTATIONS.find((c) => c.type === type);
 }
