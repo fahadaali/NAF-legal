@@ -506,27 +506,53 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId, initialMessage]);
 
+  /**
+   * يرفع ما اختير، والشارة تظهر **قبل** أن يبدأ الرفع.
+   *
+   * **وهذا هو ما كان يُرسل الرسالة بلا مرفقها.** الشارة كانت تُضاف بعد أن يردّ
+   * الخادم، فبين اختيار الملف ووصوله ثانيةٌ أو ثوانٍ لا شارةَ فيها ولا حال —
+   * وزرُّ الإرسال عامل. فمن اختار ملفاً ثم كتب سؤاله وضغط Enter أرسل السؤال
+   * وحده، والملف يصل بعده بلا رسالةٍ يلحق بها.
+   *
+   * والشارة الآن تولد مع الاختيار بمعرِّفٍ مؤقّت، ثم يحلّ محلّه معرِّف الخادم.
+   * فما بين اللحظتين مرئيٌّ ومحسوب: الزرّ معطَّل ما دامت شارةٌ لم تستقرّ.
+   */
   const doUpload = async (files: FileList | null) => {
     if (!files?.length || !conversationId) return;
     setUploading(true);
     try {
       for (const f of Array.from(files)) {
-        const r = await api.uploadFile(conversationId, f);
+        // معرِّفٌ محلّيّ يعيش حتى يردّ الخادم. و`local:` بادئةٌ لا تلتبس
+        // بمعرِّف خادم: الإرسال يُسقط ما بقي منها ولا يرسلها.
+        const localId = `local:${f.name}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
         setAttachments((a) => [
           ...a,
           {
-            id: r.id,
+            id: localId,
             message_id: null,
-            filename: r.filename,
-            mime: r.mime,
-            size: r.size,
-            parse_status: r.parse_status,
+            filename: f.name,
+            mime: f.type,
+            size: f.size,
+            parse_status: 'uploading',
             created_at: Date.now(),
           },
         ]);
+        try {
+          const r = await api.uploadFile(conversationId, f);
+          setAttachments((a) =>
+            a.map((x) =>
+              x.id === localId
+                ? { ...x, id: r.id, filename: r.filename, mime: r.mime, size: r.size, parse_status: r.parse_status }
+                : x
+            )
+          );
+        } catch (e: any) {
+          // شارةٌ لملفٍّ لم يصل تُزال: بقاؤها يَعِد بمرفقٍ لا وجود له، ويُعطّل
+          // الإرسال إلى الأبد لأنها لا تستقرّ أبداً.
+          setAttachments((a) => a.filter((x) => x.id !== localId));
+          alert(e.message ?? 'فشل رفع الملف');
+        }
       }
-    } catch (e: any) {
-      alert(e.message ?? 'فشل رفع الملف');
     } finally {
       setUploading(false);
     }
@@ -572,14 +598,20 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     }
   };
 
-  /* دورٌ لا يُرسَل ونصُّ مرفقه يُقرأ بعد.
-     المرفق أُلحق **بهذا السؤال**، وإرسالُه قبل أن يُقرأ يُنتج جواباً لا يراه —
-     ثم يُعاد السؤال. والشارة تقول لماذا الزرُّ معطَّل، فلا يحتاج سطراً ثانياً. */
-  const attachmentsParsing = pendingAttachments.some((a) => a.parse_status === 'pending');
+  /* دورٌ لا يُرسَل وشارةٌ لم تستقرّ.
+     المرفق أُلحق **بهذا السؤال**، وإرسالُه قبل أن يصل أو قبل أن يُقرأ نصُّه
+     يُنتج جواباً لا يراه — ثم يُعاد السؤال. والشارة تقول لماذا الزرُّ معطَّل
+     («جارٍ الرفع» أو «جارٍ استخراج النصّ»)، فلا يحتاج سطراً ثانياً.
+
+     والحالان معاً لا `pending` وحدها: كان `uploading` خارج الشرط لأن الشارة
+     لم تكن تولد إلا بعد الرفع — فبقيت نافذةٌ يُرسَل فيها السؤال بلا مرفقه. */
+  const attachmentsBusy = pendingAttachments.some(
+    (a) => a.parse_status === 'uploading' || a.parse_status === 'pending'
+  );
 
   const send = (explicit?: string) => {
     const text = (explicit ?? input).trim();
-    if (!text || !conversationId || sending || attachmentsParsing) return;
+    if (!text || !conversationId || sending || attachmentsBusy) return;
     if (!explicit) setInput('');
     if (textarea.current) textarea.current.style.height = 'auto';
 
@@ -587,7 +619,9 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
        الخادم يختمها برسالة هذا الدور، والشاشة تُسقطها من الصندوق فوراً —
        ولا تنتظر جولةً إلى الخادم وعودة: شارةٌ تبقى ثانيةً بعد الإرسال تقول
        إن الملف لم يُرسَل، وهو مرسَل. وتعود إلى فقاعتها عند أوّل جلبة. */
-    const sentIds = pendingAttachments.map((a) => a.id);
+    // حرسٌ ثانٍ: `attachmentsBusy` يمنع الوصول إلى هنا وشارةٌ محلّية قائمة،
+    // ومعرِّفٌ محلّيّ لو بلغ الخادم لم يطابق صفّاً فمرّ بلا أثر — والصمت أسوأ.
+    const sentIds = pendingAttachments.map((a) => a.id).filter((id) => !id.startsWith('local:'));
     if (sentIds.length) setAttachments((list) => list.filter((a) => !sentIds.includes(a.id)));
 
     // دورٌ سابق انقطع فبقي معروضاً: يُمسح عند بدء التالي لا قبله.
@@ -962,7 +996,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             <button
               className="send-btn"
               onClick={() => send()}
-              disabled={sending || attachmentsParsing || !input.trim()}
+              disabled={sending || attachmentsBusy || !input.trim()}
             >
               {sending ? <span className="spinner" /> : <Icon.send size={ICON_MD} aria-hidden />}
             </button>
@@ -1050,6 +1084,7 @@ function AttachChip({
   onOpen: () => void;
   onRemove?: () => void;
 }) {
+  const uploading = attachment.parse_status === 'uploading';
   const parsing = attachment.parse_status === 'pending';
   const failed = attachment.parse_status === 'error';
 
@@ -1058,6 +1093,8 @@ function AttachChip({
       <button
         type="button"
         className="attach-open"
+        // ملفٌّ في الطريق لا نافذةَ له: لا معرِّف عند الخادم ولا بايتات.
+        disabled={uploading}
         onClick={onOpen}
         title={failed ? 'تعذّر استخراج النصّ من هذا الملف. يبقى مرفقاً يُفتح ويُنزَّل، ولا يبلغ نصُّه المساعد.' : undefined}
       >
@@ -1067,6 +1104,11 @@ function AttachChip({
 
       {/* حالٌ واحدة تُقال في كل مرّة، ولا وسمَ على النجاح: شارةٌ بلا وسمٍ
           تعني أن نصّ الملف بلغ المساعد. */}
+      {uploading && (
+        <span className="attach-state" role="status">
+          <span className="spinner" /> جارٍ الرفع
+        </span>
+      )}
       {parsing && (
         <span className="attach-state" role="status">
           <span className="spinner" /> جارٍ استخراج النصّ
