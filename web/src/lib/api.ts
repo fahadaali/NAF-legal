@@ -687,9 +687,12 @@ export const api = {
    * `parse_status` في الردّ `pending` دائماً: الاستخراج يجري في الخادم بعده،
    * وتُسأل عنه `attachment` حتى يستقرّ.
    */
-  uploadFile: async (conversationId: string, file: File) => {
+  uploadFile: async (conversationId: string, file: File, extractedText?: string | null) => {
     const fd = new FormData();
     fd.append('file', file);
+    // نصٌّ اُستخرج في المتصفّح: الخادم يخزّنه ولا ينادي النموذج. وغيابُه يعني
+    // «اقرأه أنت» — صورةٌ أو ممسوحٌ ضوئياً.
+    if (extractedText) fd.append('text', extractedText);
     const res = await fetch(`/api/files/upload/${conversationId}`, { method: 'POST', body: fd, credentials: 'same-origin' });
     const data = await res.json().catch(() => ({}));
     if (handleAuthRedirect(res, data)) return pending<any>();

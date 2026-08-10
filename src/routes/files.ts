@@ -14,6 +14,9 @@ app.use('*', requireAuth);
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
 const MAX_SIZE = 15 * 1024 * 1024; // 15MB
+
+/** سقفُ النصّ القادم من المتصفّح. مئتا ألف حرفٍ تسع مستنداً من مئتَي صفحة. */
+const MAX_TEXT = 200_000;
 const ALLOWED = ['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg', 'image/webp'];
 const ALLOWED_EXT = ['pdf', 'txt', 'md', 'docx', 'png', 'jpg', 'jpeg', 'webp'];
 
@@ -55,22 +58,43 @@ app.post('/upload/:conversationId', async (c) => {
   const r2Key = `uploads/${user.id}/${conversationId}/${id}-${sanitize(file.name)}`;
   await c.env.R2.put(r2Key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
 
+  /* نصٌّ اُستخرج في المتصفّح — إن جاء فلا نداءَ للنموذج أصلاً.
+     المتصفّح يقرأ ملفّ PDF بـMuPDF قبل أن يرفعه (`web/src/lib/extractText.ts`)،
+     فيصل النصّ مع البايتات في طلبٍ واحد. وكان كلُّ ملفٍّ يُرسَل كاملاً إلى
+     كلود ليقرأه — عقدٌ من عشرين صفحة يكلّف ما يكلّفه في كل رفعة.
+
+     والحدّ حارسٌ لا تجميل: `parsed_text` عمودٌ في D1، وحقلُ نموذجٍ بلا سقف
+     يملؤه من يشاء بما يشاء. */
+  const clientText = (form.get('text')?.toString() ?? '').slice(0, MAX_TEXT).trim();
+
   // `message_id` يبقى فارغاً: مرفوعٌ في صندوق الكتابة ولم يُرسَل بعد.
   await c.env.DB.prepare(
     `INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parsed_text, parse_status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(id, conversationId, r2Key, file.name, file.type, file.size, Date.now())
+    .bind(
+      id,
+      conversationId,
+      r2Key,
+      file.name,
+      file.type,
+      file.size,
+      clientText || null,
+      clientText ? 'ready' : 'pending',
+      Date.now()
+    )
     .run();
 
-  c.executionCtx.waitUntil(runExtract(c.env, id, buf, file.type, file.name));
+  // ما قُرئ محلّياً لا يُقرأ ثانيةً. وما لم يُقرأ — صورةٌ أو ممسوحٌ ضوئياً —
+  // يتولّاه الخادم بصرياً.
+  if (!clientText) c.executionCtx.waitUntil(runExtract(c.env, id, buf, file.type, file.name));
 
   return c.json({
     id,
     filename: file.name,
     size: file.size,
     mime: file.type,
-    parse_status: 'pending',
+    parse_status: clientText ? 'ready' : 'pending',
   });
 });
 

@@ -20,6 +20,7 @@ import SelectionToolbar, { type SelectionAnchor } from './SelectionToolbar';
 import SourceModal, { isOpenableCitation } from './SourceModal';
 import AttachmentViewer from './AttachmentViewer';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD, ICON_LG } from '../lib/icons';
+import { extractPdfText, readableLocally } from '../lib/extractText';
 
 interface Props {
   conversationId: string | null;
@@ -538,7 +539,11 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           },
         ]);
         try {
-          const r = await api.uploadFile(conversationId, f);
+          /* الاستخراج قبل الرفع لا بعده: النصّ يسافر مع الملف في طلبٍ واحد،
+             فلا يبقى الصفّ ينتظر قراءةً ثانية. وما لا يُقرأ محلّياً يُرفع بلا
+             نصّ ويتولّاه الخادم — صورةً أو ممسوحاً ضوئياً. */
+          const local = readableLocally(f) ? await extractPdfText(f) : null;
+          const r = await api.uploadFile(conversationId, f, local);
           setAttachments((a) =>
             a.map((x) =>
               x.id === localId
