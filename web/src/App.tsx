@@ -71,7 +71,10 @@ export default function App() {
   const [activeConv, setActiveConv] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get('c')
   );
-  const [pendingInitial, setPendingInitial] = useState<string | null>(null);
+  /* رسالةُ البدء ومعها مرفقاتُها. والمعرِّفات معها لا تُقرأ من الخادم:
+     الإرسال التلقائي يقع فور تركيب الشاشة، قبل أن تصل جلبةُ المحادثة —
+     فمرفقُ نافذة البدء كان يبقى بلا رسالة، ونصُّه لا يبلغ المساعد أبداً. */
+  const [pendingInitial, setPendingInitial] = useState<{ text: string; attachmentIds: string[] } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -226,8 +229,8 @@ export default function App() {
             conversationId={activeConv}
             initialMessage={pendingInitial}
             onInitialConsumed={() => setPendingInitial(null)}
-            onStartConversation={(id, message) => {
-              setPendingInitial(message);
+            onStartConversation={(id, message, attachmentIds) => {
+              setPendingInitial({ text: message, attachmentIds });
               setActiveConv(id);
               refreshConversations();
             }}

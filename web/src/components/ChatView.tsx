@@ -24,9 +24,10 @@ import { extractPdfText, readableLocally } from '../lib/extractText';
 
 interface Props {
   conversationId: string | null;
-  initialMessage?: string | null;
+  /** رسالةُ البدء ومرفقاتُها معاً — تُرسَل دوراً واحداً كأيّ دور. */
+  initialMessage?: { text: string; attachmentIds: string[] } | null;
   onInitialConsumed?: () => void;
-  onStartConversation?: (conversationId: string, message: string) => void;
+  onStartConversation?: (conversationId: string, message: string, attachmentIds: string[]) => void;
   onConversationChange: (id: string) => void;
   /** «مستخدم (اطّلاع)» يقرأ المحادثات ولا يكتب فيها. */
   readOnly?: boolean;
@@ -501,7 +502,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   useEffect(() => {
     if (conversationId && initialMessage && !autoSent.current) {
       autoSent.current = true;
-      send(initialMessage);
+      send(initialMessage.text, initialMessage.attachmentIds);
       onInitialConsumed?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -614,9 +615,17 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     (a) => a.parse_status === 'uploading' || a.parse_status === 'pending'
   );
 
-  const send = (explicit?: string) => {
+  /**
+   * يرسل دوراً.
+   *
+   * و`explicitIds` لرسالة البدء وحدها: مرفقُها رُفع في نافذةٍ أخرى، والإرسال
+   * التلقائي يقع فور تركيب الشاشة — قبل أن تصل جلبةُ المحادثة التي تملأ
+   * `attachments`. فبلا تمريرها كان المرفق يبقى بلا رسالة ونصُّه لا يبلغ
+   * المساعد أبداً، ويظهر شارةً في صندوق الكتابة كأنه لم يُرسَل.
+   */
+  const send = (explicit?: string, explicitIds?: string[]) => {
     const text = (explicit ?? input).trim();
-    if (!text || !conversationId || sending || attachmentsBusy) return;
+    if (!text || !conversationId || sending || (!explicitIds && attachmentsBusy)) return;
     if (!explicit) setInput('');
     if (textarea.current) textarea.current.style.height = 'auto';
 
@@ -626,7 +635,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
        إن الملف لم يُرسَل، وهو مرسَل. وتعود إلى فقاعتها عند أوّل جلبة. */
     // حرسٌ ثانٍ: `attachmentsBusy` يمنع الوصول إلى هنا وشارةٌ محلّية قائمة،
     // ومعرِّفٌ محلّيّ لو بلغ الخادم لم يطابق صفّاً فمرّ بلا أثر — والصمت أسوأ.
-    const sentIds = pendingAttachments.map((a) => a.id).filter((id) => !id.startsWith('local:'));
+    const sentIds = (explicitIds ?? pendingAttachments.map((a) => a.id)).filter((id) => !id.startsWith('local:'));
     if (sentIds.length) setAttachments((list) => list.filter((a) => !sentIds.includes(a.id)));
 
     // دورٌ سابق انقطع فبقي معروضاً: يُمسح عند بدء التالي لا قبله.
@@ -753,9 +762,9 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           <IntakeModal
             config={intake}
             onClose={() => setIntake(null)}
-            onStart={(convId, message) => {
+            onStart={(convId, message, attachmentIds) => {
               setIntake(null);
-              onStartConversation?.(convId, message);
+              onStartConversation?.(convId, message, attachmentIds);
             }}
           />
         )}
