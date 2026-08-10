@@ -4,9 +4,23 @@ import { chunkText, embedBatch } from './lib/rag';
 import type { Env } from './types';
 
 export async function ingestDocument(env: Env, docId: string): Promise<void> {
-  // بدون Vectorize لا يمكن التضمين — نُعلّم الوثيقة كجاهزة نصّيًا فقط
+  /* بلا فهرس متجهي لا يقع تضمين — والوثيقة تبقى **منتظرة** لا «جاهزة».
+
+     وكانت تُوسم «جاهزة» بـ«المقاطع ٠»، فيقرأ المسؤول نجاحاً حيث لم يقع شيء:
+     `retrieveKbDocuments` في `lib/rag.ts` يردّ فارغاً بلا الفهرس، فالوثيقة
+     لا تبلغ المساعدَ أصلاً. ثم يسأل لماذا لا يجد وثيقةً «جاهزة» رفعها بيده.
+
+     و`pending` هي الحال الصادقة: لم تُضمَّن بعد. والشاشة تقول للمسؤول **لماذا**
+     — «بانتظار الفهرس» — لأنها وحدها تعرف أن الفهرس غير مهيّأ. ولا حالَ رابعة
+     في القاعدة: `ingest_status` محصورٌ بأربعٍ في `CHECK` منذ `0001_init.sql`،
+     وتوسيعُه يعيد بناء الجدول مقابل ما يُشتقّ بلا لبس.
+
+     و`chunk_count` يُصفَّر معها: وثيقةٌ ضُمِّنت ثم أُعيد تضمينها بلا فهرس
+     تبقى تعرض عدد مقاطعها القديم وقد حُذفت متجهاتُه. */
   if (!env.VECTORIZE) {
-    await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'ready', chunk_count = 0 WHERE id = ?").bind(docId).run();
+    await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'pending', chunk_count = 0 WHERE id = ?")
+      .bind(docId)
+      .run();
     return;
   }
   await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'processing' WHERE id = ?").bind(docId).run();

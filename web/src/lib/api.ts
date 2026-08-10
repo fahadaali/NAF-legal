@@ -661,9 +661,23 @@ export const api = {
   letterheadUrl: () => '/api/files/letterhead',
 
   // الإدارة
-  kbDocuments: () => req<{ documents: any[] }>('/kb/documents'),
+  /**
+   * وثائق قاعدة المعرفة، ومعها حالُ الفهرس المتجهي وعددُ المنتظر منها.
+   *
+   * `vectorize` جزءٌ من الردّ لا نداءٌ ثانٍ: حالُ الوثيقة `pending` لا تُقرأ
+   * إلا به — مع فهرسٍ مهيّأ هي «جارٍ التضمين»، ومع غير مهيّأ «بانتظار
+   * الفهرس»، وبينهما فرقُ عملٍ يجري وعملٍ لن يجري.
+   */
+  kbDocuments: () =>
+    req<{ documents: any[]; vectorize: boolean; pending_embeddings: number }>('/kb/documents'),
   deleteKbDocument: (id: string) => req(`/kb/documents/${id}`, { method: 'DELETE' }),
   reingestKbDocument: (id: string) => req(`/kb/documents/${id}/reingest`, { method: 'POST' }),
+  /** يصرّف الوثائق المنتظرة للتضمين — نظير `legalEmbedPending` لمسار الرفع. */
+  kbEmbedPending: (limit = 5) =>
+    req<{ embedded: number; remaining: number; skipped?: string }>(
+      `/kb/documents/embed-pending?limit=${limit}`,
+      { method: 'POST' }
+    ),
   kbVersions: (id: string) => req<{ versions: any[] }>(`/kb/documents/${id}/versions`),
   kbTextUrl: (id: string) => `/api/kb/documents/${id}/text`,
   kbFileUrl: (id: string) => `/api/kb/documents/${id}/file`,

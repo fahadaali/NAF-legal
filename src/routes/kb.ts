@@ -11,13 +11,66 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth, requireAdmin);
 
 // قائمة وثائق قاعدة المعرفة
+//
+// و`vectorize` معها في الردّ نفسه: حالُ الوثيقة في الفهرس لا تُقرأ إلا
+// بمعرفة أن الفهرس قائم أصلاً — `pending` مع فهرسٍ مهيّأ عملٌ يجري، ومعه
+// غيرَ مهيّأ انتظارٌ لا ينتهي بلا تدخّل. وردُّها هنا يجنّب الشاشة نداءً
+// ثانياً لتعرف أي الحالين تعرض.
 app.get('/documents', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT id, title, source_authority, decree_number, issue_date, status, category,
             version, last_verified, needs_update, chunk_count, ingest_status, r2_key, created_at
      FROM kb_documents ORDER BY created_at DESC LIMIT 200`
   ).all();
-  return c.json({ documents: rows.results });
+  const pending = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM kb_documents WHERE ingest_status IN ('pending', 'processing')"
+  ).first<{ n: number }>();
+  return c.json({
+    documents: rows.results,
+    vectorize: !!c.env.VECTORIZE,
+    pending_embeddings: pending?.n ?? 0,
+  });
+});
+
+/**
+ * يصرّف الوثائق المنتظرة للتضمين — بعد تهيئة الفهرس المتجهي مثلاً.
+ *
+ * نظيرُ `/legal/embed-pending`، ومسارُه غيرُ مساره: المستورَد مقاطعُ في جدول
+ * واحد تُضمَّن دفعةً، والوثيقة المرفوعة تُقطَّع وحدها ثم تُضمَّن. فزرٌّ واحد
+ * في الشاشة يصرّف الطابورين، ولكلٍّ نداؤه.
+ *
+ * **والسقف على الوثائق لا على المقاطع.** لكل وثيقة تقطيعٌ ونداءٌ إلى نموذج
+ * التضمين وآخر إلى الفهرس، وللنداء الواحد حدُّه — فتُصرَّف قلّةٌ ويُقال كم
+ * بقي، وتُعاد الكرّة.
+ */
+app.post('/documents/embed-pending', async (c) => {
+  if (!c.env.VECTORIZE) {
+    return c.json({ embedded: 0, remaining: 0, skipped: 'الفهرس المتجهي غير مهيّأ' });
+  }
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 5), 1), 20);
+  const rows = await c.env.DB.prepare(
+    "SELECT id FROM kb_documents WHERE ingest_status = 'pending' ORDER BY created_at LIMIT ?"
+  )
+    .bind(limit)
+    .all<{ id: string }>();
+
+  let embedded = 0;
+  for (const row of rows.results ?? []) {
+    // وثيقةٌ تتعثّر لا توقف أخواتها: `ingestDocument` يَسِمها `error` بنفسه،
+    // وهو ما يظهر في عمودها. والرمي هنا يُسقط ما بقي من الدفعة بلا سبب.
+    try {
+      await ingestDocument(c.env, row.id);
+      embedded += 1;
+    } catch {
+      // الحال مكتوبةٌ في الصفّ، ولا شيء يُقال هنا فوقها.
+    }
+  }
+
+  const left = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM kb_documents WHERE ingest_status = 'pending'"
+  ).first<{ n: number }>();
+  await audit(c, 'kb.embed_pending', 'kb', { embedded, remaining: left?.n ?? 0 });
+  return c.json({ embedded, remaining: left?.n ?? 0 });
 });
 
 // رفع وثيقة نظام: ملف أو نص → تخزين + استخراج + تصنيف تلقائي + جدولة التضمين
