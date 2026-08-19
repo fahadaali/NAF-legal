@@ -2,7 +2,8 @@
 import type { Context, Next } from 'hono';
 import type { Env, Variables } from '../types';
 
-export const SESSION_COOKIE = 'naf_session';
+/* وأُسقط هنا `SESSION_COOKIE`: كان اسمَ كوكي الجلسة المحلية، ولم يبقَ من
+   يكتبه ولا من يقرؤه — انظر `src/routes/auth.ts` و`src/lib/crypto.ts`. */
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 

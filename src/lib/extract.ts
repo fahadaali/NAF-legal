@@ -16,6 +16,8 @@ export async function extractText(env: Env, buf: ArrayBuffer, mime: string, file
     return await extractViaClaude(env, buf, 'application/pdf', 'document');
   }
   if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) {
+    // و`gif` ليست في `ALLOWED_EXT` بـ`files.ts` فلا تبلغ هنا من مسار الرفع؛
+    // وتبقى في الشرط لأن `kb.ts` يستدعي هذه الدالّة بملفٍّ لم يمرّ بتلك القائمة.
     const m = mime.startsWith('image/') ? mime : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
     return await extractViaClaude(env, buf, m, 'image');
   }

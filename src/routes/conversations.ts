@@ -8,20 +8,20 @@ import type { Env, Variables } from '../types';
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth);
 
-// قائمة محادثات المستخدم (مع بحث نصّي اختياري)
+/**
+ * قائمة محادثات المستخدم، وترشيحٌ اختياريّ بالقضية.
+ *
+ * ولا بحثَ هنا. كان فرعُ `q` يطابق **العنوان** بـ`LIKE` بلا تطبيعٍ عربي،
+ * ولم يناديه أحد: الشريط الجانبي يبحث عبر `/api/search` — في متن الرسائل،
+ * بأنماطٍ مطبَّعة الهمزات والتاء المربوطة. ففرعان للبحث أحدهما أضعف ولا
+ * يُنادى ليسا خياراً، وهذا هو الذي سقط.
+ */
 app.get('/', async (c) => {
   const user = c.get('user');
-  const q = c.req.query('q');
   const folder = c.req.query('folder'); // تصفية حسب مجلّد القضية
   const cols = 'id, title, consultation_type, folder_id, created_at, updated_at';
   let rows;
-  if (q) {
-    rows = await c.env.DB.prepare(
-      `SELECT ${cols} FROM conversations WHERE user_id = ? AND title LIKE ? ORDER BY updated_at DESC LIMIT 100`
-    )
-      .bind(user.id, `%${q}%`)
-      .all();
-  } else if (folder) {
+  if (folder) {
     rows = await c.env.DB.prepare(
       `SELECT ${cols} FROM conversations WHERE user_id = ? AND folder_id = ? ORDER BY updated_at DESC LIMIT 100`
     )

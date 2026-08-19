@@ -1,90 +1,26 @@
-import { useState } from 'react';
-import { api, User } from '../lib/api';
-import NafMark from './NafMark';
-import ThemeToggle from './ThemeToggle';
-import type { ThemeChoice } from '../lib/theme';
-
-export default function Auth({ onAuth, theme, onThemeChange }: { onAuth: (u: User) => void; theme: ThemeChoice; onThemeChange: (c: ThemeChoice) => void }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setBusy(true);
-    try {
-      const r = mode === 'login' ? await api.login(email, password) : await api.register(email, password, name);
-      onAuth(r.user);
-    } catch (err: any) {
-      setError(err.message ?? 'حدث خطأ');
-    } finally {
-      setBusy(false);
-    }
-  };
-
+/* ══ شاشةُ دخولٍ متقاعدة ══
+ *
+ * كانت نموذجَ الدخول والتسجيل المحلّيين. وبعد الدخول الموحّد لم يعد لها
+ * باب: `App.tsx` لا يستوردها، ومساراها في الخادم (`‎/api/auth/login‎`
+ * و`‎/api/auth/register‎`) أُسقطا — التفصيل في `src/routes/auth.ts`.
+ *
+ * والملفّ يبقى على القرص ولا يُحذف (CLAUDE.md §11)، ومحتواه صار قولاً واحداً
+ * صادقاً بدل نموذجٍ يَعِد بدخولٍ لا يقع. ومن استورده يوماً بالخطأ يرى هذا لا
+ * حقولاً معطَّلة.
+ *
+ * وتاريخُ النموذج كما كان في سجلّ Git — وهو موضعه.
+ */
+export default function Auth() {
   return (
     <div className="auth-wrap">
-      <ThemeToggle choice={theme} onChange={onThemeChange} className="floating" />
-      <div className="auth-card">
-        <div className="auth-brand">
-          <NafMark />
-          <h1>مستشار ناف</h1>
-          <p>منصة الاستشارات القانونية الذكية</p>
-        </div>
-
-        {error && <div className="error-box">{error}</div>}
-
-        <form onSubmit={submit}>
-          {mode === 'register' && (
-            <div className="field">
-              <label>الاسم</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="الاسم الكامل" />
-            </div>
-          )}
-          <div className="field">
-            <label>البريد الإلكتروني</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@example.com"
-              required
-              dir="ltr"
-              style={{ textAlign: 'end' }}
-            />
-          </div>
-          <div className="field">
-            <label>كلمة المرور</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="٨ أحرف على الأقل"
-              required
-            />
-          </div>
-          <button className="btn-primary" disabled={busy}>
-            {busy ? '...' : mode === 'login' ? 'تسجيل الدخول' : 'إنشاء حساب'}
-          </button>
-        </form>
-
-        <div className="auth-switch">
-          {mode === 'login' ? (
-            <>
-              الحسابات يُنشئها مسؤول النظام. لأول تهيئة فقط:{' '}
-              <button onClick={() => { setMode('register'); setError(''); }}>إنشاء حساب المسؤول الأول</button>
-            </>
-          ) : (
-            <>
-              لديك حساب بالفعل؟{' '}
-              <button onClick={() => { setMode('login'); setError(''); }}>سجّل الدخول</button>
-            </>
-          )}
-        </div>
+      <div className="auth-card denied-card">
+        <h1 className="denied-title">الدخول من مركز الهوية</h1>
+        <p className="denied-reason" role="status">
+          لم يعد لهذه المنصة دخولٌ بكلمة مرور. افتح المنصة من مركز ناف وستدخل مباشرة
+        </p>
+        <a className="btn-primary denied-action" href="/">
+          فتح المنصة
+        </a>
       </div>
     </div>
   );

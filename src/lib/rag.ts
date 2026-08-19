@@ -226,56 +226,24 @@ async function effectiveDocumentIds(env: Env, ids: string[]): Promise<Set<string
   }
 }
 
-// ── بحث المحادثات الدلالي (§3) ──
-export async function indexConversationMessage(
-  env: Env,
-  opts: { messageId: string; conversationId: string; userId: string; role: string; content: string; title: string }
-): Promise<void> {
-  if (!env.CONV_VECTORIZE) return;
-  try {
-    const vec = await embed(env, opts.content.slice(0, 2000));
-    await env.CONV_VECTORIZE!.upsert([
-      {
-        id: opts.messageId,
-        values: vec,
-        metadata: {
-          user_id: opts.userId,
-          conversation_id: opts.conversationId,
-          role: opts.role,
-          title: opts.title,
-          snippet: opts.content.slice(0, 300),
-        },
-      },
-    ]);
-  } catch {
-    // Vectorize/AI غير متاح محليًا — يُتجاهل بلا إفشال
-  }
-}
-
-export interface ConvSearchHit {
-  conversationId: string;
-  title: string;
-  snippet: string;
-  score: number;
-}
-
-export async function searchConversations(env: Env, userId: string, query: string, topK = 10): Promise<ConvSearchHit[] | null> {
-  if (!env.CONV_VECTORIZE) return null; // رجوع إلى البحث النصّي
-  try {
-    const vec = await embed(env, query);
-    const res = await env.CONV_VECTORIZE!.query(vec, {
-      topK,
-      returnMetadata: 'all',
-      filter: { user_id: userId },
-    });
-    return (res.matches ?? []).map((m) => {
-      const meta = (m.metadata ?? {}) as any;
-      return { conversationId: meta.conversation_id ?? '', title: meta.title ?? '', snippet: meta.snippet ?? '', score: m.score };
-    });
-  } catch {
-    return null; // إشارة للرجوع إلى البحث النصّي
-  }
-}
+/* ══ فهرس المحادثات المتجهي — أُسقط ══
+ *
+ * كان هنا `indexConversationMessage` و`searchConversations`: الأولى تُنادى
+ * مرّتين في كل دور محادثة — لرسالة المستخدم ولردّ المساعد — فتستدعي نموذج
+ * التضمين ثم تدفع المتجه إلى `CONV_VECTORIZE`. والثانية القارئُ الوحيد لذلك
+ * الفهرس، **ولم تُنادَ من أي موضع في المنصة**.
+ *
+ * فكان الفهرس يُكتب ولا يُقرأ: نداءَا تضمين وكتابتان على كل رسالةٍ من كل
+ * مستخدم، لفهرسٍ لا يستعلمه أحد. وليس تأجيلاً: `DEPLOY_TRIGGER.md` يقيّد أن
+ * صلاحية Vectorize مُنحت، وسير النشر يفكّ تعليق الربط متى وجد الفهرسين.
+ *
+ * والبحث في المنصة لفظيٌّ بقرارٍ مكتوب في `routes/search.ts`: «يبحث المستخدم
+ * بكلماته فتُطابَق كلماتُه» — لا تضمين ولا نداء نموذج ولا كلفتُه ولا تأخيرُه.
+ * فالكتابة هي اليتيمة لا القراءة، وهي التي تُنزع.
+ *
+ * والاسترجاع للتوليد لا يمسّه شيء من هذا: مصدره `VECTORIZE` و`legal_chunks`
+ * في `retrieve` أعلاه، وهو حيٌّ يُقرأ في كل دور.
+ */
 
 // تنسيق سياق RAG لإدراجه في البرومبت مع الإسناد
 export function formatRagContext(results: RagResult[]): string {

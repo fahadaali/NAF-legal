@@ -615,12 +615,11 @@ async function req<T>(path: string, opts: RequestInit = {}, background = false):
 }
 
 export const api = {
-  // المصادقة
+  // المصادقة — قراءةُ الحساب وخروجٌ يُحوَّل، ولا شيء غيرهما.
+  // وكان هنا `login` و`register`: مساراهما خلف وسيط الدخول الموحّد فلا
+  // يبلغهما أحد، والكوكي الذي كانا يكتبانه لا يقرؤه شيء. أُسقطا مع
+  // مساريهما — التفصيل في `src/routes/auth.ts`.
   me: () => req<{ user: User }>('/auth/me'),
-  login: (email: string, password: string) =>
-    req<{ user: User }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  register: (email: string, password: string, name: string) =>
-    req<{ user: User }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
   // الخروج تنقّلُ متصفحٍ لا نداءُ `fetch`: يحذف الجلسة من KV ويُسقط الكوكي
   // ثم يحوّل — وثلاثتها تحتاج استجابةً يتّبعها المتصفح نفسه.
   //
@@ -649,8 +648,6 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ is_active, reason }),
     }),
-  changePassword: (new_password: string, current_password?: string) =>
-    req('/auth/change-password', { method: 'POST', body: JSON.stringify({ new_password, current_password }) }),
 
   // المحادثات
   listConversations: (q?: string, folder?: string) => {

@@ -27,14 +27,17 @@ binding = "R2"
 bucket_name = "naf-legal-files"
 
 # ── البحث المتجهي Vectorize (اختياري — لتفعيل RAG) ──
-# لتفعيل الاسترجاع الدلالي وبحث المحادثات، أنشئ الفهرسين ثم أزِل التعليق:
-#   wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
-#   wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
+# لتفعيل الاسترجاع الدلالي أنشئ الفهرس ثم أزِل التعليق:
+#   wrangler vectorize create naf-legal-kb --dimensions=1024 --metric=cosine
 # (يتطلّب أن يملك رمز API صلاحية Vectorize)
 #
+# وكان معه فهرسٌ ثانٍ `naf-legal-conv` للمحادثات، وأُسقط ربطُه: كان يُكتب في
+# كل دور ولا يقرؤه أحد — التفصيل في `src/lib/rag.ts`. والفهرس نفسه لا يُحذف
+# من الحساب هنا: حذفُ مخزنٍ قرارٌ لا يُتَّخذ في ملف إعداد.
+#
 # ولا يلزم تعديل هذا الملف بيدك: سير النشر يفكّ التعليق بين العلامتين أدناه
-# متى وجد الفهرسين قائمين، ويتركه معلَّقاً متى لم يجدهما. فمنحُ الصلاحية
-# وحده يكفي، والنشر التالي يربط.
+# متى وجد الفهرس قائماً، ويتركه معلَّقاً متى لم يجده. فمنحُ الصلاحية وحده
+# يكفي، والنشر التالي يربط.
 #
 # ولماذا يبقى معلَّقاً بلا صلاحية: ربطٌ إلى فهرس لا وجود له يُسقط
 # `wrangler deploy` كلَّه — فيُفقد النشر بأسره مقابل ميزة اختيارية.
@@ -43,9 +46,6 @@ bucket_name = "naf-legal-files"
 # [[vectorize]]
 # binding = "VECTORIZE"
 # index_name = "naf-legal-kb"
-# [[vectorize]]
-# binding = "CONV_VECTORIZE"
-# index_name = "naf-legal-conv"
 # VECTORIZE-BINDINGS-END
 
 # ── الذكاء الاصطناعي للتضمينات Workers AI ──
@@ -111,6 +111,8 @@ AUTH_ISSUER = "https://app.naflaw.sa"
 
 # الأسرار المطلوبة (لا تُوضع هنا):
 #   ANTHROPIC_API_KEY   — مفتاح Claude API
-#   JWT_SECRET          — سرّ توقيع الجلسات
+#   JWT_SECRET          — لم يعد له قارئ: توقيعُ الجلسات المحلية أُسقط مع
+#                         مساراته (انظر `src/lib/crypto.ts`). يُترك مضبوطاً
+#                         ولا يضرّ، ونزعُه من الحساب قرارُ تشغيل لا شيفرة.
 #   AUTH_CLIENT_SECRET  — سرّ هذه المنصة لدى المركز:
 #                         wrangler secret put AUTH_CLIENT_SECRET

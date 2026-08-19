@@ -3,6 +3,7 @@ import { api, Conversation, Folder, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
 import { ConsultationIcon, Icon, ICON_SM } from '../lib/icons';
 import { formatDayHeading, formatTime, isolate } from '../lib/format';
+import { streamingConversationIds, subscribeChatActivity } from '../lib/chatStream';
 import NafMark from './NafMark';
 
 interface Props {
@@ -56,6 +57,15 @@ export default function Sidebar(props: Props) {
 
   /** لا نتيجة لبحثٍ جرى — تفرّقها الشاشة الفارغة عن قائمةٍ لم تبدأ بعد. */
   const [noMatches, setNoMatches] = useState(false);
+
+  /* المحادثات التي يجري فيها دورٌ الآن.
+     `streamingConversationIds` كُتبت لهذا الموضع بنصّ توثيقها — «للشريط
+     الجانبي» — ولم تُستورَد قطّ. فمن بدّل المحادثة أثناء توليدٍ يجري لم يجد
+     في الشريط ما يدلّه على أين تركه، والتوليد يمضي في الخلفية على أي حال.
+     والاشتراك على دورة الحياة وحدها — البدء والختام — لا على كل مقطعٍ من
+     النصّ: الشريط لا يُعاد بناؤه مئة مرّة في الدور الواحد. */
+  const [busyConvs, setBusyConvs] = useState<string[]>(() => streamingConversationIds());
+  useEffect(() => subscribeChatActivity(() => setBusyConvs(streamingConversationIds())), []);
 
   const load = () => {
     setNoMatches(false);
@@ -254,6 +264,14 @@ export default function Sidebar(props: Props) {
             <span className="conv-icon"><ConsultationIcon option={optionFor(c.consultation_type)} size={ICON_SM} /></span>
             <span className="conv-main">
               <span className="conv-title">{c.title || 'محادثة'}</span>
+              {/* «دورٌ يجري» — شارةٌ نصّية لا لونٌ وحده (§6: لا معنى بلون
+                  مفرد). و`aria-live` مرفوعٌ عنها: القائمة تُقرأ بالتنقّل،
+                  وإعلانُ كل بدءٍ وختام في محادثةٍ أخرى ضجيجٌ للقارئ بالصوت. */}
+              {busyConvs.includes(c.id) && (
+                <span className="conv-busy" title="يجري توليد ردّ">
+                  <Icon.embedding size={ICON_SM} className="icon-spin" aria-hidden /> جارٍ
+                </span>
+              )}
               {/* الوقت وحده: يومُه في عنوان المجموعة فوقه، وتكراره في كل
                   صفٍّ حشوٌ يزاحم العنوان. والصيغة من `naf-format` لا من هنا،
                   وفي `bdi`: وقتٌ عارٍ داخل نصّ عربي ينقلب ترتيبه (§٥). */}

@@ -123,11 +123,10 @@ export const RETRIEVAL_WARNING = 'effective_warning';
 export const RETRIEVAL_REPEALED = 'repealed';
 const VALID_RETRIEVAL = new Set([RETRIEVAL_EFFECTIVE, RETRIEVAL_WARNING, RETRIEVAL_REPEALED]);
 
-export const RETRIEVAL_LABELS: Record<string, string> = {
-  [RETRIEVAL_EFFECTIVE]: 'نافذ',
-  [RETRIEVAL_WARNING]: 'نافذ بتحذير',
-  [RETRIEVAL_REPEALED]: 'ملغى',
-};
+/* وأُسقطت هنا `RETRIEVAL_LABELS`: ألفاظُ حالات الاسترجاع الثلاث، ولا
+   يقرؤها أحد — الواجهة تحمل ألفاظها في `web/src/lib/labels.ts`. وخريطةُ
+   ألفاظٍ ثانية في الخادم لا تُعرض في شاشة هي مصدرُ حقيقةٍ موازٍ ينحرف عن
+   الأوّل أوّلَ تعديل. */
 
 const RETRIEVAL_ALIASES = new Map<string, string>(
   (

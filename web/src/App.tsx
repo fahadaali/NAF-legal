@@ -5,7 +5,6 @@ import ChatView from './components/ChatView';
 import Admin from './components/Admin';
 import Tools from './components/Tools';
 import ReviewPage from './components/ReviewPage';
-import ChangePassword from './components/ChangePassword';
 import Deadlines from './components/Deadlines';
 import SearchPage from './components/SearchPage';
 import CaseFile from './components/CaseFile';
@@ -137,16 +136,10 @@ export default function App() {
     );
   }
 
-  // بوابة أول دخول: إجبار تعيين كلمة مرور جديدة
-  if (user.must_change_password) {
-    return (
-      <ChangePassword
-        theme={theme}
-        onThemeChange={setTheme}
-        onDone={() => setUser({ ...user, must_change_password: false })}
-      />
-    );
-  }
+  /* وأُسقطت هنا بوّابةُ «غيّر كلمة مرورك عند أوّل دخول».
+     هجرة `0010` صفّرت الراية، والمساران اللذان كانا يرفعانها أُسقطا، ومسارُ
+     التغيير نفسه أُسقط — فلا أحد يبلغها، والشرطُ عليها يقرأ حقلاً لا يتغيّر
+     أبداً. التفصيل في `src/routes/auth.ts`. */
 
   // فتح شاشة مع إغلاق الشريط الجانبي — على الشاشات الصغيرة يغطّي الشريط المحتوى
   const openView = (v: typeof view) => {
