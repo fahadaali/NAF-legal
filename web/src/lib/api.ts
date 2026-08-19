@@ -976,21 +976,54 @@ export const api = {
   },
 };
 
-// واجهات المراجعة العامة (بلا مصادقة)
-export const publicApi = {
-  getShare: (token: string) => fetch(`/api/shares/public/${token}`).then((r) => r.json()),
+/* ============================================================
+   صفحة المراجعة — ولم تعد عامّة.
+
+   `‎/api/shares/public/*‎` و`‎/review/:token‎` كانتا مفتوحتين للعميل الخارجي
+   بلا حساب، وأُخضعتا للدخول الموحّد بقرارٍ موصوفٍ في `audit/sso-report.md`.
+   والاسم `public` بقي في المسار لأن المسارات لا تُعاد تسميتُها على روابطَ
+   أُرسلت — وهو اسمُ مسارٍ لا وصفَ حال.
+
+   وهذه الدوالّ كانت تقرأ `‎.then(r => r.json())‎` بلا شيء آخر: فلمّا صار
+   الوسيط يردّ الزائرَ بلا جلسة تحويلاً إلى صفحة دخول المركز، كان `fetch`
+   يتبع التحويلة ويعود بـHTML، فيُرفض الوعد بلا مُمسِك — و`setData` لا
+   تُنفَّذ أبداً. فيرى فاتحُ الرابط **دوّارةَ انتظارٍ لا تتوقّف**: لا خطأ
+   ولا صفحة رفض ولا سبب.
+
+   فصارت تمرّ بـ`req` كسائر النداءات: فرعا المنع يُقرآن، والقارئُ الذي له
+   حساب يُساق إلى الدخول ثم يعود إلى الرابط نفسه، والذي لا حساب له يبلغ
+   صفحة الرفض فيقرأ لماذا.
+   ============================================================ */
+export interface SharedDraft {
+  id: string;
+  status: 'pending' | 'approved' | 'changes_requested';
+  reviewer_label: string | null;
+  created_at: number;
+  content: string;
+  message_id: string;
+  title: string;
+  consultation_type: string | null;
+}
+
+export interface ShareComment {
+  author: string;
+  body: string;
+  created_at: number;
+}
+
+export const shareApi = {
+  get: (token: string) =>
+    req<{ share: SharedDraft; comments: ShareComment[] }>(`/shares/public/${encodeURIComponent(token)}`),
   comment: (token: string, author: string, body: string) =>
-    fetch(`/api/shares/public/${token}/comment`, {
+    req<{ ok: true }>(`/shares/public/${encodeURIComponent(token)}/comment`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ author, body }),
-    }).then((r) => r.json()),
+    }),
   decision: (token: string, decision: string, author: string) =>
-    fetch(`/api/shares/public/${token}/decision`, {
+    req<{ ok: true }>(`/shares/public/${encodeURIComponent(token)}/decision`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ decision, author }),
-    }).then((r) => r.json()),
+    }),
 };
 
 // بثّ المحادثة (SSE عبر fetch)

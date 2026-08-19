@@ -43,7 +43,9 @@ function Shares() {
 
   const copyLink = (token: string) => {
     navigator.clipboard.writeText(`${location.origin}/review/${token}`).catch(() => {});
-    alert('تم نسخ رابط المراجعة');
+    // «زميل له حساب» لا «مراجِع» مجرَّداً: مسار المراجعة خلف الدخول الموحّد،
+    // فمن لا حساب له يبلغ صفحة الرفض. والرسالة تقول ذلك قبل أن يُرسَل الرابط.
+    alert('تم نسخ رابط المراجعة. يفتحه زميلٌ له حساب في المنصة');
   };
   const del = async (id: string) => {
     if (!confirm('حذف رابط المشاركة؟')) return;

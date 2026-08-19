@@ -11,6 +11,7 @@ import {
   type ChatStream,
 } from '../lib/chatStream';
 import { highlightIdAt, offsetsOfSelection, type RenderableHighlight } from '../lib/highlight';
+import { isolate } from '../lib/format';
 import IntakeModal from './IntakeModal';
 import DraftEditor from './DraftEditor';
 import ClauseLibrary from './ClauseLibrary';
@@ -696,14 +697,18 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     });
   };
 
-  // مشاركة المسودّة مع محامٍ للمراجعة (§3)
+  /* مشاركة المسودّة مع محامٍ للمراجعة (§3).
+     والمراجِع **له حساب في المنصة**: مسارُ المراجعة أُخضع للدخول الموحّد،
+     فمن لا حساب له يبلغ صفحة الرفض لا المسوّدة. والرسالة تقول ذلك صراحةً —
+     كانت تقول «رابط المراجعة» مجرَّداً، فيُرسَل إلى عميلٍ خارجيّ لا يفتحه. */
   const shareDraft = async (m: UiMessage) => {
     const label = prompt('اسم/صفة المراجِع (اختياري):') ?? undefined;
     try {
       const r = await api.createShare(m.id, label);
       const url = `${location.origin}${r.url}`;
       await navigator.clipboard.writeText(url).catch(() => {});
-      alert(`تم إنشاء رابط المراجعة ونسخه:\n${url}`);
+      // الرابط معزولٌ اتجاهياً داخل نصٍّ عربي — وهو أشدّ الحالات خطراً (§2).
+      alert(`تم نسخ رابط المراجعة. يفتحه زميلٌ له حساب في المنصة:\n${isolate(url)}`);
     } catch (e: any) {
       alert(e.message ?? 'تعذّر إنشاء الرابط');
     }
