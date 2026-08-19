@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { type LegalImportDiff } from '../lib/api';
 import { formatNumber } from '../lib/format';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 /** ألفاظ الحالة كما تظهر في بقيّة اللوحة — لا لفظان لمعنى واحد. */
 const STATUS_LABELS: Record<string, string> = { active: 'ساري', amended: 'معدَّل', repealed: 'ملغى' };
@@ -33,13 +34,14 @@ export function ImportCompare({
   onApply: () => void;
   onCancel: () => void;
 }) {
+  useModalDismiss(onCancel);
   // «مقارنة» تُظهر التفصيل، و«استبدال» تعتمد بلا قراءته. والافتراض العرض:
   // من فتح النافذة أصلاً لأن في الملف ما يمسّ قائماً.
   const [detailed, setDetailed] = useState(false);
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card intake" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">
             هذا النظام مستورد سابقاً — <bdi>{filename}</bdi>

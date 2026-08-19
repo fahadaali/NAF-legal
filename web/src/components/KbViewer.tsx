@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ICON_MD, ICON_SM, Icon } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 export type ViewKind = 'pdf' | 'image' | 'text';
 
@@ -34,11 +35,7 @@ export default function KbViewer({ target, onClose }: { target: ViewerTarget; on
       .finally(() => setLoading(false));
   }, [target.textUrl, target.kind]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useModalDismiss(onClose);
 
   const copyAll = async () => {
     if (text) {
@@ -50,7 +47,7 @@ export default function KbViewer({ target, onClose }: { target: ViewerTarget; on
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">
             {target.kind === 'pdf' ? 'PDF ' : target.kind === 'image' ? <Icon.fileImage size={ICON_SM} aria-hidden /> : <Icon.fileText size={ICON_SM} aria-hidden />}{' '}

@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { api, type Citation, type LegalArticle } from '../lib/api';
 import { ArticleCard, groupArticleParts } from './LegalArticleView';
 import { Icon, ICON_SM } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 /** رقم المادة من الاستشهاد. القديم لا يحمله إلا داخل «المادة ٧٧». */
 function articleNoOf(c: Citation): string | undefined {
@@ -83,13 +84,7 @@ export default function SourceModal({ citation, onClose }: { citation: Citation;
   }, [citation]);
 
   // `Esc` تُغلق كما يُغلق النقر خارجها — كما في نافذة سجلّ التعديلات.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useModalDismiss(onClose);
 
   const first = articles?.[0];
   // النافذ اليوم يسبق ما حُفظ في الاستشهاد: المادة قد تكون عُدِّلت بعده.
@@ -105,7 +100,7 @@ export default function SourceModal({ citation, onClose }: { citation: Citation;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card source-card" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div className="modal-card source-card" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">
             <Icon.officialSource size={ICON_SM} aria-hidden /> المصدر

@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { ICON_MD, ICON_SM, Icon } from '../lib/icons';
 import { api, type Attachment } from '../lib/api';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 /** كيف يُعرض الملفّ نفسه: إطارٌ للـ PDF، وصورةٌ للصور، ونصٌّ لما عداهما. */
 type ViewKind = 'pdf' | 'image' | 'text';
@@ -60,11 +61,7 @@ export default function AttachmentViewer({
       .finally(() => setLoading(false));
   }, [attachment.id, pane, text]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useModalDismiss(onClose);
 
   /* ملفٌّ لا نصَّ له يُعرض بالسطر المسجَّل لا بنافذةٍ خاوية.
      والسطر يقول ما بقي عاملاً — يُفتح ويُنزَّل — لأن «تعذّر استخراج النصّ»
@@ -73,13 +70,7 @@ export default function AttachmentViewer({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal-card"
-        role="dialog"
-        aria-modal="true"
-        aria-label="المرفق"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="modal-card" aria-label="المرفق" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">
             <Icon.attachment size={ICON_SM} aria-hidden /> <bdi>{attachment.filename}</bdi>

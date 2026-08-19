@@ -12,6 +12,7 @@ import { api, type LegalAmendment, type LegalArticle } from '../lib/api';
 import { DiffText } from '../lib/diff';
 import { formatNumber } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 /**
  * تنبيهات المادة — نصُّها من السجلّ حرفاً بحرف.
@@ -203,13 +204,7 @@ export function AmendmentWindow({ id, onClose }: { id: string; onClose: () => vo
   }, [id]);
 
   // `Esc` تُغلق كما يُغلق النقر خارجها — ومن فتحها بلوحة المفاتيح يُغلقها بها.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useModalDismiss(onClose);
 
   const TABS: [typeof tab, string, keyof typeof Icon][] = [
     ['log', 'سجل التعديلات', 'amendmentLog'],
@@ -219,7 +214,7 @@ export function AmendmentWindow({ id, onClose }: { id: string; onClose: () => vo
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card amendment-card" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card amendment-card" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">سجل التعديلات</span>
           <button className="modal-close" onClick={onClose} title="إغلاق">×</button>

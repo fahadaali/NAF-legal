@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { api, Member, PlatformRole, ROLE_LABELS } from '../lib/api';
 import { formatDate } from '../lib/format';
 import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 const ROLES = Object.keys(ROLE_LABELS) as PlatformRole[];
 
@@ -34,14 +35,7 @@ function RevokeModal({
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
 
-  // الإغلاق بمفتاح الهروب — النافذة لا تحتجز المستخدم
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-    };
-    addEventListener('keydown', onKey);
-    return () => removeEventListener('keydown', onKey);
-  }, [onCancel]);
+  useModalDismiss(onCancel);
 
   const submit = () => {
     if (!reason.trim()) {
@@ -53,7 +47,7 @@ function RevokeModal({
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card intake" {...modalCardProps}>
         <div className="modal-head">
           {/* التأكيد يسمّي الفعل والمفعول به، ولا يكتفي بسؤال عام */}
           <span className="modal-title">

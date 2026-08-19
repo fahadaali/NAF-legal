@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { extractPdfText, readableLocally } from '../lib/extractText';
 import { api, ConsultConfig } from '../lib/api';
 import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 // نافذة إدخال البيانات الأولية ورفع الملف قبل الدخول إلى المحادثة
 export default function IntakeModal({
@@ -14,6 +15,7 @@ export default function IntakeModal({
   /** ومعها معرِّفاتُ ما رُفع: تُختم برسالة البدء كما تُختم مرفقاتُ أيّ دور. */
   onStart: (conversationId: string, message: string, attachmentIds: string[]) => void;
 }) {
+  useModalDismiss(onClose);
   const [values, setValues] = useState<Record<string, string>>({});
   const [file, setFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState('');
@@ -69,7 +71,7 @@ export default function IntakeModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card intake" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">{config.label} — البيانات الأولية</span>
           <button className="modal-close" onClick={onClose} title="إغلاق"><Icon.close size={ICON_MD} aria-hidden /></button>

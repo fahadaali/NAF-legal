@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Icon, ICON_MD } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 // نافذة طلب إضافة نظام غير موجود في قاعدة المعرفة.
 // تُفتح من موضعين بالبيانات نفسها: من داخل المحادثة حين يتبيّن أن الإسناد
@@ -27,14 +28,7 @@ export default function RegulationRequestModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  // الإغلاق بمفتاح الهروب — النافذة لا تحتجز المستخدم
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    addEventListener('keydown', onKey);
-    return () => removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useModalDismiss(onClose);
 
   const submit = async () => {
     if (!name.trim()) {
@@ -63,7 +57,7 @@ export default function RegulationRequestModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card intake" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">طلب إضافة نظام إلى قاعدة المعرفة</span>
           <button className="modal-close" onClick={onClose} title="إغلاق">

@@ -14,9 +14,20 @@ import Members from './components/Members';
 import AccountMenu from './components/AccountMenu';
 import NotificationBell from './components/NotificationBell';
 import SessionBar from './components/SessionBar';
-import { useTheme } from './lib/theme';
+import {
+  AppShell,
+  AppContent,
+  AppHeader,
+  AppMain,
+  HeaderEnd,
+  HeaderStart,
+  MenuButton,
+  ShellBackdrop,
+  useShell,
+} from './naf/ui/app-shell';
+import { useTheme, type ThemeChoice } from './lib/theme';
 import { subscribeChatActivity } from './lib/chatStream';
-import { Icon, ICON_MD, ICON_LG } from './lib/icons';
+import { Icon, ICON_LG } from './lib/icons';
 
 type View = 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search';
 
@@ -75,7 +86,6 @@ export default function App() {
      فمرفقُ نافذة البدء كان يبقى بلا رسالة، ونصُّه لا يبلغ المساعد أبداً. */
   const [pendingInitial, setPendingInitial] = useState<{ text: string; attachmentIds: string[] } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     api
@@ -141,25 +151,75 @@ export default function App() {
      التغيير نفسه أُسقط — فلا أحد يبلغها، والشرطُ عليها يقرأ حقلاً لا يتغيّر
      أبداً. التفصيل في `src/routes/auth.ts`. */
 
-  // فتح شاشة مع إغلاق الشريط الجانبي — على الشاشات الصغيرة يغطّي الشريط المحتوى
-  const openView = (v: typeof view) => {
+  /* الهيكل من السجلّ لا مبنيّاً باليد.
+     كانت هذه الشجرة تكتب `naf-shell` و`naf-backdrop` و`naf-header` و
+     `naf-menu-btn` بأصنافها — وهي الأصناف نفسها التي يُصدرها
+     `naf/ui/app-shell.tsx` المنقول من السجلّ. فكان المكوّن حاضراً في
+     الشجرة ومُعاد بناؤه بجانبه، وهو ما يمنعه §4 نصّاً.
+     وفي المكوّن سلوكان لم يكونا هنا: «هروبٌ يغلق الدرج»، و«إيقافُ تمرير
+     الخلفية والدرج مفتوح». وحالةُ الدرج صارت في `AppShell`، فيقرؤها الجسم
+     بـ`useShell` — ولذلك انفصل `AppBody` عن `App`. */
+  return (
+    <AppShell fixed>
+      <AppBody
+        user={user}
+        theme={theme}
+        setTheme={setTheme}
+        view={view}
+        setView={setView}
+        activeConv={activeConv}
+        setActiveConv={setActiveConv}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        pendingInitial={pendingInitial}
+        setPendingInitial={setPendingInitial}
+        refreshKey={refreshKey}
+        refreshConversations={refreshConversations}
+        onLogout={handleLogout}
+      />
+    </AppShell>
+  );
+}
+
+interface BodyProps {
+  user: User;
+  theme: ThemeChoice;
+  setTheme: (c: ThemeChoice) => void;
+  view: View;
+  setView: (v: View) => void;
+  activeConv: string | null;
+  setActiveConv: (id: string | null) => void;
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
+  pendingInitial: { text: string; attachmentIds: string[] } | null;
+  setPendingInitial: (v: { text: string; attachmentIds: string[] } | null) => void;
+  refreshKey: number;
+  refreshConversations: () => void;
+  onLogout: () => void;
+}
+
+/** جسمُ الهيكل — داخل `AppShell` ليقرأ حالة الدرج منه. */
+function AppBody({
+  user, theme, setTheme, view, setView, activeConv, setActiveConv,
+  searchQuery, setSearchQuery, pendingInitial, setPendingInitial,
+  refreshKey, refreshConversations, onLogout,
+}: BodyProps) {
+  const { setOpen } = useShell();
+
+  // فتح شاشة مع إغلاق الدرج — على الشاشات الصغيرة يغطّي الدرجُ المحتوى
+  const openView = (v: View) => {
     setView(v);
-    setSidebarOpen(false);
+    setOpen(false);
   };
 
   return (
-    <div className="naf-shell naf-shell--fixed">
-      <div
-        className={`naf-backdrop ${sidebarOpen ? 'is-open' : ''}`}
-        onClick={() => setSidebarOpen(false)}
-        aria-hidden="true"
-      />
+    <>
+      <ShellBackdrop />
 
       {/* الشريط أوّلَ الهيكل: جهة البداية هي اليمين في RTL. كان آخره فوقع
           يساراً وحده بين المنصات الخمس. */}
       <Sidebar
         user={user}
-        open={sidebarOpen}
         activeConv={activeConv}
         view={view}
         refreshKey={refreshKey}
@@ -183,7 +243,7 @@ export default function App() {
         onOpenSupport={() => openView('support')}
       />
 
-      <div className="naf-main">
+      <AppMain>
         {/* أعلى عمود العمل لا أعلى الهيكل: `.naf-shell` صفٌّ أفقيّ — الشريط
             الجانبي ثم المحتوى — فابنٌ ثالثٌ فيه يقف عموداً بجانبهما. وهو فوق
             الترويسة لأنه يعمّ الشاشات: الجلسة انتهت أيّاً كان المعروض. */}
@@ -191,31 +251,17 @@ export default function App() {
         {/* الترويسة الموحّدة — زرّ القائمة دون نقطة الانكسار، والإشعارات
             وقائمة الحساب في نهايتها. تسجيل الخروج داخل القائمة لا زرّاً
             في أسفل الشريط كما كان. */}
-        <header className="naf-header">
-          <div className="naf-header-start">
-            <button
-              type="button"
-              className="naf-icon-btn naf-menu-btn"
-              aria-label="القائمة"
-              aria-expanded={sidebarOpen}
-              aria-controls="naf-sidebar"
-              onClick={() => setSidebarOpen((o) => !o)}
-            >
-              <Icon.menu size={ICON_MD} aria-hidden />
-            </button>
-          </div>
-          <div className="naf-header-end">
+        <AppHeader>
+          <HeaderStart>
+            <MenuButton />
+          </HeaderStart>
+          <HeaderEnd>
             <NotificationBell />
-            <AccountMenu
-              user={user}
-              theme={theme}
-              onThemeChange={setTheme}
-              onLogout={handleLogout}
-            />
-          </div>
-        </header>
+            <AccountMenu user={user} theme={theme} onThemeChange={setTheme} onLogout={onLogout} />
+          </HeaderEnd>
+        </AppHeader>
 
-        <main className="naf-content naf-content--flush">
+        <AppContent flush>
         {view === 'chat' && (
           <ChatView
             key={activeConv ?? 'new'}
@@ -251,12 +297,12 @@ export default function App() {
             }}
           />
         )}
-        </main>
+        </AppContent>
 
         <div className="disclaimer-bar">
           كل مخرجات المنصّة مسوّدات مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.
         </div>
-      </div>
-    </div>
+      </AppMain>
+    </>
   );
 }

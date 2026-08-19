@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Icon, ICON_MD, ICON_SM } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 interface Clause {
   id: string;
@@ -19,6 +20,7 @@ export default function ClauseLibrary({
   onPick?: (clause: Clause) => void;
   onClose?: () => void;
 }) {
+  useModalDismiss(onClose);
   const [items, setItems] = useState<Clause[]>([]);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<Clause | null>(null);
@@ -107,7 +109,7 @@ export default function ClauseLibrary({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card intake" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card intake" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title"><Icon.clauseBank size={ICON_MD} aria-hidden /> بنك البنود</span>
           <button className="modal-close" onClick={onClose}><Icon.close size={ICON_MD} aria-hidden /></button>

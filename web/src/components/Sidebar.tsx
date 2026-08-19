@@ -4,11 +4,11 @@ import { optionFor } from '../lib/consultations';
 import { ConsultationIcon, Icon, ICON_SM } from '../lib/icons';
 import { formatDayHeading, formatTime, isolate } from '../lib/format';
 import { streamingConversationIds, subscribeChatActivity } from '../lib/chatStream';
+import { Sidebar as NafSidebar } from '../naf/ui/app-shell';
 import NafMark from './NafMark';
 
 interface Props {
   user: User;
-  open: boolean;
   activeConv: string | null;
   view: 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search';
   refreshKey: number;
@@ -138,7 +138,9 @@ export default function Sidebar(props: Props) {
   };
 
   return (
-    <aside id="naf-sidebar" className={`naf-sidebar ${props.open ? 'is-open' : ''}`}>
+    /* العنصر من السجلّ: يحمل `id` و`naf-sidebar` وحالةَ الفتح من `useShell`.
+       كانت هذه الشجرة تكتبها بيدها وتأخذ الفتحَ مَعلَماً — نسختان لعقدٍ واحد. */
+    <NafSidebar>
       <div className="naf-sidebar-header">
         <NafMark />
         <div>
@@ -293,6 +295,6 @@ export default function Sidebar(props: Props) {
       {/* الهوية والمظهر والإشعارات وتسجيل الخروج انتقلت إلى قائمة الحساب
           في الترويسة — الموضع نفسه في المنصات الخمس. وكانت هنا في أسفل
           الشريط، فيختفي الخروج كلّه حين ينزلق الشريط خارج الشاشة. */}
-    </aside>
+    </NafSidebar>
   );
 }

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
-import { formatDate, formatTime } from '../lib/format';
+import { formatDate, formatTime, isolate } from '../lib/format';
 import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 interface Version {
   id: string;
@@ -29,6 +30,7 @@ export default function DraftEditor({
   onClose: () => void;
   onSaved: (content: string) => void;
 }) {
+  useModalDismiss(onClose);
   const [tab, setTab] = useState<'edit' | 'preview' | 'versions'>('edit');
   const [content, setContent] = useState('');
   const [original, setOriginal] = useState('');
@@ -123,7 +125,7 @@ export default function DraftEditor({
   };
 
   const restore = async (v: Version) => {
-    if (!confirm(`استعادة النسخة ${v.version}؟ ستُحفظ كنسخة أحدث.`)) return;
+    if (!confirm(`استعادة النسخة ${isolate(v.version)}؟ ستُحفظ كنسخة أحدث.`)) return;
     setBusy(true);
     try {
       const r = await api.restoreDraft(messageId, v.id);
@@ -139,7 +141,7 @@ export default function DraftEditor({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title"><Icon.edit size={ICON_SM} aria-hidden /> {title}</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
