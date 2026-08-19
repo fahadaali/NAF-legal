@@ -177,10 +177,28 @@ app.get('*', async (c) => {
 export default {
   fetch: app.fetch,
 
-  // Cron لتتبّع الأنظمة — §7
+  /**
+   * Cron لتتبّع الأنظمة — §7.
+   *
+   * `allSettled` لا `all`: المهامّ الأربع مستقلّة، ورميةٌ من واحدة كانت
+   * تُسقط الوعدَ المجمَّع فيقطع وقتُ التشغيل ما بقي — فجدولٌ لم تُطبَّق
+   * هجرته يوقف تنبيهات المواعيد وتتبّع الأنظمة والتضمين معاً.
+   *
+   * وكلُّ واحدةٍ تبتلع خطأها في موضعها أيضاً؛ وهذا حارسٌ ثانٍ على ما قد
+   * يُكتب غداً: مهمّةٌ خامسة تُضاف بلا `try` لا تُسقط من قبلها.
+   */
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      Promise.all([runTrackingScan(env), runNewsDigest(env), runDeadlineReminders(env), runLegalEmbedding(env)]).then(() => {})
+      Promise.allSettled([
+        runTrackingScan(env),
+        runNewsDigest(env),
+        runDeadlineReminders(env),
+        runLegalEmbedding(env),
+      ]).then((results) => {
+        for (const r of results) {
+          if (r.status === 'rejected') console.error('scheduled task failed:', r.reason);
+        }
+      })
     );
   },
 };
