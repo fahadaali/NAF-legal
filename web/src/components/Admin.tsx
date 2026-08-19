@@ -1103,7 +1103,9 @@ function FormsTab() {
           <button className="btn-sm" onClick={() => removeField(i)}>حذف</button>
         </div>
       ))}
-      <button className="btn-sm" onClick={addField}>＋ إضافة حقل</button>
+      <button type="button" className="btn-sm" onClick={addField}>
+        <Icon.add size={ICON_SM} aria-hidden /> إضافة حقل
+      </button>
 
       <div className="admin-actions" style={{ marginTop: 24 }}>
         <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>

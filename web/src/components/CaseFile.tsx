@@ -31,7 +31,7 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
         <h1 style={{ fontSize: '1.5rem', marginTop: 0 }}>ملف القضية</h1>
 
         {folders.length === 0 ? (
-          <div className="empty-state">لا قضايا بعد. أنشئ قضية من الشريط الجانبي (＋) واربط بها محادثاتك.</div>
+          <div className="empty-state">لا قضايا بعد. أنشئ قضية من «قضية جديدة» في الشريط الجانبي، واربط بها محادثاتك.</div>
         ) : (
           <>
             <div className="user-add-row">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import { Icon, ICON_MD } from '../lib/icons';
+import { Icon, ICON_MD, ICON_SM } from '../lib/icons';
 
 interface Clause {
   id: string;
@@ -68,7 +68,9 @@ export default function ClauseLibrary({
           </div>
           <textarea className="cfg-prompt" style={{ minHeight: 120, marginTop: 8 }} placeholder="نصّ البند…" value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} />
           <div className="admin-actions" style={{ marginTop: 8 }}>
-            <button className="btn-sm primary" onClick={save} disabled={busy}>{busy ? '…' : editing ? 'حفظ التعديل' : '＋ إضافة'}</button>
+            <button type="button" className="btn-sm primary" onClick={save} disabled={busy}>
+              {busy ? '…' : editing ? 'حفظ التعديل' : <><Icon.add size={ICON_SM} aria-hidden /> إضافة</>}
+            </button>
             {editing && <button className="btn-sm" onClick={() => { setEditing(null); setForm({ title: '', category: '', body: '' }); }}>إلغاء</button>}
           </div>
         </>

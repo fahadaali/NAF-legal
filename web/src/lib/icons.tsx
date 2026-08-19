@@ -57,6 +57,7 @@ import {
   Moon,
   Paperclip,
   Pencil,
+  Plus,
   Quote,
   RefreshCw,
   Replace,
@@ -93,6 +94,7 @@ export const ICON_LG = 24; // في التنقّل والعناوين
 /** المفتاح هو المعنى، لا الشكل. كل سطر مطابق لصفّ في naf-icons.md. */
 export const Icon = {
   // الإجراءات
+  add: Plus,               // إضافة — الفعل، ولا `FilePlus2` (صحيفة دعوى)
   edit: Pencil,            // تعديل
   delete: Trash2,          // حذف
   search: Search,          // بحث

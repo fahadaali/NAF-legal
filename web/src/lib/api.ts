@@ -914,9 +914,13 @@ export const api = {
    * البحث في المنصة — لفظيٌّ بلا ذكاء اصطناعي.
    *
    * `scope` يحصره في موضع: `chats` أو `outputs` أو `kb`، و`all` يعمّها.
+   * و`folder` يحصره في قضية — للشريط الجانبي حين تكون شارةُ قضيةٍ مضاءة.
+   * ولا يمسّ قاعدة المعرفة: تلك مشتركة لا تخصّ قضيةً بعينها.
    */
-  search: (q: string, scope: 'all' | 'chats' | 'outputs' | 'kb' = 'all') =>
-    req<PlatformSearch>(`/search?q=${encodeURIComponent(q)}&scope=${scope}`),
+  search: (q: string, scope: 'all' | 'chats' | 'outputs' | 'kb' = 'all', folder?: string) =>
+    req<PlatformSearch>(
+      `/search?q=${encodeURIComponent(q)}&scope=${scope}${folder ? `&folder=${encodeURIComponent(folder)}` : ''}`
+    ),
 
   // بنك البنود
   clauses: (q?: string) => req<{ clauses: any[] }>(`/clauses${q ? `?q=${encodeURIComponent(q)}` : ''}`),
