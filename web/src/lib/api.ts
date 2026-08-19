@@ -853,14 +853,11 @@ export const api = {
   tracking: () => req<{ needs_update: any[] }>('/admin/tracking'),
   resolveTracking: (id: string) => req(`/admin/tracking/${id}/resolve`, { method: 'POST' }),
   scanTracking: () => req<{ checked: number; flagged: number }>('/admin/tracking/scan', { method: 'POST' }),
+  /* سجلّات الهوية المحلية — قراءةً وحذفاً لِما لا عضو له.
+     ولا إنشاء ولا تصفير كلمة مرور ولا تغيير دور: الأعضاء يصلون من المركز،
+     والصلاحية في `setMemberRole` أعلاه. ومساراتها أُسقطت من الخادم أيضاً. */
   users: () => req<{ users: User[] }>('/admin/users'),
-  createUser: (email: string, role: string, name?: string) =>
-    req<{ user: User; default_password: string }>('/admin/users', { method: 'POST', body: JSON.stringify({ email, role, name }) }),
-  resetPassword: (id: string) =>
-    req<{ default_password: string }>(`/admin/users/${id}/reset-password`, { method: 'POST' }),
   deleteUser: (id: string) => req(`/admin/users/${id}`, { method: 'DELETE' }),
-  setRole: (id: string, role: string) =>
-    req(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   audit: () => req<{ entries: any[] }>('/admin/audit'),
   aiCheck: () => req<{ ok: boolean; model: string; dimensions?: number; ms?: number; error?: string }>('/admin/ai-check'),
   /** فحص Claude — يردّ ٢٠٠ ولو فشل، فالتقرير هو المطلوب لا رمز الخطأ. */

@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
-import { notify } from '../lib/notify';
+import { notifyAdmins } from '../lib/notify';
 import { sameRegulationName } from '../lib/regulations';
 import type { Env, Variables } from '../types';
 
@@ -88,20 +88,13 @@ app.post('/', async (c) => {
     )
     .run();
 
-  // إشعار مسؤولي النظام ليروا الطلب فور وصوله
-  const admins = await c.env.DB.prepare("SELECT id, email FROM users WHERE role = 'admin'").all<{
-    id: string;
-    email: string;
-  }>();
-  for (const a of admins.results ?? []) {
-    await notify(c.env, {
-      userId: a.id,
-      kind: 'system',
-      title: 'طلب إضافة نظام إلى قاعدة المعرفة',
-      body: `${user.name ?? user.email} يطلب إضافة: ${name}`,
-      email: a.email,
-    });
-  }
+  // إشعار مسؤولي المنصة ليروا الطلب فور وصوله. ومَن هم المسؤولون يقرّره
+  // `members` لا `users` — انظر `notifyAdmins`.
+  await notifyAdmins(c.env, {
+    kind: 'system',
+    title: 'طلب إضافة نظام إلى قاعدة المعرفة',
+    body: `${user.name ?? user.email} يطلب إضافة: ${name}`,
+  });
 
   return c.json({ id, duplicate: false });
 });

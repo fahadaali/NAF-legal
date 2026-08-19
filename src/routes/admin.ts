@@ -12,13 +12,9 @@ import {
   isSvgMime,
   normalizeDocTemplate,
 } from '../lib/docTemplate';
-import { uuid, hashPassword } from '../lib/crypto';
+import { uuid } from '../lib/crypto';
 import { notify } from '../lib/notify';
 import type { Env, Variables } from '../types';
-
-// كلمة المرور الافتراضية للحسابات الجديدة (تُغيَّر إجباريًا عند أول دخول)
-const DEFAULT_PASSWORD = '1234';
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth, requireAdmin);
@@ -31,52 +27,54 @@ app.get('/users', async (c) => {
   return c.json({ users: rows.results });
 });
 
-// إنشاء حساب جديد بكلمة مرور افتراضية (1234) مع إجبار التغيير عند أول دخول
-app.post('/users', async (c) => {
-  const { email, role, name } = await c.req.json().catch(() => ({}));
-  if (!email || !EMAIL_RE.test(email)) return c.json({ error: 'بريد إلكتروني غير صالح' }, 400);
-  if (!['user', 'admin'].includes(role)) return c.json({ error: 'دور غير صالح' }, 400);
+/* ── ثلاثةُ مسارات أُسقطت مع الدخول الموحّد ──
+ *
+ * `POST /users` و `PATCH /users/:id/role` و `POST /users/:id/reset-password`.
+ * أُسقطت من الواجهة يوم الربط، وبقيت هنا حيّةً تقبل نداءً مباشراً — وكلُّها
+ * لغوٌ في أحسن أحوالها وفخٌّ في أسوئها:
+ *
+ *   `POST /users`      ينشئ حساباً بكلمة مرورٍ لا بابَ لها: الدخولُ المحليّ
+ *                      خلف وسيط المركز، فلا يبلغ صاحبُ الحساب شيئاً.
+ *   `PATCH …/role`     يكتب في `users.role` — عمودٌ لا يقرّر وصولاً بعد
+ *                      الربط. فيظنّ المسؤولُ أنه منح صلاحيةً ولم يمنح شيئاً،
+ *                      والصلاحية في `members.role` من شاشة «الأعضاء».
+ *   `POST …/reset-…`   يرفع `must_change_password` إلى ١ — وهي الرايةُ التي
+ *                      صفّرتها هجرة `0010` لأنها تحبس صاحبها في شاشةِ كلمةِ
+ *                      مرورٍ لا معنى لها بعد الربط.
+ *
+ * فحُذفت الثلاثة. وإنشاء الأعضاء من المركز، والصلاحية من «الأعضاء»، ولا
+ * كلمةَ مرورٍ في هذه المنصة تُنشأ ولا تُصفَّر.
+ */
 
-  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-  if (existing) return c.json({ error: 'البريد الإلكتروني مسجّل مسبقًا' }, 409);
-
-  const id = uuid();
-  const hash = await hashPassword(DEFAULT_PASSWORD);
-  await c.env.DB.prepare(
-    'INSERT INTO users (id, email, password_hash, role, name, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)'
-  )
-    .bind(id, email, hash, role, name ?? null, Date.now())
-    .run();
-  await audit(c, 'user.create', id, { email, role });
-  return c.json({ user: { id, email, role, name, must_change_password: true }, default_password: DEFAULT_PASSWORD });
-});
-
-app.patch('/users/:id/role', async (c) => {
-  const id = c.req.param('id');
-  const { role } = await c.req.json().catch(() => ({}));
-  if (!['user', 'admin'].includes(role)) return c.json({ error: 'دور غير صالح' }, 400);
-  await c.env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(role, id).run();
-  await audit(c, 'user.role_change', id, { role });
-  return c.json({ ok: true });
-});
-
-// إعادة تعيين كلمة المرور إلى الافتراضية (1234) مع إجبار التغيير
-app.post('/users/:id/reset-password', async (c) => {
-  const id = c.req.param('id');
-  const hash = await hashPassword(DEFAULT_PASSWORD);
-  const res = await c.env.DB.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?')
-    .bind(hash, id)
-    .run();
-  if (!res.meta.changes) return c.json({ error: 'المستخدم غير موجود' }, 404);
-  await audit(c, 'user.reset_password', id, {});
-  return c.json({ ok: true, default_password: DEFAULT_PASSWORD });
-});
-
-// حذف مستخدم (مع منع حذف النفس)
+/**
+ * حذف سجلّ هوية محليّ.
+ *
+ * **ويُرفض متى كان مرتبطاً بعضو.** `members.local_user_id` مفتاحٌ أجنبيّ إلى
+ * `users(id)` بلا `ON DELETE`، فالقاعدة ترفض الحذف بنفسها — وكان الرفض يخرج
+ * استثناءً غيرَ مُمسَك، فيقرؤه المسؤول «خطأ في الاتصال» ويعيد الضغط.
+ *
+ * والرفض هنا مقصود لا حيلةٌ على القيد: حذفُ الصفّ يتتالى على `conversations`
+ * و `case_folders` و `regulation_requests` — عملُ المحامي كلُّه — وما يريده
+ * المسؤول حين ينصرف عضوٌ هو **سحبُ وصوله**، وموضعُه شاشة «الأعضاء». فيقول
+ * الردُّ ذلك بعينه بدل أن يُلقي اللوم على الشبكة.
+ *
+ * ويبقى الحذف متاحاً لسجلٍّ لا عضو له — بقايا ما قبل الربط.
+ */
 app.delete('/users/:id', async (c) => {
   const id = c.req.param('id');
   const me = c.get('user');
   if (id === me.id) return c.json({ error: 'لا يمكنك حذف حسابك' }, 400);
+
+  const linked = await c.env.DB.prepare('SELECT user_id FROM members WHERE local_user_id = ?')
+    .bind(id)
+    .first<{ user_id: string }>();
+  if (linked) {
+    return c.json(
+      { error: 'هذا السجلّ مرتبط بعضو. اسحب وصوله من شاشة «الأعضاء» بدل حذفه' },
+      409
+    );
+  }
+
   const res = await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
   if (!res.meta.changes) return c.json({ error: 'المستخدم غير موجود' }, 404);
   await audit(c, 'user.delete', id, {});
