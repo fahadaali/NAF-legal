@@ -7,8 +7,20 @@ import type { Env, Variables } from '../types';
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth);
 
-// ألوان متناغمة مع هوية الشعار (كحلي/بيج/أزرق فولاذي)
-const COLORS = ['#b8a488', '#86a6d4', '#6fca9a', '#c2ad8e', '#8f9bb3', '#d0a879'];
+/**
+ * نغمةُ شارة القضية — رمزٌ من سلّم ناف لا لونٌ خام.
+ *
+ * كانت ستّ قيم hex تُولَّد هنا وتُرسَم في الشريط بـ`style={{background}}`:
+ * لا تتبع الوضعين، ولا تُحدَّث بتحديث الثيم، ولا يشملها أيٌّ من استثناءات
+ * `CLAUDE.md` §1 الأربعة — فكلُّها سياقاتٌ لا تقرأ متغيّراً، وهذه تقرأ.
+ *
+ * والمخزَّن الآن اسمُ نغمةٍ يقابل `--chart-1..5` في `naf-theme.css`، وهي
+ * مسجَّلة في السجلّ ولها قيمتان في الوضعين. والخادم لا يعرف لوناً ولا
+ * يحتاج أن يعرف: يختار نغمةً، والثيم يقول ما هي.
+ *
+ * وخمسٌ لا ستّ: السلّم خمس درجات، وسادسةٌ تُخترع هي الانحراف بعينه.
+ */
+const TONES = ['chart-1', 'chart-2', 'chart-3', 'chart-4', 'chart-5'];
 
 app.get('/', async (c) => {
   const user = c.get('user');
@@ -27,7 +39,7 @@ app.post('/', async (c) => {
   const { name } = await c.req.json().catch(() => ({}));
   if (!name?.trim()) return c.json({ error: 'اسم القضية مطلوب' }, 400);
   const id = uuid();
-  const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+  const color = TONES[Math.floor(Math.random() * TONES.length)];
   await c.env.DB.prepare('INSERT INTO case_folders (id, user_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)')
     .bind(id, user.id, name.trim(), color, Date.now())
     .run();

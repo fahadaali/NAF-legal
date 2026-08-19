@@ -7,7 +7,7 @@ import { LegalLaws } from './LegalLaws';
 import { LegalReview } from './LegalReview';
 import ClauseLibrary from './ClauseLibrary';
 import { RequestStatusPill } from './Support';
-import { formatDate, formatNumber, formatTime } from '../lib/format';
+import { formatAmount, formatDate, formatNumber, formatTime, isolate } from '../lib/format';
 import { Icon, ICON_MD, ICON_SM } from '../lib/icons';
 import { ScrollBoxProvider, useScrollReset } from '../lib/scrollBox';
 import { spendTypeLabel, usageKindLabel } from '../lib/labels';
@@ -783,7 +783,7 @@ function TrackingTab() {
     setScanning(true);
     try {
       const r = await api.scanTracking();
-      alert(`اكتمل الفحص: فُحص ${r.checked} نظامًا، وُضِعت علامة على ${r.flagged}.`);
+      alert(`اكتمل الفحص: فُحص ${isolate(r.checked)} نظامًا، وُضِعت علامة على ${isolate(r.flagged)}.`);
       load();
     } catch (e: any) {
       alert(e.message ?? 'فشل الفحص');
@@ -844,12 +844,15 @@ function UsersTab() {
     load();
   }, []);
 
-  // أُسقط إنشاءُ الحساب وتصفيرُ كلمة المرور مع الدخول الموحّد: لا كلمة مرور
-  // يدخل بها أحد، فحسابٌ يُنشأ هنا لا يُوصل صاحبه إلى شيء. ومساراهما في
-  // `routes/admin.ts` باقيان بلا حذف، وغير مستدعَيين من الواجهة.
+  // أُسقط إنشاءُ الحساب وتصفيرُ كلمة المرور وتغييرُ الدور مع الدخول الموحّد:
+  // لا كلمة مرور يدخل بها أحد، و`users.role` لا يقرّر وصولاً. ومساراتها
+  // الثلاثة أُسقطت من `routes/admin.ts` كذلك، فلا تُنادى من هنا ولا من غيره.
 
+  /* والحذف لا يمسّ عضواً: الخادم يردّه بـ٤٠٩ ورسالته تدلّ على شاشة
+     «الأعضاء» — وهناك موضعُ سحب الوصول. وهذا يُخلي الحذفَ لبقايا ما قبل
+     الربط وحدها: سجلٌّ لا عضو له ولا عملَ معلَّق عليه. */
   const del = async (id: string) => {
-    if (!confirm('حذف هذا المستخدم نهائيًا؟')) return;
+    if (!confirm('حذف سجلّ الهوية هذا نهائيًا؟')) return;
     try { await api.deleteUser(id); load(); } catch (e: any) { alert(e.message); }
   };
 
@@ -961,7 +964,7 @@ function NewsTab() {
   useEffect(() => { load(); }, []);
   const scan = async () => {
     setScanning(true);
-    try { const r = await api.scanNews(); alert(`تم رصد ${r.found} عنصرًا جديدًا.`); load(); }
+    try { const r = await api.scanNews(); alert(`تم رصد ${isolate(r.found)} عنصرًا جديدًا.`); load(); }
     catch (e: any) { alert(e.message ?? 'فشل'); } finally { setScanning(false); }
   };
   return (
@@ -1100,7 +1103,9 @@ function FormsTab() {
           <button className="btn-sm" onClick={() => removeField(i)}>حذف</button>
         </div>
       ))}
-      <button className="btn-sm" onClick={addField}>＋ إضافة حقل</button>
+      <button type="button" className="btn-sm" onClick={addField}>
+        <Icon.add size={ICON_SM} aria-hidden /> إضافة حقل
+      </button>
 
       <div className="admin-actions" style={{ marginTop: 24 }}>
         <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
@@ -1110,19 +1115,32 @@ function FormsTab() {
   );
 }
 
+/**
+ * مبلغٌ بالدولار — رمزُ العملة ثم القيمة من `naf-format`.
+ *
+ * وكان التنسيق سطرياً: `‎(Number(x)||0).toFixed(2)‎` ملتصقاً بـ`$` مكتوبٍ
+ * باليد — بلا فاصل آلاف، وقيمتان منه بلا `<bdi>` أصلاً فينقلب ترتيبهما في
+ * السطر العربي. و§8 يقول: لا يُنسَّق رقمٌ في مكوّن.
+ *
+ * ودولارٌ لا ريال، فلا `Money` من `naf-currency`: تلك لرمز الريال
+ * `U+20C1` وحده، وهذه كلفةُ نموذجٍ تُفوتَر بالدولار.
+ */
+function usd(value: unknown): string {
+  return `$${formatAmount(Number(value) || 0)}`;
+}
+
 function AnalyticsTab() {
   const [data, setData] = useState<any>(null);
   useEffect(() => { api.analytics().then(setData).catch(() => {}); }, []);
   if (!data) return <div className="empty-state"><span className="spinner" /></div>;
   const t = data.totals ?? {};
-  const cost = (Number(t.cost) || 0).toFixed(2);
   return (
     <div>
       <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>آخر 30 يومًا</p>
       <div className="stat-row">
-        <div className="stat-card"><div className="stat-val">{t.events ?? 0}</div><div className="stat-lbl">عملية</div></div>
-        <div className="stat-card"><div className="stat-val"><bdi>{((Number(t.in_tok) + Number(t.out_tok)) / 1000).toFixed(1)}k</bdi></div><div className="stat-lbl">إجمالي الرموز</div></div>
-        <div className="stat-card"><div className="stat-val">${cost}</div><div className="stat-lbl">التكلفة التقديرية</div></div>
+        <div className="stat-card"><div className="stat-val"><bdi>{formatNumber(Number(t.events) || 0)}</bdi></div><div className="stat-lbl">عملية</div></div>
+        <div className="stat-card"><div className="stat-val"><bdi>{formatNumber(Number(t.in_tok) + Number(t.out_tok))}</bdi></div><div className="stat-lbl">إجمالي الرموز</div></div>
+        <div className="stat-card"><div className="stat-val"><bdi>{usd(t.cost)}</bdi></div><div className="stat-lbl">التكلفة التقديرية</div></div>
       </div>
 
       {/* المفاتيح مخزَّنة بالإنجليزية وتُعرض بألفاظها المسجَّلة. وما لا لفظ له
@@ -1131,7 +1149,7 @@ function AnalyticsTab() {
       <table className="data-table">
         <thead><tr><th>العملية</th><th>العدد</th><th>التكلفة</th></tr></thead>
         <tbody>{(data.by_kind ?? []).map((k: any) => (
-          <tr key={k.kind}><td>{usageKindLabel(k.kind)}</td><td><bdi>{k.n}</bdi></td><td><bdi>${(Number(k.cost) || 0).toFixed(3)}</bdi></td></tr>
+          <tr key={k.kind}><td>{usageKindLabel(k.kind)}</td><td><bdi>{formatNumber(Number(k.n) || 0)}</bdi></td><td><bdi>{usd(k.cost)}</bdi></td></tr>
         ))}</tbody>
       </table>
 
@@ -1143,7 +1161,7 @@ function AnalyticsTab() {
         <tbody>{(data.by_type ?? []).map((k: any) => (
           <tr key={k.consultation_type ?? 'none'}>
             <td>{spendTypeLabel(k.consultation_type, labelIfKnown)}</td>
-            <td><bdi>{k.n}</bdi></td>
+            <td><bdi>{formatNumber(Number(k.n) || 0)}</bdi></td>
           </tr>
         ))}</tbody>
       </table>
@@ -1152,7 +1170,7 @@ function AnalyticsTab() {
       <table className="data-table">
         <thead><tr><th>المستخدم</th><th>العمليات</th><th>التكلفة</th></tr></thead>
         <tbody>{(data.by_user ?? []).map((u: any, i: number) => (
-          <tr key={i}><td dir="ltr" style={{ textAlign: 'end' }}>{u.email ?? '—'}</td><td><bdi>{u.n}</bdi></td><td><bdi>${(Number(u.cost) || 0).toFixed(3)}</bdi></td></tr>
+          <tr key={i}><td dir="ltr" style={{ textAlign: 'end' }}>{u.email ?? '—'}</td><td><bdi>{formatNumber(Number(u.n) || 0)}</bdi></td><td><bdi>{usd(u.cost)}</bdi></td></tr>
         ))}</tbody>
       </table>
     </div>

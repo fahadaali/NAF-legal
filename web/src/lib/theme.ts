@@ -34,8 +34,12 @@ export function applyThemeChoice(choice: ThemeChoice): void {
     /* التخزين غير متاح — يبقى الاختيار لهذه الجلسة */
   }
   // القيمتان هما --background في ثيم ناف بالوضعين، مكتوبتان hex بموجب
-  // استثناء <meta name="theme-color"> في CLAUDE.md §1: الوسم لا يحلّ
-  // var(). أي تغيير في الثيم يستوجب تحديثهما هنا وفي index.html.
+  // استثناء <meta name="theme-color"> في CLAUDE.md §1: الوسم لا يحلّ var().
+  //
+  // ونظيرهما في `web/public/theme-init.js` — وهو الذي يضبط الوسم قبل أوّل
+  // رسم، وهذه تتبعه عند تبديل المظهر. **موضعان لا ثالث لهما، ويتغيّران
+  // معاً:** كان الوسم ساكناً على قيمة الوضع الداكن وحدها، فيرى صاحبُ الوضع
+  // الفاتح شريطَ متصفّحٍ داكناً حتى يُركَّب React.
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', dark ? '#1c2433' : '#e8ebed');
 }

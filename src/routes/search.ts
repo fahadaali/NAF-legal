@@ -50,12 +50,23 @@ app.get('/', async (c) => {
   const user = c.get('user');
   const q = c.req.query('q')?.trim() ?? '';
   const scope = c.req.query('scope') ?? 'all';
+  /* قضيةٌ يُحصر فيها البحث — للشريط الجانبي.
+     ترشيحُ القضية والبحثُ كانا مسارين لا يلتقيان: القائمة تمرّر المجلّد
+     و`/search` لا يعرفه، فمن رشّح قضيةً ثم كتب كلمةً رأى محادثاتٍ من قضايا
+     أخرى وشارةُ القضية مضاءة. والحصر هنا لا بعد القصّ: ترشيحُ خمس عشرة
+     نتيجةً بعد اختيارها يعطي صفحةً ناقصة أو فارغة. */
+  const folder = c.req.query('folder')?.trim() || null;
   if (!q) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, mode: 'empty' });
 
   const patterns = arabicGlobPatterns(q);
   if (!patterns.length) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, mode: 'empty' });
 
   const wants = (s: string) => scope === 'all' || scope === s;
+  /* شرطُ القضية ومعامِله معاً — فلا يفترقان عند البناء.
+     والشرط على `conversations` وهي مضمومةٌ في الاستعلامين، والمخرجاتُ تتبع
+     محادثتها فتُحصر بحصرها. */
+  const folderCond = folder ? ' AND c.folder_id = ?' : '';
+  const folderArg = folder ? [folder] : [];
 
   // ── المحادثات ──
   let chats: unknown[] = [];
@@ -64,10 +75,10 @@ app.get('/', async (c) => {
       `SELECT c.id AS conversation_id, c.title, m.id AS message_id, m.role, m.created_at,
               ${snippetExpr('m.content')} AS snippet
        FROM messages m JOIN conversations c ON c.id = m.conversation_id
-       WHERE c.user_id = ? AND ${globCondition('m.content', patterns)}
+       WHERE c.user_id = ? AND ${globCondition('m.content', patterns)}${folderCond}
        ORDER BY m.created_at DESC LIMIT ?`
     )
-      .bind(user.id, q, ...patterns, LIMIT)
+      .bind(user.id, q, ...patterns, ...folderArg, LIMIT)
       .all();
     chats = rows.results ?? [];
   }
@@ -82,10 +93,10 @@ app.get('/', async (c) => {
        FROM draft_versions d
        JOIN messages m ON m.id = d.message_id
        JOIN conversations c ON c.id = m.conversation_id
-       WHERE c.user_id = ? AND ${globCondition('d.content', patterns)}
+       WHERE c.user_id = ? AND ${globCondition('d.content', patterns)}${folderCond}
        ORDER BY d.created_at DESC LIMIT ?`
     )
-      .bind(user.id, q, ...patterns, LIMIT)
+      .bind(user.id, q, ...patterns, ...folderArg, LIMIT)
       .all();
     outputs = rows.results ?? [];
   }

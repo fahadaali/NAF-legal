@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { Icon, ICON_SM } from '../lib/icons';
 
 // لوحة المواعيد النظامية: إضافة · متابعة · إنجاز
 export default function Deadlines() {
@@ -52,7 +53,9 @@ export default function Deadlines() {
           <input placeholder="عدد الأيام" value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} style={{ minWidth: 110 }} />
           <span style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>أو</span>
           <input placeholder="تاريخ الاستحقاق مباشرة" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
-          <button className="btn-sm primary" onClick={add} disabled={busy}>{busy ? '…' : '＋ إضافة'}</button>
+          <button type="button" className="btn-sm primary" onClick={add} disabled={busy}>
+            {busy ? '…' : <><Icon.add size={ICON_SM} aria-hidden /> إضافة</>}
+          </button>
         </div>
 
         <div className="admin-tabs" style={{ marginTop: 16 }}>

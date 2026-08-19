@@ -12,6 +12,7 @@ import { api, type LegalAmendment, type LegalArticle } from '../lib/api';
 import { DiffText } from '../lib/diff';
 import { formatNumber } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 /**
  * تنبيهات المادة — نصُّها من السجلّ حرفاً بحرف.
@@ -203,13 +204,7 @@ export function AmendmentWindow({ id, onClose }: { id: string; onClose: () => vo
   }, [id]);
 
   // `Esc` تُغلق كما يُغلق النقر خارجها — ومن فتحها بلوحة المفاتيح يُغلقها بها.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useModalDismiss(onClose);
 
   const TABS: [typeof tab, string, keyof typeof Icon][] = [
     ['log', 'سجل التعديلات', 'amendmentLog'],
@@ -219,7 +214,7 @@ export function AmendmentWindow({ id, onClose }: { id: string; onClose: () => vo
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card amendment-card" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card amendment-card" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">سجل التعديلات</span>
           <button className="modal-close" onClick={onClose} title="إغلاق">×</button>
@@ -453,51 +448,11 @@ function OriginalTab({ data }: { data: LegalAmendment }) {
   );
 }
 
-/**
- * نافذة التعديلات الخام — تبقى للوحة المراجعة الثلاثية.
- *
- * شاشة المراجعة تعرض الألواح جنباً إلى جنب لا في نافذة: المراجع يقابل بينها
- * وهو يحرّر، وفتحُ نافذةٍ فوق نصٍّ يحرّره يحجب ما يحرّره.
- */
-export function AmendmentPanel({ id }: { id: string }) {
-  const [data, setData] = useState<LegalAmendment | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    setData(null);
-    setFailed(false);
-    api
-      .legalAmendment(id)
-      .then((r) => setData(r.amendment))
-      .catch(() => setFailed(true));
-  }, [id]);
-
-  if (failed) return <p className="legal-notice-meta">تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة</p>;
-  if (!data) return <p className="legal-notice-meta">جارٍ التحميل</p>;
-
-  return (
-    <div className="legal-amendment">
-      {data.amend_note ? (
-        <div>
-          <div className="compare-label">سبب الإحالة للمراجعة</div>
-          <p><bdi>{data.amend_note}</bdi></p>
-        </div>
-      ) : null}
-      {data.amendments_raw ? (
-        <div>
-          <div className="compare-label">نصّ التعديل</div>
-          <p>{data.amendments_raw}</p>
-        </div>
-      ) : null}
-      {data.text_superseded ? (
-        <div>
-          <div className="compare-label">النصّ السابق</div>
-          <p>{data.text_superseded}</p>
-        </div>
-      ) : null}
-    </div>
-  );
-}
+/* وأُسقطت هنا `AmendmentPanel`: لوحٌ يعرض التعديلات الخام «للوحة المراجعة
+   الثلاثية» بنصّ توثيقها — و`LegalReview.tsx` لا يستوردها ولم يستوردها قطّ.
+   ومحتواها هو محتوى `AmendmentWindow` أعلاه بعينه، وتلك مستعملة. فمن أراد
+   لوحاً غيرَ نافذة يشتقّه منها، ونسخةٌ ثانيةٌ تنتظر مستهلِكاً ليست طريقاً
+   إلى ذلك. */
 
 /**
  * المادة كاملةً: ترويستها وشاراتها وتنبيهاتها ونصُّها.

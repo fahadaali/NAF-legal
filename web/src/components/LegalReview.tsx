@@ -25,6 +25,7 @@ import { formatDate, formatNumber, formatTime } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 import { useScrollReset } from '../lib/scrollBox';
 import { docTypeLabel } from '../lib/labels';
+import { modalCardProps, useModalDismiss } from '../lib/modal';
 import { ReviewStatusPill } from './LegalArticleView';
 
 /**
@@ -444,6 +445,11 @@ function QueueList({
   const [wide, setWide] = useState<{ ids: string[]; truncated: number } | null>(null);
   const [fetching, setFetching] = useState(false);
   const [asking, setAsking] = useState(false);
+  /* نافذةُ التأكيد تُغلق بالهروب كأخواتها. و`useCallback` لا دالّةٌ سطرية:
+     الخطّاف يعلّق على مرجع الدالّة، ومرجعٌ جديد في كل رسمٍ يعيد تركيب
+     المستمِع مع كل ضغطة مفتاح في الشاشة. */
+  const stopAsking = useCallback(() => setAsking(false), []);
+  useModalDismiss(asking ? stopAsking : undefined);
 
   // المحدَّد على الصفحة يُقصَر على المعروض: صفٌّ خرج من الطابور لا يبقى
   // محدَّداً في الظلّ.
@@ -594,7 +600,7 @@ function QueueList({
           يقرأ الرقم قبل أن يضغط. */}
       {asking ? (
         <div className="modal-overlay" onClick={() => setAsking(false)}>
-          <div className="modal-card confirm-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card confirm-card" {...modalCardProps}>
             <div className="modal-head">
               <span className="modal-title">اعتماد المحدَّد</span>
               <button className="modal-close" onClick={() => setAsking(false)} title="إغلاق">×</button>

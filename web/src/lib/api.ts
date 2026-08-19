@@ -615,12 +615,11 @@ async function req<T>(path: string, opts: RequestInit = {}, background = false):
 }
 
 export const api = {
-  // المصادقة
+  // المصادقة — قراءةُ الحساب وخروجٌ يُحوَّل، ولا شيء غيرهما.
+  // وكان هنا `login` و`register`: مساراهما خلف وسيط الدخول الموحّد فلا
+  // يبلغهما أحد، والكوكي الذي كانا يكتبانه لا يقرؤه شيء. أُسقطا مع
+  // مساريهما — التفصيل في `src/routes/auth.ts`.
   me: () => req<{ user: User }>('/auth/me'),
-  login: (email: string, password: string) =>
-    req<{ user: User }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  register: (email: string, password: string, name: string) =>
-    req<{ user: User }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
   // الخروج تنقّلُ متصفحٍ لا نداءُ `fetch`: يحذف الجلسة من KV ويُسقط الكوكي
   // ثم يحوّل — وثلاثتها تحتاج استجابةً يتّبعها المتصفح نفسه.
   //
@@ -649,8 +648,6 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ is_active, reason }),
     }),
-  changePassword: (new_password: string, current_password?: string) =>
-    req('/auth/change-password', { method: 'POST', body: JSON.stringify({ new_password, current_password }) }),
 
   // المحادثات
   listConversations: (q?: string, folder?: string) => {
@@ -853,14 +850,11 @@ export const api = {
   tracking: () => req<{ needs_update: any[] }>('/admin/tracking'),
   resolveTracking: (id: string) => req(`/admin/tracking/${id}/resolve`, { method: 'POST' }),
   scanTracking: () => req<{ checked: number; flagged: number }>('/admin/tracking/scan', { method: 'POST' }),
+  /* سجلّات الهوية المحلية — قراءةً وحذفاً لِما لا عضو له.
+     ولا إنشاء ولا تصفير كلمة مرور ولا تغيير دور: الأعضاء يصلون من المركز،
+     والصلاحية في `setMemberRole` أعلاه. ومساراتها أُسقطت من الخادم أيضاً. */
   users: () => req<{ users: User[] }>('/admin/users'),
-  createUser: (email: string, role: string, name?: string) =>
-    req<{ user: User; default_password: string }>('/admin/users', { method: 'POST', body: JSON.stringify({ email, role, name }) }),
-  resetPassword: (id: string) =>
-    req<{ default_password: string }>(`/admin/users/${id}/reset-password`, { method: 'POST' }),
   deleteUser: (id: string) => req(`/admin/users/${id}`, { method: 'DELETE' }),
-  setRole: (id: string, role: string) =>
-    req(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   audit: () => req<{ entries: any[] }>('/admin/audit'),
   aiCheck: () => req<{ ok: boolean; model: string; dimensions?: number; ms?: number; error?: string }>('/admin/ai-check'),
   /** فحص Claude — يردّ ٢٠٠ ولو فشل، فالتقرير هو المطلوب لا رمز الخطأ. */
@@ -917,9 +911,13 @@ export const api = {
    * البحث في المنصة — لفظيٌّ بلا ذكاء اصطناعي.
    *
    * `scope` يحصره في موضع: `chats` أو `outputs` أو `kb`، و`all` يعمّها.
+   * و`folder` يحصره في قضية — للشريط الجانبي حين تكون شارةُ قضيةٍ مضاءة.
+   * ولا يمسّ قاعدة المعرفة: تلك مشتركة لا تخصّ قضيةً بعينها.
    */
-  search: (q: string, scope: 'all' | 'chats' | 'outputs' | 'kb' = 'all') =>
-    req<PlatformSearch>(`/search?q=${encodeURIComponent(q)}&scope=${scope}`),
+  search: (q: string, scope: 'all' | 'chats' | 'outputs' | 'kb' = 'all', folder?: string) =>
+    req<PlatformSearch>(
+      `/search?q=${encodeURIComponent(q)}&scope=${scope}${folder ? `&folder=${encodeURIComponent(folder)}` : ''}`
+    ),
 
   // بنك البنود
   clauses: (q?: string) => req<{ clauses: any[] }>(`/clauses${q ? `?q=${encodeURIComponent(q)}` : ''}`),
@@ -979,21 +977,54 @@ export const api = {
   },
 };
 
-// واجهات المراجعة العامة (بلا مصادقة)
-export const publicApi = {
-  getShare: (token: string) => fetch(`/api/shares/public/${token}`).then((r) => r.json()),
+/* ============================================================
+   صفحة المراجعة — ولم تعد عامّة.
+
+   `‎/api/shares/public/*‎` و`‎/review/:token‎` كانتا مفتوحتين للعميل الخارجي
+   بلا حساب، وأُخضعتا للدخول الموحّد بقرارٍ موصوفٍ في `audit/sso-report.md`.
+   والاسم `public` بقي في المسار لأن المسارات لا تُعاد تسميتُها على روابطَ
+   أُرسلت — وهو اسمُ مسارٍ لا وصفَ حال.
+
+   وهذه الدوالّ كانت تقرأ `‎.then(r => r.json())‎` بلا شيء آخر: فلمّا صار
+   الوسيط يردّ الزائرَ بلا جلسة تحويلاً إلى صفحة دخول المركز، كان `fetch`
+   يتبع التحويلة ويعود بـHTML، فيُرفض الوعد بلا مُمسِك — و`setData` لا
+   تُنفَّذ أبداً. فيرى فاتحُ الرابط **دوّارةَ انتظارٍ لا تتوقّف**: لا خطأ
+   ولا صفحة رفض ولا سبب.
+
+   فصارت تمرّ بـ`req` كسائر النداءات: فرعا المنع يُقرآن، والقارئُ الذي له
+   حساب يُساق إلى الدخول ثم يعود إلى الرابط نفسه، والذي لا حساب له يبلغ
+   صفحة الرفض فيقرأ لماذا.
+   ============================================================ */
+export interface SharedDraft {
+  id: string;
+  status: 'pending' | 'approved' | 'changes_requested';
+  reviewer_label: string | null;
+  created_at: number;
+  content: string;
+  message_id: string;
+  title: string;
+  consultation_type: string | null;
+}
+
+export interface ShareComment {
+  author: string;
+  body: string;
+  created_at: number;
+}
+
+export const shareApi = {
+  get: (token: string) =>
+    req<{ share: SharedDraft; comments: ShareComment[] }>(`/shares/public/${encodeURIComponent(token)}`),
   comment: (token: string, author: string, body: string) =>
-    fetch(`/api/shares/public/${token}/comment`, {
+    req<{ ok: true }>(`/shares/public/${encodeURIComponent(token)}/comment`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ author, body }),
-    }).then((r) => r.json()),
+    }),
   decision: (token: string, decision: string, author: string) =>
-    fetch(`/api/shares/public/${token}/decision`, {
+    req<{ ok: true }>(`/shares/public/${encodeURIComponent(token)}/decision`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ decision, author }),
-    }).then((r) => r.json()),
+    }),
 };
 
 // بثّ المحادثة (SSE عبر fetch)

@@ -13,8 +13,15 @@ app.get('/', async (c) => {
   )
     .bind(user.id)
     .all();
-  const unread = (rows.results ?? []).filter((n: any) => !n.read_at).length;
-  return c.json({ notifications: rows.results, unread });
+  /* العدّاد على الجدول لا على الخمسين المعروضة.
+     كان يُحسب من نتيجة `LIMIT 50` نفسها، فمن تجاوز غيرُ المقروء عنده
+     الخمسين يرى عدداً أقلّ من الحقيقة — والشارة تقول «خمسون» وهي مئة. */
+  const unread = await c.env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL'
+  )
+    .bind(user.id)
+    .first<{ n: number }>();
+  return c.json({ notifications: rows.results, unread: unread?.n ?? 0 });
 });
 
 app.post('/read', async (c) => {

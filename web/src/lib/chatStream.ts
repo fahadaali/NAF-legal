@@ -82,10 +82,9 @@ export function getChatStream(conversationId: string | null): ChatStream | undef
   return conversationId ? streams.get(conversationId) : undefined;
 }
 
-/** هل يجري في هذه المحادثة دورٌ الآن؟ */
-export function isChatStreaming(conversationId: string | null): boolean {
-  return !!(conversationId && streams.get(conversationId)?.streaming);
-}
+/* وأُسقطت هنا `isChatStreaming`: كانت تجيب عن محادثةٍ واحدة ولم يناديها
+   أحد. ومن أراد الجواب يقرأ `getChatStream(id)?.streaming` — والمشتركون
+   يقرؤونه أصلاً في الحالة التي تصلهم. */
 
 /** المحادثات التي يجري فيها دورٌ الآن — للشريط الجانبي. */
 export function streamingConversationIds(): string[] {

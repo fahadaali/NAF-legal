@@ -37,3 +37,36 @@ export async function notify(
     }
   }
 }
+
+/**
+ * يُبلّغ مسؤولي المنصة جميعاً.
+ *
+ * **والمسؤول يُقرأ من `members` لا من `users`.** بعد الدخول الموحّد صار
+ * `members.role` هو ما يقرأه `requireAdmin` وما تكتبه شاشة «الأعضاء»،
+ * و`users.role` عمودٌ لا يقرّر شيئاً: `lib/sso.ts` يكتب فيه `'user'` ثابتةً
+ * لكل عضوٍ جديد ولا يرفعه أحد بعدها.
+ *
+ * فاستعلامٌ على `users WHERE role = 'admin'` — وهو ما كان — لا يجد أحداً في
+ * منصةٍ بُدئت بعد الربط، ويجد المسؤولين القدامى وحدهم فيما بُدئ قبله. وأثرُه
+ * صامت: الطلب يُحفظ صحيحاً ولا يُنبَّه إليه أحد.
+ *
+ * والموقوف لا يُبلَّغ: `is_active = 0` عضوٌ سُحب وصولُه، وإشعارٌ يصله لا
+ * يستطيع فتحه.
+ *
+ * و`local_user_id` شرطٌ لا ترفٌ: `notifications.user_id` مفتاحٌ أجنبيّ إلى
+ * `users(id)`، فعضوٌ بلا سجلّ محلي لا يُعلَّق عليه إشعار. وهو مضمون الوجود
+ * لكل عضوٍ يهيّئه `onClaims`، والشرط حارسٌ للصفوف القديمة.
+ */
+export async function notifyAdmins(
+  env: Env,
+  opts: { kind: string; title: string; body?: string; link?: string }
+): Promise<void> {
+  const admins = await env.DB.prepare(
+    `SELECT local_user_id AS id, email FROM members
+     WHERE role = 'admin' AND is_active = 1 AND local_user_id IS NOT NULL`
+  ).all<{ id: string; email: string | null }>();
+
+  for (const a of admins.results ?? []) {
+    await notify(env, { ...opts, userId: a.id, email: a.email ?? undefined });
+  }
+}

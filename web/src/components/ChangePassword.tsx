@@ -1,65 +1,30 @@
-import { useState } from 'react';
-import { api } from '../lib/api';
-import NafMark from './NafMark';
-import ThemeToggle from './ThemeToggle';
-import type { ThemeChoice } from '../lib/theme';
-
-// شاشة تعيين كلمة مرور جديدة عند أول دخول (كلمة المرور الافتراضية 1234)
-export default function ChangePassword({
-  onDone,
-  theme,
-  onThemeChange,
-}: {
-  onDone: () => void;
-  theme: ThemeChoice;
-  onThemeChange: (c: ThemeChoice) => void;
-}) {
-  const [pw, setPw] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (pw.length < 6) return setError('كلمة المرور يجب ألا تقل عن 6 أحرف');
-    if (pw !== confirm) return setError('كلمتا المرور غير متطابقتين');
-    setBusy(true);
-    try {
-      await api.changePassword(pw);
-      onDone();
-    } catch (err: any) {
-      setError(err.message ?? 'حدث خطأ');
-    } finally {
-      setBusy(false);
-    }
-  };
-
+/* ══ شاشةُ كلمة مرورٍ متقاعدة ══
+ *
+ * كانت بوّابةَ أوّل دخول: المسؤول ينشئ الحساب بكلمة مرور افتراضية، ويُطلب من
+ * صاحبه تغييرها. وبعد الدخول الموحّد صارت مصيدةً ثم صارت لا شيء:
+ *
+ *   • هجرة `0010` صفّرت `must_change_password`، فلا أحد يبلغ البوّابة.
+ *   • ومسارا الإدارة اللذان كانا يرفعان الراية (`إنشاء حساب` و`تصفير كلمة
+ *     المرور`) أُسقطا — كانا يعيدان نصب الفخّ الذي أغلقته الهجرة.
+ *   • ومسارها في الخادم (`‎/api/auth/change-password‎`) أُسقط معهما: عضوُ
+ *     الدخول الموحّد لا كلمة مرور له أصلاً.
+ *
+ * والبوّابة في `App.tsx` رُفعت كذلك، فلا يستورد هذا الملفَّ أحد.
+ *
+ * والملفّ يبقى على القرص ولا يُحذف (CLAUDE.md §11)، ومحتواه قولٌ صادق بدل
+ * نموذجٍ يطلب كلمةً لا تُقرأ. وتاريخُه في سجلّ Git.
+ */
+export default function ChangePassword() {
   return (
     <div className="auth-wrap">
-      <ThemeToggle choice={theme} onChange={onThemeChange} className="floating" />
-      <div className="auth-card">
-        <div className="auth-brand">
-          <NafMark />
-          <h1>تعيين كلمة مرور جديدة</h1>
-          <p>لأول دخول، يرجى اختيار كلمة مرور جديدة تحلّ محل الافتراضية.</p>
-        </div>
-
-        {error && <div className="error-box">{error}</div>}
-
-        <form onSubmit={submit}>
-          <div className="field">
-            <label>كلمة المرور الجديدة</label>
-            <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="٦ أحرف على الأقل" required />
-          </div>
-          <div className="field">
-            <label>تأكيد كلمة المرور</label>
-            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="أعد إدخال كلمة المرور" required />
-          </div>
-          <button className="btn-primary" disabled={busy}>
-            {busy ? '...' : 'حفظ والمتابعة'}
-          </button>
-        </form>
+      <div className="auth-card denied-card">
+        <h1 className="denied-title">كلمة المرور من مركز الهوية</h1>
+        <p className="denied-reason" role="status">
+          لا تُدار كلمات المرور في هذه المنصة. غيّرها من حسابك في مركز ناف
+        </p>
+        <a className="btn-primary denied-action" href="/">
+          العودة إلى المنصة
+        </a>
       </div>
     </div>
   );

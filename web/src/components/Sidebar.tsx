@@ -2,12 +2,13 @@ import { Fragment, useEffect, useState } from 'react';
 import { api, Conversation, Folder, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
 import { ConsultationIcon, Icon, ICON_SM } from '../lib/icons';
-import { formatDayHeading, formatTime } from '../lib/format';
+import { formatDayHeading, formatTime, isolate } from '../lib/format';
+import { streamingConversationIds, subscribeChatActivity } from '../lib/chatStream';
+import { Sidebar as NafSidebar } from '../naf/ui/app-shell';
 import NafMark from './NafMark';
 
 interface Props {
   user: User;
-  open: boolean;
   activeConv: string | null;
   view: 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search';
   refreshKey: number;
@@ -21,6 +22,16 @@ interface Props {
   onOpenSearch: (q: string) => void;
   onOpenCase: () => void;
   onOpenSupport: () => void;
+}
+
+/**
+ * صنفُ نغمة الشارة من قيمة `color` المخزَّنة.
+ *
+ * القيمة اسمُ نغمةٍ (`chart-1`…`chart-5`) لا لونٌ خام — انظر هجرة `0024`.
+ * وما لا يُعرف يأخذ الأولى: صفٌّ قديم نجا من الهجرة يُرسم ولا يختفي.
+ */
+function folderTone(color: string | null | undefined): string {
+  return /^chart-[1-5]$/.test(color ?? '') ? `tone-${color!.slice(-1)}` : 'tone-1';
 }
 
 /**
@@ -44,7 +55,20 @@ export default function Sidebar(props: Props) {
   const [search, setSearch] = useState('');
   const [searchMode, setSearchMode] = useState<string>('');
 
+  /** لا نتيجة لبحثٍ جرى — تفرّقها الشاشة الفارغة عن قائمةٍ لم تبدأ بعد. */
+  const [noMatches, setNoMatches] = useState(false);
+
+  /* المحادثات التي يجري فيها دورٌ الآن.
+     `streamingConversationIds` كُتبت لهذا الموضع بنصّ توثيقها — «للشريط
+     الجانبي» — ولم تُستورَد قطّ. فمن بدّل المحادثة أثناء توليدٍ يجري لم يجد
+     في الشريط ما يدلّه على أين تركه، والتوليد يمضي في الخلفية على أي حال.
+     والاشتراك على دورة الحياة وحدها — البدء والختام — لا على كل مقطعٍ من
+     النصّ: الشريط لا يُعاد بناؤه مئة مرّة في الدور الواحد. */
+  const [busyConvs, setBusyConvs] = useState<string[]>(() => streamingConversationIds());
+  useEffect(() => subscribeChatActivity(() => setBusyConvs(streamingConversationIds())), []);
+
   const load = () => {
+    setNoMatches(false);
     api.listConversations(undefined, activeFolder ?? undefined).then((r) => setConvs(r.conversations)).catch(() => {});
   };
   const loadFolders = () => api.folders().then((r) => setFolders(r.folders)).catch(() => {});
@@ -69,29 +93,33 @@ export default function Sidebar(props: Props) {
     loadFolders();
   };
 
+  /* البحث يتبع القضية المختارة كما تتبعها القائمة.
+     كان الأثر معلَّقاً على `search` وحدها ولا يمرّر المجلّد، فمن رشّح قضيةً
+     ثم كتب كلمةً رأى محادثاتٍ من قضايا أخرى — وشارةُ القضية ما زالت مضاءةً
+     تقول إنها مُرشَّحة. والترشيح في الخادم لا هنا: الترشيح بعد القصّ يعطي
+     صفحةً ناقصة أو فارغة. */
   useEffect(() => {
     if (!search) { setSearchMode(''); load(); return; }
     const t = setTimeout(() => {
-      // بحث دلالي في سجل المحادثات مع رجوع نصّي (§3)
       // ترشيح المحادثات في الشريط: بحثٌ لفظيّ في المحادثات وحدها.
-      api.search(search, 'chats').then((r) => {
+      api.search(search, 'chats', activeFolder ?? undefined).then((r) => {
         setSearchMode(r.mode);
         const seen = new Set<string>();
-        setConvs(
-          r.chats
-            .filter((x) => (seen.has(x.conversation_id) ? false : seen.add(x.conversation_id)))
-            .map((x) => ({
-              id: x.conversation_id,
-              title: x.title ?? '',
-              consultation_type: null,
-              created_at: 0,
-              updated_at: 0,
-            }))
-        );
+        const found = r.chats
+          .filter((x) => (seen.has(x.conversation_id) ? false : seen.add(x.conversation_id)))
+          .map((x) => ({
+            id: x.conversation_id,
+            title: x.title ?? '',
+            consultation_type: null,
+            created_at: 0,
+            updated_at: 0,
+          }));
+        setConvs(found);
+        setNoMatches(found.length === 0);
       }).catch(() => {});
     }, 350);
     return () => clearTimeout(t);
-  }, [search]);
+  }, [search, activeFolder]);
 
   const del = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -110,7 +138,9 @@ export default function Sidebar(props: Props) {
   };
 
   return (
-    <aside id="naf-sidebar" className={`naf-sidebar ${props.open ? 'is-open' : ''}`}>
+    /* العنصر من السجلّ: يحمل `id` و`naf-sidebar` وحالةَ الفتح من `useShell`.
+       كانت هذه الشجرة تكتبها بيدها وتأخذ الفتحَ مَعلَماً — نسختان لعقدٍ واحد. */
+    <NafSidebar>
       <div className="naf-sidebar-header">
         <NafMark />
         <div>
@@ -123,8 +153,11 @@ export default function Sidebar(props: Props) {
           معطَّل بلا سبب ظاهر يُقرأ عطلاً في المنصة، والخادم يردّ الإنشاء
           بـ٤٠٣ على أي حال. */}
       {props.user.role !== 'viewer' && (
-        <button className="new-chat-btn" onClick={props.onNewChat}>
-          <span>＋</span> محادثة جديدة
+        <button type="button" className="new-chat-btn" onClick={props.onNewChat}>
+          {/* أيقونة لا محرف: كان `＋` (U+FF0B) — زائدٌ عريض من جدول المحارف،
+              لا يتبع مقاسات الأيقونات ولا سمكها، ويُرسم على كل نظامٍ بشكل.
+              و«إضافة → Plus» مسجَّلة في naf-icons.md §الإجراءات. */}
+          <Icon.add size={ICON_SM} aria-hidden /> محادثة جديدة
         </button>
       )}
 
@@ -166,27 +199,59 @@ export default function Sidebar(props: Props) {
         </>
       )}
 
+      {/* ══ الشارة غلافٌ لا زرّ ══
+          كان زرّ الحذف `<span onClick>` داخل زرّ الشارة: زرٌّ داخل زرّ لا
+          يصحّ في HTML، و`<span>` بلا `tabindex` لا تبلغه لوحة المفاتيح ولا
+          تشمله قاعدةُ حلقة التركيز في `styles.css` — فكان حذف القضية فعلاً
+          بالفأرة وحدها. والآن زرّان متجاوران في غلافٍ محايد، ولكلٍّ اسمٌ
+          مقروء وحلقةُ تركيز. */}
       <div className="folder-bar">
-        <button className={`folder-chip ${!activeFolder ? 'active' : ''}`} onClick={() => setActiveFolder(null)}>
+        <button type="button" className={`folder-chip ${!activeFolder ? 'active' : ''}`} onClick={() => setActiveFolder(null)}>
           الكل
         </button>
         {folders.map((f) => (
-          <button
-            key={f.id}
-            className={`folder-chip ${activeFolder === f.id ? 'active' : ''}`}
-            onClick={() => setActiveFolder(f.id)}
-            title={`${f.count} محادثة`}
-          >
-            <span className="folder-dot" style={{ background: f.color }} />
-            {f.name}
-            <span className="folder-del" onClick={(e) => removeFolder(e, f.id)}><Icon.close size={ICON_SM} aria-hidden /></span>
-          </button>
+          <span key={f.id} className={`folder-chip ${activeFolder === f.id ? 'active' : ''}`}>
+            <button
+              type="button"
+              className="folder-open"
+              onClick={() => setActiveFolder(f.id)}
+              aria-pressed={activeFolder === f.id}
+              /* العدد معزولٌ اتجاهياً: رقمٌ عارٍ في نصٍّ عربي ينقلب ترتيبه،
+                 و`<bdi>` لا تصلح في سمة — و`isolate` من `naf-format` لها. */
+              title={`${isolate(f.count)} محادثة`}
+            >
+              <span className={`folder-dot ${folderTone(f.color)}`} />
+              {f.name}
+            </button>
+            <button
+              type="button"
+              className="folder-del"
+              onClick={(e) => removeFolder(e, f.id)}
+              aria-label={`حذف القضية ${f.name}`}
+            >
+              <Icon.close size={ICON_SM} aria-hidden />
+            </button>
+          </span>
         ))}
-        <button className="folder-chip add" onClick={createFolder} title="قضية جديدة">＋</button>
+        <button type="button" className="folder-chip add" onClick={createFolder}>
+          <Icon.add size={ICON_SM} aria-hidden /> قضية جديدة
+        </button>
       </div>
 
       <div className="conv-list">
-        {convs.length === 0 && <div className="empty-state" style={{ fontSize: '0.875rem' }}>لم تبدأ أي محادثة بعد. ابدأ بأول استشارة.</div>}
+        {/* بحثٌ لم يُطابق شيئاً ليس قائمةً لم تبدأ.
+            كانت الرسالة واحدة، فيقرأ صاحبُ ثمانين محادثة «لم تبدأ أي محادثة
+            بعد» لأنه بحث عن كلمةٍ ليست فيها. وكلتاهما تدعو إلى فعلٍ صحيح
+            (§7): هذه إلى توسيع البحث، وتلك إلى بدء الاستشارة الأولى. */}
+        {convs.length === 0 && (
+          <div className="empty-state" style={{ fontSize: '0.875rem' }}>
+            {noMatches
+              ? activeFolder
+                ? 'لا محادثة تطابق بحثك في هذه القضية. جرّب كلمة أخرى، أو اختر «الكل».'
+                : 'لا محادثة تطابق بحثك. جرّب كلمة أخرى، أو ابحث في المنصة كلها.'
+              : 'لم تبدأ أي محادثة بعد. ابدأ بأول استشارة.'}
+          </div>
+        )}
         {convs.map((c, i) => (
           <Fragment key={c.id}>
             {/* عنوان المجموعة يظهر عند تبدّل اليوم فقط — القائمة مرتَّبة
@@ -201,6 +266,14 @@ export default function Sidebar(props: Props) {
             <span className="conv-icon"><ConsultationIcon option={optionFor(c.consultation_type)} size={ICON_SM} /></span>
             <span className="conv-main">
               <span className="conv-title">{c.title || 'محادثة'}</span>
+              {/* «دورٌ يجري» — شارةٌ نصّية لا لونٌ وحده (§6: لا معنى بلون
+                  مفرد). و`aria-live` مرفوعٌ عنها: القائمة تُقرأ بالتنقّل،
+                  وإعلانُ كل بدءٍ وختام في محادثةٍ أخرى ضجيجٌ للقارئ بالصوت. */}
+              {busyConvs.includes(c.id) && (
+                <span className="conv-busy" title="يجري توليد ردّ">
+                  <Icon.embedding size={ICON_SM} className="icon-spin" aria-hidden /> جارٍ
+                </span>
+              )}
               {/* الوقت وحده: يومُه في عنوان المجموعة فوقه، وتكراره في كل
                   صفٍّ حشوٌ يزاحم العنوان. والصيغة من `naf-format` لا من هنا،
                   وفي `bdi`: وقتٌ عارٍ داخل نصّ عربي ينقلب ترتيبه (§٥). */}
@@ -222,6 +295,6 @@ export default function Sidebar(props: Props) {
       {/* الهوية والمظهر والإشعارات وتسجيل الخروج انتقلت إلى قائمة الحساب
           في الترويسة — الموضع نفسه في المنصات الخمس. وكانت هنا في أسفل
           الشريط، فيختفي الخروج كلّه حين ينزلق الشريط خارج الشاشة. */}
-    </aside>
+    </NafSidebar>
   );
 }

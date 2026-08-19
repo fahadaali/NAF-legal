@@ -6,42 +6,95 @@ import { dualDate } from './lib/hijri';
 import { embedPending } from './lib/legal';
 import type { Env } from './types';
 
-// ── تنبيهات المواعيد النظامية: تُذكِّر قبل 7 و3 و1 يوم ومتأخّرة ──
+/**
+ * مراحل التنبيه عن موعد — والتنبيه يقع عند تبدّلها وحده.
+ *
+ * والحدود `<=` لا `===`: موعدٌ يُنشأ قبل استحقاقه بخمسة أيام يأخذ تنبيه
+ * `d7` في أوّل ليلة، ولو كانت المقارنة تامّةً لسقط عنه ذلك التنبيه ثم `d3`
+ * لأن الرقم سبعة لم يمرّ عليه أصلاً. وكذلك ليلةٌ يتعطّل فيها المؤقّت: ما
+ * فات من مراحل لا يُبعث دفعةً، ويأخذ الموعد مرحلته الحالية وحدها.
+ */
+type NoticeStage = 'd7' | 'd3' | 'd1' | 'due' | 'overdue';
+
+function stageFor(daysLeft: number): NoticeStage | null {
+  if (daysLeft < 0) return 'overdue';
+  if (daysLeft === 0) return 'due';
+  if (daysLeft <= 1) return 'd1';
+  if (daysLeft <= 3) return 'd3';
+  if (daysLeft <= 7) return 'd7';
+  return null;
+}
+
+/**
+ * تنبيهات المواعيد النظامية — عند تبدّل المرحلة لا كلَّ ليلة.
+ *
+ * كان الشرط `due_date <= today+7` مع حاجزٍ عشرين ساعة، أي تنبيهٌ يوميّ طوال
+ * الأسبوع **ثم يوميّاً إلى الأبد** ما دام الموعد `open`. والتعليق يقول
+ * «قبل 7 و3 و1 يوم ومتأخّرة»، وهو ما صار يقع فعلاً: خمسةُ إشعاراتٍ على
+ * الأكثر عن موعدٍ واحد، والفائتُ يُنبَّه عنه مرّةً ثم يسكن.
+ *
+ * ويبتلع خطأه كأخواته: المهامّ تُشغَّل معاً، ورميةٌ من واحدة كانت تُسقط
+ * البقية — وهذه وحدها كانت بلا `try` أصلاً.
+ */
 export async function runDeadlineReminders(env: Env): Promise<{ notified: number }> {
-  const today = new Date().toISOString().slice(0, 10);
-  const in7 = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const in7 = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
 
-  const rows = await env.DB.prepare(
-    `SELECT d.id, d.user_id, d.title, d.due_date, d.due_hijri, d.notified_at, u.email
-     FROM deadlines d LEFT JOIN users u ON u.id = d.user_id
-     WHERE d.status = 'open' AND d.due_date <= ?`
-  )
-    .bind(in7)
-    .all<{ id: string; user_id: string; title: string; due_date: string; due_hijri: string | null; notified_at: number | null; email: string | null }>();
+    const rows = await env.DB.prepare(
+      `SELECT d.id, d.user_id, d.title, d.due_date, d.due_hijri, d.notified_stage, u.email
+       FROM deadlines d LEFT JOIN users u ON u.id = d.user_id
+       WHERE d.status = 'open' AND d.due_date <= ?`
+    )
+      .bind(in7)
+      .all<{
+        id: string;
+        user_id: string;
+        title: string;
+        due_date: string;
+        due_hijri: string | null;
+        notified_stage: string | null;
+        email: string | null;
+      }>();
 
-  let notified = 0;
-  for (const d of rows.results ?? []) {
-    // لا نُكرّر التنبيه أكثر من مرة يوميًا
-    if (d.notified_at && Date.now() - d.notified_at < 20 * 3600 * 1000) continue;
-    const daysLeft = Math.ceil((new Date(d.due_date + 'T00:00:00Z').getTime() - new Date(today + 'T00:00:00Z').getTime()) / 86_400_000);
-    const when = d.due_hijri ? `${d.due_date} (${d.due_hijri})` : dualDate(d.due_date);
-    const title =
-      daysLeft < 0
-        ? `⚠️ فات الميعاد: ${d.title}`
-        : daysLeft === 0
-          ? `⏰ ينتهي اليوم: ${d.title}`
-          : `⏳ متبقٍّ ${daysLeft} يوم: ${d.title}`;
-    await notify(env, {
-      userId: d.user_id,
-      kind: 'deadline',
-      title,
-      body: `تاريخ الاستحقاق: ${when}`,
-      email: d.email ?? undefined,
-    });
-    await env.DB.prepare('UPDATE deadlines SET notified_at = ? WHERE id = ?').bind(Date.now(), d.id).run();
-    notified++;
+    let notified = 0;
+    for (const d of rows.results ?? []) {
+      const daysLeft = Math.ceil(
+        (new Date(d.due_date + 'T00:00:00Z').getTime() - new Date(today + 'T00:00:00Z').getTime()) / 86_400_000
+      );
+      const stage = stageFor(daysLeft);
+      // مرحلةٌ أُرسلت من قبل لا تُعاد. و`null` موعدٌ أبعد من الأسبوع.
+      if (!stage || stage === d.notified_stage) continue;
+
+      const when = d.due_hijri ? `${d.due_date} (${d.due_hijri})` : dualDate(d.due_date);
+      /* والعنوان بلا رمزٍ تصويريّ: يُعرض في شارة الإشعارات داخل المنصة —
+         واجهةً لا رسالةَ قناةٍ خارجية — وحظرُ الإيموجي في الواجهات (§3) لا
+         استثناء له هنا. والسلسلة واحدة تخدم الشارة والبريد معاً، فلا يُفرَّق
+         بينهما برمزٍ يسقط في أحدهما. والحالُ يُقرأ من الكلمة نفسها. */
+      const title =
+        stage === 'overdue'
+          ? `فات الميعاد: ${d.title}`
+          : stage === 'due'
+            ? `ينتهي اليوم: ${d.title}`
+            : `متبقٍّ ${daysLeft} يوم: ${d.title}`;
+
+      await notify(env, {
+        userId: d.user_id,
+        kind: 'deadline',
+        title,
+        body: `تاريخ الاستحقاق: ${when}`,
+        email: d.email ?? undefined,
+      });
+      await env.DB.prepare('UPDATE deadlines SET notified_at = ?, notified_stage = ? WHERE id = ?')
+        .bind(Date.now(), stage, d.id)
+        .run();
+      notified++;
+    }
+    return { notified };
+  } catch (e: any) {
+    console.error('deadline reminders failed:', e?.message ?? e);
+    return { notified: 0 };
   }
-  return { notified };
 }
 
 export interface ScanResult {
@@ -60,24 +113,45 @@ export async function runTrackingScan(env: Env): Promise<ScanResult> {
   for (const doc of docs.results ?? []) {
     try {
       const finding = await checkRegulation(env, doc.title);
-      const trackId = crypto.randomUUID();
+
+      /* صفٌّ واحد للوثيقة يُحدَّث، لا صفٌّ في كل ليلة.
+         كان الإدراج بمعرّفٍ جديد في كل تشغيل، فتُعرض الوثيقة في اللوحة
+         مكرَّرةً بعدد الليالي — و«اعتماد المراجعة» يمحو واحداً فيعود غيره.
+         والفريد على `kb_document_id` من هجرة `0022` هو ما يجعل هذا ممكناً.
+
+         والحالُ لا يُرفع على مراجعةٍ اعتُمدت ما دام الرصد هو الرصد نفسه:
+         المراجع قرأ هذا التعديل بعينه وأقرّه، وإعادةُ رفعه كل ليلةٍ تُلغي
+         معنى الاعتماد. فإن تبدّل النصّ — تعديلٌ آخر صدر — عاد إلى الطابور. */
+      const status = finding.changed ? 'needs_review' : 'ok';
+      await env.DB.prepare(
+        `INSERT INTO regulation_tracking
+           (id, kb_document_id, last_checked, change_detected, change_summary, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(kb_document_id) DO UPDATE SET
+           last_checked    = excluded.last_checked,
+           change_detected = excluded.change_detected,
+           change_summary  = excluded.change_summary,
+           status = CASE
+             WHEN excluded.change_detected = 0 THEN 'ok'
+             WHEN regulation_tracking.status = 'ok'
+              AND regulation_tracking.change_summary IS excluded.change_summary THEN 'ok'
+             ELSE 'needs_review'
+           END`
+      )
+        .bind(crypto.randomUUID(), doc.id, now, finding.changed ? 1 : 0, finding.summary, status, now)
+        .run();
 
       if (finding.changed) {
-        await env.DB.prepare('UPDATE kb_documents SET needs_update = 1 WHERE id = ?').bind(doc.id).run();
-        await env.DB.prepare(
-          `INSERT INTO regulation_tracking (id, kb_document_id, last_checked, change_detected, change_summary, status, created_at)
-           VALUES (?, ?, ?, 1, ?, 'needs_review', ?)`
-        )
-          .bind(trackId, doc.id, now, finding.summary, now)
-          .run();
-        flagged++;
+        // والراية على الوثيقة تتبع حالَ صفّها بعد الدمج، لا نتيجةَ الرصد
+        // وحدها: رصدٌ اعتُمد من قبل لا يُعيد إشعال «يحتاج تحديثاً».
+        const row = await env.DB.prepare('SELECT status FROM regulation_tracking WHERE kb_document_id = ?')
+          .bind(doc.id)
+          .first<{ status: string }>();
+        if (row?.status === 'needs_review') {
+          await env.DB.prepare('UPDATE kb_documents SET needs_update = 1 WHERE id = ?').bind(doc.id).run();
+          flagged++;
+        }
       } else {
-        await env.DB.prepare(
-          `INSERT INTO regulation_tracking (id, kb_document_id, last_checked, change_detected, change_summary, status, created_at)
-           VALUES (?, ?, ?, 0, ?, 'ok', ?)`
-        )
-          .bind(trackId, doc.id, now, finding.summary, now)
-          .run();
         await env.DB.prepare('UPDATE kb_documents SET last_verified = ? WHERE id = ?').bind(now, doc.id).run();
       }
     } catch (e) {

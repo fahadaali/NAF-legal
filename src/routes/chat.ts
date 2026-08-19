@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
-import { retrieve, formatRagContext, indexConversationMessage, type RagResult } from '../lib/rag';
+import { retrieve, formatRagContext, type RagResult } from '../lib/rag';
 import {
   streamClaude,
   webSearchTool,
@@ -392,18 +392,11 @@ app.post('/:conversationId', async (c) => {
         });
         if (title) await send('title', { title });
 
-        // فهرسة دلالية للرسالتين (§3) — best-effort.
-        //
-        // ويُمسَك خطؤها هنا فعلاً: استثناءٌ منها يقطع الدور **بعد** أن حُفظ
-        // الرد، فيرى المستخدم ردّاً ناقصاً بلا حدث `done` — والمفهرِس تفصيلٌ
-        // لا علاقة له بردٍّ اكتمل وخُزِّن.
-        const indexTitle = title ?? conv.title;
-        await indexConversationMessage(env, { messageId: userMsgId, conversationId, userId, role: 'user', content: message, title: indexTitle }).catch(
-          (e) => console.error('index user message failed:', e?.message ?? e)
-        );
-        await indexConversationMessage(env, { messageId: asstId, conversationId, userId, role: 'assistant', content: fullText, title: indexTitle }).catch(
-          (e) => console.error('index assistant message failed:', e?.message ?? e)
-        );
+        /* وأُسقطت هنا فهرسةٌ دلالية للرسالتين كانت تقع في كل دور.
+           كانت تستدعي نموذج التضمين مرّتين وتدفع متجهين إلى `CONV_VECTORIZE`
+           — لفهرسٍ لا يستعلمه أحد: قارئُه الوحيد `searchConversations` ولم
+           يُنادَ قطّ، والبحث في المنصة لفظيٌّ بقرارٍ مكتوب. التفصيل في
+           `lib/rag.ts`. */
       } else {
         // لم يأتِ نصّ ولا أفادت المحاولة الثانية: قُل السبب بعينه ولا تخزّن
         // ردّاً فارغاً. والفقاعة تُختم بعده حتى لا تنبض بلا نهاية.

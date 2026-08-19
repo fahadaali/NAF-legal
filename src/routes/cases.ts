@@ -126,7 +126,10 @@ app.get('/:folderId/export', async (c) => {
   return new Response(bundle, {
     headers: {
       'content-type': 'application/zip',
-      'content-disposition': `attachment; filename="case-${encodeURIComponent(data.folder.name)}.zip"`,
+      /* `filename*` لا `filename`: اسم القضية عربيٌّ غالباً، و`filename` بين
+         علامتي اقتباس لا تحمل غير ASCII — فكان يُنزَّل الملف باسمٍ مرمَّزٍ
+         بالنسب المئوية. والصيغة نفسها في `routes/files.ts` ومعها سببُها. */
+      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`case-${data.folder.name}.zip`)}`,
     },
   });
 });

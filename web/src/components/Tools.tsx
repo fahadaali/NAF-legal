@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { formatDate } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
+import { extractPdfText, readableLocally } from '../lib/extractText';
 
 // أدوات قانونية مستقلّة: مقارنة نسختين + حاسبة المواعيد
 export default function Tools() {
@@ -43,7 +44,9 @@ function Shares() {
 
   const copyLink = (token: string) => {
     navigator.clipboard.writeText(`${location.origin}/review/${token}`).catch(() => {});
-    alert('تم نسخ رابط المراجعة');
+    // «زميل له حساب» لا «مراجِع» مجرَّداً: مسار المراجعة خلف الدخول الموحّد،
+    // فمن لا حساب له يبلغ صفحة الرفض. والرسالة تقول ذلك قبل أن يُرسَل الرابط.
+    alert('تم نسخ رابط المراجعة. يفتحه زميلٌ له حساب في المنصة');
   };
   const del = async (id: string) => {
     if (!confirm('حذف رابط المشاركة؟')) return;
@@ -88,9 +91,43 @@ function Compare() {
   const fa = useRef<HTMLInputElement>(null);
   const fb = useRef<HTMLInputElement>(null);
 
+  /**
+   * يقرأ الملف ويضع نصّه في الصندوق.
+   *
+   * **وكان يضع نصّاً نائباً مكانه.** الشرط كان `text/` أو `.txt`، وما عداه
+   * يُكتب في الصندوق `[سيُقرأ الملف: … عند المقارنة]` اعتماداً على استخراجٍ
+   * خادميّ — ولا استخراج يقع: `api.compare` ترسل الصندوقين نصّاً في JSON.
+   * فكان كلود يقارن جملة النائب بجملة النائب ويكتب تقريراً عن الفروق.
+   * ومخرَجٌ واثقٌ عن مستندٍ لم يُقرأ أخطرُ من رسالة خطأ.
+   *
+   * و`.md` يقع في ذلك الفرع بعينه: المتصفّحات تعطيه `type` فارغاً غالباً،
+   * وهو مسموحٌ في `accept` صراحةً.
+   *
+   * والقراءة الآن كما في صندوق المحادثة: النصُّ نصّاً، وPDF بـMuPDF في
+   * المتصفّح بلا كلفة نموذج. وما لا يُقرأ هنا يُقال صراحةً ولا يُدَّعى.
+   */
   const readFile = async (f: File, set: (s: string) => void) => {
-    if (f.type.startsWith('text/') || f.name.endsWith('.txt')) set(await f.text());
-    else set(`[سيُقرأ الملف: ${f.name} عند المقارنة]`); // للملفات الأخرى نعتمد الاستخراج الخادمي عبر النص المُدخل
+    setBusy(true);
+    try {
+      if (f.type.startsWith('text/') || /\.(txt|md)$/i.test(f.name)) {
+        set(await f.text());
+        return;
+      }
+      if (readableLocally(f)) {
+        const text = await extractPdfText(f);
+        if (text?.trim()) {
+          set(text);
+          return;
+        }
+        alert('تعذّر استخراج نصّ من هذا الملف. الصق النصّ في الصندوق');
+        return;
+      }
+      alert('يُقبل هنا النصّ و Markdown و PDF. لغيرها الصق النصّ في الصندوق');
+    } catch {
+      alert('تعذّر قراءة الملف. الصق النصّ في الصندوق');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const run = async () => {
@@ -109,21 +146,21 @@ function Compare() {
 
   return (
     <div>
-      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>الصق نصّ النسختين (أو ارفع ملفات نصّية) لإبراز الفروق وأثرها القانوني.</p>
+      <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>الصق نصّ النسختين، أو ارفع ملفّ نصّ أو Markdown أو PDF، لإبراز الفروق وأثرها القانوني.</p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div>
           <div className="field"><label>النسخة (أ)</label>
             <textarea className="tool-textarea" value={ta} onChange={(e) => setTa(e.target.value)} placeholder="النسخة الأولى…" />
           </div>
-          <input ref={fa} type="file" hidden accept=".txt,.md" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setTa)} />
-          <button className="btn-sm" onClick={() => fa.current?.click()}><Icon.upload size={ICON_SM} aria-hidden /> رفع ملف نصّي</button>
+          <input ref={fa} type="file" hidden accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setTa)} />
+          <button className="btn-sm" onClick={() => fa.current?.click()}><Icon.upload size={ICON_SM} aria-hidden /> رفع ملف</button>
         </div>
         <div>
           <div className="field"><label>النسخة (ب)</label>
             <textarea className="tool-textarea" value={tb} onChange={(e) => setTb(e.target.value)} placeholder="النسخة الثانية…" />
           </div>
-          <input ref={fb} type="file" hidden accept=".txt,.md" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setTb)} />
-          <button className="btn-sm" onClick={() => fb.current?.click()}><Icon.upload size={ICON_SM} aria-hidden /> رفع ملف نصّي</button>
+          <input ref={fb} type="file" hidden accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setTb)} />
+          <button className="btn-sm" onClick={() => fb.current?.click()}><Icon.upload size={ICON_SM} aria-hidden /> رفع ملف</button>
         </div>
       </div>
       <button className="btn-primary" style={{ marginTop: 16, width: 'auto', padding: '10px 24px' }} onClick={run} disabled={busy}>

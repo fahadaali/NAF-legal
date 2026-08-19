@@ -3,31 +3,26 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { callClaude } from '../lib/claude';
 import { COMPARE_SYSTEM, DEADLINE_SYSTEM } from '../lib/prompts';
-import { extractText } from '../lib/extract';
 import { logUsage, usageFromRaw } from '../lib/usage';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth);
 
-// مقارنة نسختين من مستند (رفع ملفين أو نصّين) — §1
+/**
+ * مقارنة نسختين من مستند — §1.
+ *
+ * نصّان في الجسم لا ملفّان. وكان هنا فرعُ `multipart/form-data` يستخرج نصّ
+ * ملفّين مرفوعين — **ولم يناديه أحد قطّ**: `api.compare` ترسل JSON دائماً.
+ * وبقاؤه أوهم الواجهةَ أن ثمّة استخراجاً خادمياً تعتمد عليه، فكانت تضع في
+ * الصندوق نصّاً نائباً وتنتظره. فأُسقط، وصارت القراءة حيث تقع فعلاً: في
+ * المتصفّح (`web/src/components/Tools.tsx`) بـMuPDF بلا كلفة نموذج.
+ */
 app.post('/compare', async (c) => {
   const user = c.get('user');
-  const ct = c.req.header('content-type') ?? '';
-  let textA = '';
-  let textB = '';
-
-  if (ct.includes('multipart/form-data')) {
-    const form = await c.req.formData();
-    const fa = form.get('file_a');
-    const fb = form.get('file_b');
-    if (fa instanceof File) textA = await extractText(c.env, await fa.arrayBuffer(), fa.type, fa.name);
-    if (fb instanceof File) textB = await extractText(c.env, await fb.arrayBuffer(), fb.type, fb.name);
-  } else {
-    const body = await c.req.json().catch(() => ({}));
-    textA = body.text_a ?? '';
-    textB = body.text_b ?? '';
-  }
+  const body = await c.req.json().catch(() => ({}));
+  const textA: string = body.text_a ?? '';
+  const textB: string = body.text_b ?? '';
 
   if (!textA.trim() || !textB.trim()) return c.json({ error: 'يلزم توفير نسختين للمقارنة' }, 400);
 
@@ -93,20 +88,49 @@ app.post('/proofread', async (c) => {
   return c.json({ result: out });
 });
 
-// التفريغ الصوتي العربي (إدخال الوقائع صوتيًا) — §3
+/**
+ * التفريغ الصوتي العربي (إدخال الوقائع صوتيًا) — §3.
+ *
+ * **والصوت سلسلةُ base64 لا مصفوفةَ بايتات.** كان يُرسَل
+ * `audio: [...new Uint8Array(buf)]` — وذلك عقدُ `@cf/openai/whisper` القديم،
+ * لا عقدُ `-turbo`. والفرق في أنواع الحزمة نفسها:
+ *
+ *   Ai_Cf_Openai_Whisper_Input              { audio: number[] }
+ *   Ai_Cf_Openai_Whisper_Large_V3_Turbo_Input { audio: string | {…} }
+ *
+ * وما ستره أن اسم النموذج كان مكتوباً `as any`، فلم يقابله المدقّق بعقده.
+ * وأُسقط الوسم، فصار العقدُ مفروضاً عند البناء لا مُكتشَفاً عند الاستعمال.
+ *
+ * و`language` معه: النموذج يكشف اللغة وحدَه، وكشفُه يخطئ على مقطعٍ عربيٍّ
+ * قصير فيفرّغه بحروفٍ لاتينية. والمنصة عربية، فتُقال اللغة ولا تُخمَّن.
+ */
 app.post('/transcribe', async (c) => {
   const user = c.get('user');
   const buf = await c.req.arrayBuffer();
   if (!buf.byteLength) return c.json({ error: 'لا يوجد صوت' }, 400);
   try {
-    const res: any = await c.env.AI.run('@cf/openai/whisper-large-v3-turbo' as any, {
-      audio: [...new Uint8Array(buf)],
+    const res = await c.env.AI.run('@cf/openai/whisper-large-v3-turbo', {
+      audio: base64(buf),
+      task: 'transcribe',
+      language: 'ar',
     });
     await logUsage(c.env, { userId: user.id, kind: 'transcribe', model: 'whisper-large-v3-turbo' });
     return c.json({ text: res?.text ?? '' });
   } catch (e: any) {
+    console.error('transcribe failed:', e?.message ?? e);
     return c.json({ error: 'تعذّر التفريغ الصوتي', detail: String(e?.message ?? e) }, 502);
   }
 });
+
+/** بايتات إلى base64 — على دفعات، فـ`String.fromCharCode` تنفد بسجلّها. */
+function base64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
 
 export default app;

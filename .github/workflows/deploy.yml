@@ -61,9 +61,10 @@ jobs:
           else
             echo "المعرّفات مثبَّتة في wrangler.toml — لا إنشاء ولا تكاثر."
           fi
-          # فهارس Vectorize اختيارية (تتطلّب صلاحية Vectorize في الرمز):
-          npx wrangler vectorize create naf-legal-kb   --dimensions=1024 --metric=cosine
-          npx wrangler vectorize create naf-legal-conv --dimensions=1024 --metric=cosine
+          # فهرس Vectorize اختياري (يتطلّب صلاحية Vectorize في الرمز).
+          # ولا يُنشأ `naf-legal-conv` بعد اليوم: فهرس المحادثات أُسقط لأنه
+          # كان يُكتب ولا يُقرأ — التفصيل في `src/lib/rag.ts`.
+          npx wrangler vectorize create naf-legal-kb --dimensions=1024 --metric=cosine
           true
 
       - name: حقن المعرّفات في wrangler.toml
@@ -153,12 +154,12 @@ jobs:
         run: |
           set -uo pipefail
           LIST=$(npx wrangler vectorize list 2>&1) || LIST=""
-          if grep -q "naf-legal-kb" <<<"$LIST" && grep -q "naf-legal-conv" <<<"$LIST"; then
+          if grep -q "naf-legal-kb" <<<"$LIST"; then
             sed -i '/VECTORIZE-BINDINGS-START/,/VECTORIZE-BINDINGS-END/ s/^# \(\[\[vectorize\]\]\|binding \|index_name \)/\1/' wrangler.toml
-            echo "الفهرسان قائمان — الربط مُفعَّل في هذا النشر:"
+            echo "الفهرس قائم — الربط مُفعَّل في هذا النشر:"
             grep -A2 '^\[\[vectorize\]\]' wrangler.toml
           else
-            echo "::notice::فهارس Vectorize غير متاحة — يُنشر بلا استرجاع دلالي. البحث اللفظي في المحتوى النظامي يعمل، والتضمين يبقى معلَّقاً حتى تُمنح صلاحية Vectorize للرمز، ثم يصرّفه أوّل نشر تالٍ مع الـCron."
+            echo "::notice::فهرس Vectorize غير متاح — يُنشر بلا استرجاع دلالي. البحث اللفظي في المحتوى النظامي يعمل، والتضمين يبقى معلَّقاً حتى تُمنح صلاحية Vectorize للرمز، ثم يصرّفه أوّل نشر تالٍ مع الـCron."
           fi
 
       - name: تطبيق ترحيلات قاعدة البيانات
