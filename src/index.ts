@@ -30,7 +30,62 @@ import type { Env, Variables } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-app.use('*', secureHeaders());
+/**
+ * سياسة المحتوى — الطبقة الثانية تحت تهريب `renderMarkdown`.
+ *
+ * `secureHeaders()` بلا خيارات **لا تكتب `Content-Security-Policy` إطلاقاً**؛
+ * تكتب إحدى عشرة ترويسة أخرى ولا تكتبها. فبقيت المنصة بلا سياسة، وحين ظهر
+ * حقنُ سمةٍ في عارض Markdown لم يكن دونه شيء. والتهريب أُصلح في موضعه، وهذه
+ * تقول: ولو عاد، فلا ينفَّذ.
+ *
+ * وكلُّ مصدرٍ أدناه مقيسٌ على ما تحتاجه المنصة فعلاً، لا منقولٌ من قالب:
+ *
+ *   `'wasm-unsafe-eval'`  MuPDF تُنشأ من WebAssembly في المتصفّح
+ *                         (`web/src/lib/extractText.ts`). وبدونه يسقط
+ *                         استخراج نصّ PDF ويعود كلُّ ملفٍّ إلى نداء النموذج.
+ *   `style-src` مضمَّن    الواجهة تكتب `style={{…}}` في عشرات المواضع،
+ *                         ومستند الطباعة كتلةُ `<style>` واحدة. ولا سبيل
+ *                         إلى تجزئةٍ (`hash`) مع أنماطٍ تُبنى في التشغيل.
+ *   `img-src data: blob:` رأسيةُ الطباعة تُقرأ `data:` (`lib/print.ts`)،
+ *                         و`rasterizeSvg` تُنشئ `blob:` لترسم المتجهة.
+ *   `frame-src 'self'`    النافذة العائمة تعرض المرفق في إطارٍ من `/api/`.
+ *   `form-action 'self'`  زرّ الخروج نموذجٌ يُرسَل إلى `/auth/logout`.
+ *
+ * ولا `'unsafe-inline'` في `script-src`: النصّان المضمَّنان اللذان كانا
+ * يمنعانه أُخرجا — نصُّ المظهر إلى `web/public/theme-init.js`، ونصُّ
+ * الطباعة إلى `printDocument` نفسها. **فمن أضاف `<script>` مضمَّناً بعد
+ * اليوم يجده لا يعمل، وذلك هو المقصود.**
+ *
+ * ونافذة الطباعة تُفتح على `about:blank` فترث هذه السياسة عن فاتحها — وهو
+ * سببُ إخراج نصّها، ولزومِ `style-src` و`font-src` و`img-src` لها.
+ */
+app.use('*', (c, next) =>
+  secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      /* `data:` لازمة لا تساهُل: حزمة `@fontsource` تُضمّن الملفّات الصغيرة
+         من الخطّ العربي في CSS المبني بصيغة `data:`. وبدونها يرفض المتصفّح
+         كلَّ وجهٍ من أوجه الخطّ ويعود النصّ إلى خطّ النظام — قِيس بتشغيل
+         البناء تحت هذه السياسة نفسها. */
+      fontSrc: ["'self'", 'data:'],
+      connectSrc: ["'self'"],
+      frameSrc: ["'self'"],
+      workerSrc: ["'self'", 'blob:'],
+      manifestSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      /* نموذج الخروج يُرسَل إلى `/auth/logout` ثم يُحوَّل إلى المركز.
+         و`form-action` تُفحص على التحويلة أيضاً في المتصفّحات الحديثة، فلو
+         اقتُصر على `'self'` لسقط الخروج صامتاً — يضغط المستخدم فلا يقع شيء.
+         والمركز يُقرأ من الإعداد ولا يُكتب هنا: منصةٌ بمركزٍ آخر تأخذ مركزها. */
+      formAction: ["'self'", c.env.AUTH_ISSUER].filter(Boolean),
+      frameAncestors: ["'none'"],
+    },
+  })(c, next)
+);
 
 // مسار الاستقبال والخروج قبل الوسيط: الأول عام بطبيعته — إليه يعود القادم
 // من المركز بلا جلسة بعد — والثاني لا معنى لحمايته بجلسةٍ هو يُسقطها.

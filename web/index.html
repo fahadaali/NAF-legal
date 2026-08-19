@@ -25,21 +25,13 @@
     <meta name="apple-mobile-web-app-title" content="مستشار ناف" />
 
     <title>مستشار ناف — منصة الاستشارات القانونية الذكية</title>
-    <script>
-      // ضبط المظهر مبكرًا لتفادي الوميض.
-      // الآلية صنف `dark` على الجذر — وهي آلية ثيم ناف نفسها،
-      // لا سمة data-theme المحلية التي كانت مصدر حقيقة موازياً.
-      // المفتاح لا يُخزَّن إلا عند اختيار صريح، فغيابه معناه «يتبع النظام».
-      (function () {
-        try {
-          var saved = localStorage.getItem('naf-theme');
-          var dark = saved === 'dark' || (saved !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-          document.documentElement.classList.toggle('dark', dark);
-        } catch (e) {
-          document.documentElement.classList.add('dark');
-        }
-      })();
-    </script>
+    <!--
+      ضبط المظهر مبكرًا لتفادي الوميض — في ملفٍّ لا مضمَّناً.
+      سياسة المحتوى في `src/index.ts` تمنع النصّ المضمَّن، ووسمٌ عاديّ بلا
+      `defer` ولا `type=module` ينفَّذ أثناء التحليل قبل أوّل رسم.
+      وهو يضبط صنف `dark` **و** وسم `theme-color` أدناه معاً.
+    -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

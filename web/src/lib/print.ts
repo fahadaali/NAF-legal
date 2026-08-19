@@ -87,6 +87,30 @@ export function printDocument(doc: PrintDoc): boolean {
   if (!w) return false;
   w.document.write(buildPrintHtml(doc));
   w.document.close();
+
+  /* الطباعة تُطلب من هنا لا من نصٍّ داخل المستند.
+     كانت في `<script>` مضمَّن في صفحة الطباعة، والنافذة تُفتح على
+     `about:blank` فترث سياسة محتوى فاتحها — و`script-src 'self'` تمنع
+     المضمَّن، فتُفتح الصفحة ولا تُطبع أبداً. والنافذة من الأصل نفسه،
+     فالفاتح يبلغ مستندها مباشرةً والمنطق هو هو.
+
+     والانتظار للموارد قبل الطلب: نافذةٌ تُطبع قبل أن تصل رأسيتها تُخرج
+     ورقةً بلا رأسية وبخطٍّ بديل. */
+  const go = () => {
+    try {
+      w.focus();
+      w.print();
+    } catch {
+      // النافذة أُغلقت قبل أن تكتمل مواردها — لا شيء يُطبع ولا شيء يُبلَّغ.
+    }
+  };
+  const loaded = new Promise<void>((resolve) => {
+    if (w.document.readyState === 'complete') resolve();
+    else w.addEventListener('load', () => resolve(), { once: true });
+  });
+  const fonts = w.document.fonts?.ready ?? Promise.resolve();
+  Promise.all([loaded, fonts]).then(go, go);
+
   return true;
 }
 
@@ -229,19 +253,7 @@ ${doc.html}
 <div class="disclaimer">${escapeHtml(doc.disclaimer)}</div>
 </td></tr></tbody>
 </table>
-<script>
-  /* الطباعة بعد أن تكتمل الموارد: خلفيةُ الرأسية والخطوط. ونافذةٌ تُطبع
-     قبلها تُخرج ورقةً بلا رأسية وبخطٍّ بديل. */
-  (function () {
-    var go = function () { window.focus(); window.print(); };
-    var loaded = new Promise(function (r) {
-      if (document.readyState === 'complete') r();
-      else window.addEventListener('load', r);
-    });
-    var fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
-    Promise.all([loaded, fonts]).then(go, go);
-  })();
-</script>
+<!-- لا نصّ برمجيّ هنا: الطباعة تُطلب من printDocument أعلاه. -->
 </body>
 </html>`;
 }
