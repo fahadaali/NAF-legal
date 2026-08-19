@@ -10,6 +10,15 @@ import type { Env, Variables } from '../types';
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth, requireAdmin);
 
+/* حدود الرفع — كما في `routes/files.ts` وبالقيم نفسها.
+   وكان هذا المسار بلا حارسٍ واحد: البايتات تمضي إلى `extractText` ثم إلى
+   `base64` في ذاكرة العامل، وحدُّها مئةٌ وثمانيةٌ وعشرون ميغابايت. ومسؤولٌ
+   يرفع ملفاً كبيراً سهواً يُسقط الطلب بلا رسالة تقول ما وقع.
+
+   والقائمة أضيق من قائمة المرفقات: قاعدة المعرفة نصوصٌ نظامية، فلا صور. */
+const MAX_SIZE = 15 * 1024 * 1024; // 15MB
+const ALLOWED_EXT = ['pdf', 'txt', 'md', 'docx'];
+
 // قائمة وثائق قاعدة المعرفة
 //
 // و`vectorize` معها في الردّ نفسه: حالُ الوثيقة في الفهرس لا تُقرأ إلا
@@ -97,6 +106,12 @@ app.post('/documents', async (c) => {
 
   if (file instanceof File) {
     // ── وضع الملف ──
+    if (file.size > MAX_SIZE) return c.json({ error: 'حجم الملف يتجاوز الحد (15MB)' }, 413);
+    const ext = (file.name.split('.').pop() ?? '').toLowerCase();
+    const isDocx = ext === 'docx' || file.type.includes('officedocument.wordprocessingml');
+    if (!ALLOWED_EXT.includes(ext) && !isDocx) {
+      return c.json({ error: 'يُقبل هنا PDF و Word والنصّ و Markdown' }, 415);
+    }
     const buf = await file.arrayBuffer();
     r2Key = `kb/${id}-${file.name.replace(/[^\w.\-؀-ۿ]/g, '_')}`;
     await c.env.R2.put(r2Key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });

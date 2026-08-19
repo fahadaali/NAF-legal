@@ -2,21 +2,42 @@
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
+import { arabicGlobPatterns } from '../lib/arabic';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use('*', requireAuth);
 
-// قائمة/بحث في البنود (متاح لكل المستخدمين لإدراجها في الصياغة)
+/**
+ * قائمة/بحث في البنود (متاح لكل المستخدمين لإدراجها في الصياغة).
+ *
+ * **والمطابقة مطبَّعة عربياً كما في `routes/search.ts`.** كانت `LIKE '%q%'`
+ * خاماً، فبحثُ «الاثبات» لا يجد بنداً كُتب «الإثبات» — بينما شاشة البحث في
+ * المنصة تجد المادة نفسها لأنها تمرّ بـ`arabicGlobPatterns`. ومطابقتان
+ * عربيّتان مختلفتان في شاشتين تُعلّمان القارئ أن البحث «أحياناً يعمل».
+ *
+ * وكلُّ كلمةٍ يجب أن ترد — `AND` لا `OR` — وفي أيٍّ من الحقول الثلاثة:
+ * من كتب كلمتين يريد ما جمعهما، ولا يهمّه أوقعتا في العنوان أم في النصّ.
+ */
 app.get('/', async (c) => {
   const q = c.req.query('q')?.trim();
-  const rows = q
-    ? await c.env.DB.prepare(
-        'SELECT id, title, category, body, created_at FROM clauses WHERE title LIKE ? OR body LIKE ? OR category LIKE ? ORDER BY category, title LIMIT 200'
-      )
-        .bind(`%${q}%`, `%${q}%`, `%${q}%`)
-        .all()
-    : await c.env.DB.prepare('SELECT id, title, category, body, created_at FROM clauses ORDER BY category, title LIMIT 200').all();
+  const patterns = q ? arabicGlobPatterns(q) : [];
+  const cols = 'id, title, category, body, created_at';
+
+  if (!patterns.length) {
+    const rows = await c.env.DB.prepare(`SELECT ${cols} FROM clauses ORDER BY category, title LIMIT 200`).all();
+    return c.json({ clauses: rows.results });
+  }
+
+  const where = patterns
+    .map(() => '(title GLOB ? OR body GLOB ? OR category GLOB ?)')
+    .join(' AND ');
+  const args = patterns.flatMap((p) => [p, p, p]);
+  const rows = await c.env.DB.prepare(
+    `SELECT ${cols} FROM clauses WHERE ${where} ORDER BY category, title LIMIT 200`
+  )
+    .bind(...args)
+    .all();
   return c.json({ clauses: rows.results });
 });
 
