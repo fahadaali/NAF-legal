@@ -4,6 +4,7 @@ import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
 import { retrieve, formatRagContext, type RagResult } from '../lib/rag';
+import { extractAnchors, buildAnchorsBlock, BASIS_PER_ANCHOR, type BasisAnchor } from '../lib/basis';
 import {
   streamClaude,
   webSearchTool,
@@ -15,7 +16,7 @@ import {
   type StreamOutcome,
 } from '../lib/claude';
 import { needsGeneratedTitle, generateTitle } from '../lib/title';
-import { BILINGUAL_INSTRUCTION } from '../lib/prompts';
+import { BILINGUAL_INSTRUCTION, lengthInstructionFor } from '../lib/prompts';
 import { getEffectiveConfig } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
@@ -50,7 +51,7 @@ const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }
 app.post('/:conversationId', async (c) => {
   const user = c.get('user');
   const conversationId = c.req.param('conversationId');
-  const { message, force_internet, bilingual, attachment_ids } = await c.req.json().catch(() => ({}));
+  const { message, force_internet, bilingual, attachment_ids, reply_length } = await c.req.json().catch(() => ({}));
   if (!message?.trim()) return c.json({ error: 'الرسالة فارغة' }, 400);
 
   // تحقّق الملكية
@@ -153,11 +154,27 @@ app.post('/:conversationId', async (c) => {
   // [2] المُنفِّذ: استرجاع RAG
   let ragContext = '';
   let citations: any[] = [];
-  if (plan.needs_knowledge_base && plan.kb_queries.length) {
+  /** مواضع الاستدلال — تُملأ في خدمة «استدلال نظامي» وحدها. */
+  let anchors: BasisAnchor[] = [];
+  if (plan.needs_knowledge_base) {
     try {
-      const results = await retrieve(c.env, plan.kb_queries, 6);
-      ragContext = formatRagContext(results);
-      citations = results.map(toCitation);
+      /* «استدلال نظامي» يمرّ بتمريرتين، وغيرُه بواحدة.
+         المستندُ كلُّه مسألتُه — عشرةُ دفوعٍ أو عشرون بنداً — وخمسةُ
+         استعلاماتٍ يكتبها المُخطِّط عن الطلب تُغطّي أبرزها وتترك الباقي
+         بلا سند. فتُستخرج مواضعُه أولاً ويُبحث لكلٍّ منها. والتفصيل — مع
+         حدِّ الطول الذي يمنعها في أسئلة المتابعة — في `lib/basis.ts`. */
+      if (plan.consultation_type === 'legal_basis') {
+        const own = attByMessage.get(userMsgId) ?? [];
+        const source = [message, ...own.map((a) => a.parsed_text)].join('\n\n');
+        anchors = await extractAnchors(c.env, source, user.id);
+      }
+
+      const queries = anchors.length ? anchors.map((a) => a.query) : plan.kb_queries;
+      if (queries.length) {
+        const results = await retrieve(c.env, queries, anchors.length ? BASIS_PER_ANCHOR : 6);
+        ragContext = formatRagContext(results);
+        citations = results.map(toCitation);
+      }
     } catch (e: any) {
       // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ:
       // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هنا وحده.
@@ -175,6 +192,11 @@ app.post('/:conversationId', async (c) => {
   const effectiveConfig = await getEffectiveConfig(c.env, plan.consultation_type);
   let system = effectiveConfig.system_prompt;
   if (bilingual) system += BILINGUAL_INSTRUCTION;
+  /* درجة الطول تُلحق بعد برومبت الإدارة لا قبله، كالتعليمة ثنائية اللغة سواء:
+     البرومبت يصف **ما يُكتب**، وهذه تصف **كم يُكتب منه**، فتأتي أخيراً حتى
+     لا يسبقها في السياق ما يناقضها. و`effort` و`max_tokens` في `ATTEMPTS`
+     أعلاه لا يتغيّران بتغيّرها — الطول وحده يُضبط، لا الدقّة. */
+  system += lengthInstructionFor(reply_length);
   /* نصُّ المرفق يُدرَج **عند دوره** لا في كل دور.
 
      وكان يُدرَج في كل دورٍ لأن المرفق كان مربوطاً بالمحادثة ولا يعرف أيُّ
@@ -188,7 +210,12 @@ app.post('/:conversationId', async (c) => {
     ? buildAttachmentsBlock(attByMessage.get(userMsgId)!)
     : '';
 
-  const userContent = `${ragContext}${attachmentsBlock}\n\n${message}`.trim();
+  /* المواضع تُدرَج بعد السياق النظامي وقبل النصّ: هي ما بُحث عنه، ولو لم
+     تُدرَج لبناها النموذج من جديد فجاءت صفوفُ الجدول عن مواضعَ غير التي
+     استُرجعت لها المواد. */
+  const anchorsBlock = anchors.length ? buildAnchorsBlock(anchors) : '';
+
+  const userContent = `${ragContext}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
 
   const messages = [
     ...(history.results ?? [])

@@ -5,7 +5,8 @@ export interface ConsultationOption {
   description: string;
   /** مفتاح من Icon في lib/icons — المعنى مسجَّل في naf-icons.md. */
   iconKey?: 'memo' | 'pleading' | 'consultation' | 'contract'
-    | 'statementOfClaim' | 'judgmentAnalysis' | 'internalPolicy' | 'documentReview';
+    | 'statementOfClaim' | 'judgmentAnalysis' | 'internalPolicy' | 'documentReview'
+    | 'legalBasis';
   group?: string;
 }
 
@@ -61,6 +62,12 @@ export const CONSULTATIONS: ConsultationOption[] = [
     label: 'مراجعة وتدقيق مستند',
     description: 'رفع عقد/مذكرة والحصول على تحليل مخاطر بندًا ببند مع مقترحات.',
     iconKey: 'documentReview',
+  },
+  {
+    type: 'legal_basis',
+    label: 'استدلال نظامي',
+    description: 'ردُّ نصٍّ مكتوب إلى موادّه النظامية بنصوصها وأرقامها.',
+    iconKey: 'legalBasis',
   },
 ];
 

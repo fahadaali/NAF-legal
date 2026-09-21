@@ -299,6 +299,28 @@ a { color: var(--primary); }
 }
 .citation-chip.is-open:hover { border-color: var(--primary); color: var(--primary); }
 
+/* ══ إشارةُ مادةٍ داخل نصّ الردّ ══
+ *
+ * زرٌّ لا يبدو زرّاً: هو العبارة نفسها في مجرى الجملة — «وفقاً للمادة ٧٧ من
+ * نظام العمل» — فلو أخذ حدّاً وخلفيةً لقطع السطر وصار شارةً ثانيةً في وسط
+ * النصّ. فيرث الخطَّ واللونَ والثقل، ويُعلن نفسه بالتسطير المنقَّط وحده.
+ *
+ * والتسطير `underline` لا `border-bottom`: الأوّل يتبع الكلمات إذا التفّت
+ * على سطرين، والثاني يرسم خطّاً تحت السطر كلِّه. */
+.article-ref {
+  background: none; border: none; padding: 0; margin: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+  text-decoration-color: var(--muted-foreground);
+  transition: 0.18s ease-out;
+}
+.article-ref:hover {
+  color: var(--primary);
+  text-decoration: underline solid;
+  text-decoration-color: var(--primary);
+}
+
 /* سطرُ الحال داخل نقاط الانتظار: «يبحث في المصادر…» و«جارٍ التوليد». */
 .typing-note {
   font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground);
@@ -426,6 +448,23 @@ a { color: var(--primary); }
   color: var(--muted-foreground); cursor: pointer; line-height: 1;
 }
 .attach-remove:hover { color: var(--destructive); }
+/* ══ ضوابط صندوق الكتابة — صفٌّ فوق الصندوق لا داخله ══
+ *
+ * الصندوق يحمل خمسة أزرار ٤٠×٤٠ وحقلاً وزرَّ إرسال، وسابعٌ فيه يزاحم الحقل
+ * على عرض ٣٧٥ بكسل حتى لا يبقى للكتابة موضع. والصفُّ المستقلّ يحتمل ما
+ * يُضاف بعده، ويلتفّ عند الضيق بدل أن يخرج من الشاشة. */
+.composer-controls { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-2); }
+.reply-length {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground);
+}
+/* شكلُ `.folder-select` نفسه: قائمةٌ صغيرة في ترويسة أو شريط، لا حقلُ نموذج. */
+.reply-length-select {
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); padding: var(--space-1) var(--space-2); border-radius: var(--radius-lg); border: 1px solid var(--border);
+  background: var(--input); color: var(--foreground); font-family: inherit;
+}
+.reply-length-select:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
+
 .composer-box {
   display: flex; align-items: flex-end; gap: var(--space-2); border: 1px solid var(--border);
   border-radius: var(--radius-xl); padding: var(--space-2); background: var(--input); transition: border-color 0.2s;
@@ -472,7 +511,12 @@ a { color: var(--primary); }
   width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--input); color: var(--foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-family: inherit; transition: 0.2s;
 }
+.field select {
+  width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--input); color: var(--foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-family: inherit; transition: 0.2s;
+}
 .field input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
+.field select:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
 .btn-primary {
   width: 100%; padding: var(--space-3); border: none; border-radius: var(--radius-lg); font-weight: 700; font-size: var(--text-base); line-height: var(--text-base--line-height);
   background: var(--primary); color: var(--primary-foreground);
@@ -1078,6 +1122,27 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
    من الجهتين، فتخرج حافّةُ البطاقة عن الشاشة. و`dvh` لا `vh` لأن شريط
    المتصفّح على الجوال يقتطع من `vh` فيبقى ذيل النافذة تحت الشريط. */
 @media (max-width: 640px) {
+  /* ══ صندوق الكتابة على الهاتف — سطرٌ للحقل وسطرٌ للأزرار ══
+   *
+   * الصندوق صفٌّ واحد: خمسةُ أزرارٍ وزرُّ إرسال، كلٌّ منها ٤٠ بكسل لا ينكمش
+   * (`flex-shrink: 0`)، والحقلُ وحده `flex: 1` يبتلع ما بقي. وما يبقى على
+   * ٣٧٥ بكسل **١٩ بكسلاً** — حقلُ كتابةٍ لا يُكتب فيه. وعلى ٤١٤ يصير ٥٨،
+   * ولا يتّسع لشيء إلا فوق ٥٢٠ تقريباً.
+   *
+   * فيلتفّ الصندوق: الحقل يأخذ سطره كاملاً (٣٠٩ بكسل على ٣٧٥)، والأزرار
+   * الستّة تنساب تحته (٦ × ٤٠ + ٥ × ٨ = ٢٨٠، فتسع بفضلة)، وزرُّ الإرسال
+   * في نهاية السطر.
+   *
+   * و`order: -1` لأن الحقل في الشجرة بعد الأزرار — وهو الترتيب الصحيح على
+   * الشاشات الواسعة، فلا يُقلب في الشجرة لأجل الضيق.
+   *
+   * والعتبة ٦٤٠ هي العتبة المسجّلة في هذه الورقة أصلاً: استحداثُ ثانية قرارٌ
+   * في نظام التصميم لا في هذه الشاشة، وسطرٌ كاملٌ للكتابة على عرض ٦٠٠ ليس
+   * خسارة. */
+  .composer-box { flex-wrap: wrap; }
+  .composer-box textarea { order: -1; flex-basis: 100%; }
+  .composer-box .send-btn { margin-inline-start: auto; }
+
   .modal-overlay:has(.amendment-card) { padding: 0; }
   .amendment-card {
     width: 100%; height: 100dvh; max-height: none;

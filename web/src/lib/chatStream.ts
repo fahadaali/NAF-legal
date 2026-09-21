@@ -20,6 +20,7 @@
  * للعائد أن ينتظر. انظر `src/routes/chat.ts` و`src/lib/generating.ts`.
  */
 import { streamChat, type Citation } from './api';
+import type { ReplyLength } from './replyLength';
 
 export interface ChatStream {
   conversationId: string;
@@ -134,6 +135,8 @@ export interface StartChatOptions {
   bilingual: boolean;
   /** معرِّفات المرفقات المرسَلة مع هذا الدور — تُختم برسالته في الخادم. */
   attachmentIds?: string[];
+  /** درجة طول الردّ المختارة وقت الإرسال. */
+  replyLength?: ReplyLength;
 }
 
 /**
@@ -182,6 +185,7 @@ async function run(conversationId: string, opts: StartChatOptions) {
       forceInternet: opts.internet,
       bilingual: opts.bilingual,
       attachmentIds: opts.attachmentIds,
+      replyLength: opts.replyLength,
     }, {
       onMeta: (m) => {
         meta = m;
