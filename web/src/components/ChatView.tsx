@@ -12,6 +12,7 @@ import {
 } from '../lib/chatStream';
 import { highlightIdAt, offsetsOfSelection, type RenderableHighlight } from '../lib/highlight';
 import { isolate } from '../lib/format';
+import { useReplyLength, REPLY_LENGTHS } from '../lib/replyLength';
 import IntakeModal from './IntakeModal';
 import DraftEditor from './DraftEditor';
 import ClauseLibrary from './ClauseLibrary';
@@ -117,6 +118,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   const [input, setInput] = useState(() => readDraft(conversationId));
   const [internet, setInternet] = useState(false);
   const [bilingual, setBilingual] = useState(false);
+  const [replyLength, setReplyLength] = useReplyLength();
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
   /** دورٌ يجري في الخادم ولا بثَّ له هنا — عودةٌ بعد إعادة تحميل الصفحة. */
@@ -642,7 +644,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     // دورٌ سابق انقطع فبقي معروضاً: يُمسح عند بدء التالي لا قبله.
     if (getChatStream(conversationId)) clearChatStream(conversationId);
     pinned.current = true;
-    startChatStream({ conversationId, message: text, internet, bilingual, attachmentIds: sentIds });
+    startChatStream({ conversationId, message: text, internet, bilingual, replyLength, attachmentIds: sentIds });
   };
 
   // تسجيل صوتي للوقائع ثم تفريغه عربيًا (§3)
@@ -952,6 +954,24 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
               ))}
             </div>
           )}
+          {/* القائمة فوق الصندوق لا داخله: الصندوق يحمل خمسة أزرار وحقلاً
+              وزرَّ إرسال، وسابعٌ فيه يكسر عرض ٣٧٥ بكسل. */}
+          <div className="composer-controls">
+            <label className="reply-length">
+              طول الرد
+              <select
+                className="reply-length-select"
+                value={replyLength}
+                onChange={(e) => setReplyLength(e.target.value as typeof replyLength)}
+              >
+                {REPLY_LENGTHS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <div className="composer-box">
             <input
               ref={fileInput}

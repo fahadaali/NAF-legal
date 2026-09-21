@@ -3,6 +3,7 @@ import { extractPdfText, readableLocally } from '../lib/extractText';
 import { api, ConsultConfig } from '../lib/api';
 import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
+import { useReplyLength, REPLY_LENGTHS } from '../lib/replyLength';
 
 // نافذة إدخال البيانات الأولية ورفع الملف قبل الدخول إلى المحادثة
 export default function IntakeModal({
@@ -21,6 +22,10 @@ export default function IntakeModal({
   const [pastedText, setPastedText] = useState('');
   const [useText, setUseText] = useState(false);
   const [busy, setBusy] = useState(false);
+  /* الدرجة تُحفظ في التفضيل ولا تُمرَّر مع رسالة البدء.
+     نافذةُ البدء تُغلق فتُركَّب `ChatView` من جديد (`key={activeConv}` في
+     `App.tsx`)، وهي التي ترسل رسالة البدء — فتقرأ ما حُفظ هنا توّاً. */
+  const [replyLength, setReplyLength] = useReplyLength();
   const [error, setError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -145,6 +150,21 @@ export default function IntakeModal({
               )}
             </div>
           )}
+
+          <div className="field">
+            <label htmlFor="intake-reply-length">طول الرد</label>
+            <select
+              id="intake-reply-length"
+              value={replyLength}
+              onChange={(e) => setReplyLength(e.target.value as typeof replyLength)}
+            >
+              {REPLY_LENGTHS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="modal-foot">

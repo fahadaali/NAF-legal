@@ -426,6 +426,23 @@ a { color: var(--primary); }
   color: var(--muted-foreground); cursor: pointer; line-height: 1;
 }
 .attach-remove:hover { color: var(--destructive); }
+/* ══ ضوابط صندوق الكتابة — صفٌّ فوق الصندوق لا داخله ══
+ *
+ * الصندوق يحمل خمسة أزرار ٤٠×٤٠ وحقلاً وزرَّ إرسال، وسابعٌ فيه يزاحم الحقل
+ * على عرض ٣٧٥ بكسل حتى لا يبقى للكتابة موضع. والصفُّ المستقلّ يحتمل ما
+ * يُضاف بعده، ويلتفّ عند الضيق بدل أن يخرج من الشاشة. */
+.composer-controls { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-2); }
+.reply-length {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground);
+}
+/* شكلُ `.folder-select` نفسه: قائمةٌ صغيرة في ترويسة أو شريط، لا حقلُ نموذج. */
+.reply-length-select {
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); padding: var(--space-1) var(--space-2); border-radius: var(--radius-lg); border: 1px solid var(--border);
+  background: var(--input); color: var(--foreground); font-family: inherit;
+}
+.reply-length-select:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
+
 .composer-box {
   display: flex; align-items: flex-end; gap: var(--space-2); border: 1px solid var(--border);
   border-radius: var(--radius-xl); padding: var(--space-2); background: var(--input); transition: border-color 0.2s;
@@ -472,7 +489,12 @@ a { color: var(--primary); }
   width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--input); color: var(--foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-family: inherit; transition: 0.2s;
 }
+.field select {
+  width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--input); color: var(--foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-family: inherit; transition: 0.2s;
+}
 .field input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
+.field select:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
 .btn-primary {
   width: 100%; padding: var(--space-3); border: none; border-radius: var(--radius-lg); font-weight: 700; font-size: var(--text-base); line-height: var(--text-base--line-height);
   background: var(--primary); color: var(--primary-foreground);

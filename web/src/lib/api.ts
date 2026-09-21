@@ -1,4 +1,5 @@
 // عميل API للواجهة
+import type { ReplyLength } from './replyLength';
 import { loginWithReturn, rememberLoginUrl, sessionLost } from './session';
 
 /** أدوار هذه المنصة، وألفاظها في naf-terms.md §١٠. لا رابع لها. */
@@ -1048,6 +1049,8 @@ export interface ChatTurn {
   bilingual: boolean;
   /** مرفقاتُ هذا الدور. يختمها الخادم برسالته فتلزمها ولا تلحق بما بعدها. */
   attachmentIds?: string[];
+  /** درجة طول الردّ — `naf-terms.md` §٣ «ضبط الردّ». الخادم يردّ غيرَ المسجَّل إلى «متوسط». */
+  replyLength?: ReplyLength;
 }
 
 export async function streamChat(
@@ -1064,6 +1067,7 @@ export async function streamChat(
       force_internet: turn.forceInternet,
       bilingual: turn.bilingual,
       attachment_ids: turn.attachmentIds ?? [],
+      reply_length: turn.replyLength,
     }),
   });
 
