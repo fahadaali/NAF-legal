@@ -15,7 +15,7 @@ import {
   type StreamOutcome,
 } from '../lib/claude';
 import { needsGeneratedTitle, generateTitle } from '../lib/title';
-import { BILINGUAL_INSTRUCTION } from '../lib/prompts';
+import { BILINGUAL_INSTRUCTION, lengthInstructionFor } from '../lib/prompts';
 import { getEffectiveConfig } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
@@ -50,7 +50,7 @@ const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }
 app.post('/:conversationId', async (c) => {
   const user = c.get('user');
   const conversationId = c.req.param('conversationId');
-  const { message, force_internet, bilingual, attachment_ids } = await c.req.json().catch(() => ({}));
+  const { message, force_internet, bilingual, attachment_ids, reply_length } = await c.req.json().catch(() => ({}));
   if (!message?.trim()) return c.json({ error: 'الرسالة فارغة' }, 400);
 
   // تحقّق الملكية
@@ -175,6 +175,11 @@ app.post('/:conversationId', async (c) => {
   const effectiveConfig = await getEffectiveConfig(c.env, plan.consultation_type);
   let system = effectiveConfig.system_prompt;
   if (bilingual) system += BILINGUAL_INSTRUCTION;
+  /* درجة الطول تُلحق بعد برومبت الإدارة لا قبله، كالتعليمة ثنائية اللغة سواء:
+     البرومبت يصف **ما يُكتب**، وهذه تصف **كم يُكتب منه**، فتأتي أخيراً حتى
+     لا يسبقها في السياق ما يناقضها. و`effort` و`max_tokens` في `ATTEMPTS`
+     أعلاه لا يتغيّران بتغيّرها — الطول وحده يُضبط، لا الدقّة. */
+  system += lengthInstructionFor(reply_length);
   /* نصُّ المرفق يُدرَج **عند دوره** لا في كل دور.
 
      وكان يُدرَج في كل دورٍ لأن المرفق كان مربوطاً بالمحادثة ولا يعرف أيُّ
