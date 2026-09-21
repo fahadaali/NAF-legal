@@ -18,6 +18,7 @@ import DraftEditor from './DraftEditor';
 import ClauseLibrary from './ClauseLibrary';
 import RegulationRequestModal from './RegulationRequestModal';
 import MessageContent from './MessageContent';
+import type { ArticleRef, KnownLaw } from '../lib/articleLinks';
 import SelectionToolbar, { type SelectionAnchor } from './SelectionToolbar';
 import SourceModal, { isOpenableCitation } from './SourceModal';
 import AttachmentViewer from './AttachmentViewer';
@@ -58,6 +59,7 @@ const POLL_MS = 4000;
 
 /** مرجعٌ ثابت لرسالةٍ بلا تظليل — حتى لا يُعاد الرسم مع كل إعادة بناء. */
 const NO_HIGHLIGHTS: RenderableHighlight[] = [];
+const NO_LAWS: KnownLaw[] = [];
 
 /**
  * مسوّدةُ الصندوق — محفوظةٌ بمحادثتها.
@@ -318,6 +320,21 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   /** رسائلُ لها صفٌّ في القاعدة — وهي وحدها ما يُظلَّل: التظليل يُسنَد إليها. */
   const persistedIds = useMemo(() => new Set(messages.map((m) => m.id)), [messages]);
 
+  /* إشارةٌ في نصّ الردّ تفتح ما تفتحه الشارة: `SourceModal` نفسها.
+     وهي تقبل الاستشهاد بـ`{lawTitle, articleNo}` أصلاً وتجلب المادة من
+     `/api/legal/article` عند كل فتحة — فلا مسار جديد ولا واجهة برمجية
+     جديدة، إنما استشهادٌ يُركَّب من الإشارة. */
+  const openArticle = useCallback((ref: ArticleRef) => {
+    setSource({
+      title: ref.lawTitle,
+      lawId: ref.lawId,
+      articleNo: ref.articleNo,
+      ref: `المادة ${ref.articleNo}`,
+      source: 'legal',
+      score: 0,
+    });
+  }, []);
+
   const highlightsByMessage = useMemo(() => {
     const map = new Map<string, RenderableHighlight[]>();
     for (const h of highlights) {
@@ -327,6 +344,22 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     }
     return map;
   }, [highlights]);
+
+  /* أنظمةُ كل ردٍّ من استشهاداته — ولا يُربط في نصّه إلا ما طابق واحداً منها.
+     والسببُ في ترويسة `lib/articleLinks.ts`: استخراجُ اسم النظام من النثر
+     تخمين، ورابطٌ يفتح المادة الخطأ في مستندٍ قانوني أسوأ من غياب الرابط. */
+  const lawsByMessage = useMemo(() => {
+    const map = new Map<string, KnownLaw[]>();
+    for (const m of shown) {
+      const seen = new Map<string, KnownLaw>();
+      for (const c of m.citations ?? []) {
+        if (c.source === 'document' || !c.title?.trim()) continue;
+        if (!seen.has(c.title)) seen.set(c.title, { title: c.title, lawId: c.lawId });
+      }
+      if (seen.size) map.set(m.id, Array.from(seen.values()));
+    }
+    return map;
+  }, [shown]);
 
   /* ══ المرفقات: بابان لا واحد ══
    *
@@ -827,6 +860,9 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                       messageId={m.id}
                       html={renderMarkdown(m.content)}
                       highlights={highlightsByMessage.get(m.id) ?? NO_HIGHLIGHTS}
+                      laws={lawsByMessage.get(m.id) ?? NO_LAWS}
+                      linkable={!m.streaming}
+                      onOpenArticle={openArticle}
                     />
                   )}
                   {m.clarifying && <div className="clarify-note"><Icon.awaitingClarification size={ICON_SM} aria-hidden /> بانتظار توضيحك للمتابعة</div>}

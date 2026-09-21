@@ -299,6 +299,28 @@ a { color: var(--primary); }
 }
 .citation-chip.is-open:hover { border-color: var(--primary); color: var(--primary); }
 
+/* ══ إشارةُ مادةٍ داخل نصّ الردّ ══
+ *
+ * زرٌّ لا يبدو زرّاً: هو العبارة نفسها في مجرى الجملة — «وفقاً للمادة ٧٧ من
+ * نظام العمل» — فلو أخذ حدّاً وخلفيةً لقطع السطر وصار شارةً ثانيةً في وسط
+ * النصّ. فيرث الخطَّ واللونَ والثقل، ويُعلن نفسه بالتسطير المنقَّط وحده.
+ *
+ * والتسطير `underline` لا `border-bottom`: الأوّل يتبع الكلمات إذا التفّت
+ * على سطرين، والثاني يرسم خطّاً تحت السطر كلِّه. */
+.article-ref {
+  background: none; border: none; padding: 0; margin: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+  text-decoration-color: var(--muted-foreground);
+  transition: 0.18s ease-out;
+}
+.article-ref:hover {
+  color: var(--primary);
+  text-decoration: underline solid;
+  text-decoration-color: var(--primary);
+}
+
 /* سطرُ الحال داخل نقاط الانتظار: «يبحث في المصادر…» و«جارٍ التوليد». */
 .typing-note {
   font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground);

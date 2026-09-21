@@ -10,21 +10,39 @@
 // ظاهراً على ردٍّ يُحرَّر أو يُعاد بناؤه.
 import { useEffect, useRef } from 'react';
 import { renderHighlights, type RenderableHighlight } from '../lib/highlight';
+import { linkArticleRefs, type ArticleRef, type KnownLaw } from '../lib/articleLinks';
 
 export default function MessageContent({
   messageId,
   html,
   highlights,
+  laws = [],
+  onOpenArticle,
+  /** الربط يُؤجَّل حتى يسكن النصّ — انظر الأثر أدناه. */
+  linkable = true,
 }: {
   messageId: string;
   html: string;
   highlights: RenderableHighlight[];
+  /** أنظمةُ هذا الردّ — لا يُربط إلا ما طابق واحداً منها. */
+  laws?: KnownLaw[];
+  onOpenArticle?: (ref: ArticleRef) => void;
+  linkable?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (ref.current) renderHighlights(ref.current, highlights);
-  }, [html, highlights]);
+    if (!ref.current) return;
+    /* الربط قبل التظليل: هذا يُنشئ عُقداً، وذاك يعرف حدود العُقد فيعمل على
+       الشجرة النهائية. واللفُّ لا يغيّر `textContent` فتبقى إزاحاتُ التظليل
+       صحيحة على أي حال.
+
+       والربط لا يقع أثناء البثّ: الأثر يُعاد مع كل مقطعٍ يصل، فمرورٌ على
+       الشجرة كلِّها مع كل مقطع كلفةٌ بلا مقابل — وإشارةٌ نصفُها وصل تُربط
+       برقمٍ ناقص ثم تُمحى في المقطع التالي. */
+    if (linkable && onOpenArticle) linkArticleRefs(ref.current, laws, onOpenArticle);
+    renderHighlights(ref.current, highlights);
+  }, [html, highlights, laws, linkable, onOpenArticle]);
 
   return (
     <div
