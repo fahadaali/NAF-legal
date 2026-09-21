@@ -65,7 +65,8 @@ export type ConsultationType =
   | 'contract'
   | 'policy'
   | 'consultation'
-  | 'document_review';
+  | 'document_review'
+  | 'legal_basis';
 
 export interface PlannerOutput {
   consultation_type: ConsultationType;

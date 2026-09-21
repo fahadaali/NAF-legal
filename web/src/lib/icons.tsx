@@ -29,6 +29,7 @@ import {
   ArrowUp,
   BadgeCheck,
   BookCheck,
+  BookMarked,
   BookText,
   Bell,
   Briefcase,
@@ -127,6 +128,10 @@ export const Icon = {
   internalPolicy: BookText,    // لائحة داخلية / سياسة — لا ScrollText
   judgmentAnalysis: ScanText,  // تحليل حكم قضائي
   documentReview: FileSearch,  // مراجعة وتدقيق مستند — الفعل لا الحالة
+  // استدلال نظامي — ردُّ نصٍّ إلى موادّه. وثلاثةُ الكتب مفترقة في naf-icons.md:
+  // `BookOpen` مركز المعرفة، و`BookCheck` إسنادٌ متحقَّق منه (شارةٌ تحت ردّ)،
+  // وهذه بطاقةُ خدمة. ولا تُستعمل لحفظ صفحةٍ أو تعليمها — تلك `Bookmark`.
+  legalBasis: BookMarked,
   litigation: Swords,          // التقاضي — تصنيف لا كيان
   appointment: Calendar,   // موعد
   attachment: Paperclip,   // مرفق

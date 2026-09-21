@@ -93,6 +93,13 @@ const DEFAULTS: Record<string, { file: FileRequest; fields: FieldDef[] }> = {
       { key: 'focus', label: 'نقاط التركيز (اختياري)', type: 'textarea' },
     ],
   },
+  legal_basis: {
+    file: { enabled: true, label: 'نصّ المذكرة أو اللائحة أو العقد', required: true, allow_text: true },
+    fields: [
+      { key: 'doc_type', label: 'نوع المستند (مذكرة/لائحة/عقد)', type: 'text' },
+      { key: 'focus', label: 'مواضع التركيز (اختياري)', type: 'textarea' },
+    ],
+  },
 };
 
 export function defaultConfig(key: string): ConsultConfig {

@@ -7,7 +7,7 @@ const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشا
 
 أعِد كائن JSON بالحقول التالية:
 {
-  "consultation_type": "<أحد: litigation.statement_of_claim | litigation.reply_memo | litigation.objection | litigation.judgment_analysis | contract | policy | consultation>",
+  "consultation_type": "<أحد: litigation.statement_of_claim | litigation.reply_memo | litigation.objection | litigation.judgment_analysis | contract | policy | consultation | document_review | legal_basis>",
   "needs_knowledge_base": <bool>,
   "kb_queries": [<استعلامات بحث نصّية بالعربية عن الأنظمة ذات الصلة>],
   "needs_internet_search": <bool>,
@@ -22,6 +22,7 @@ const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشا
 - مهام الصياغة (عقد، صحيفة دعوى، مذكرة، لائحة) تحتاج غالبًا قاعدة المعرفة، و output_format = "docx".
 - فعّل needs_internet_search=true فقط عند مؤشّرات مثل: «آخر تعديل»، «نظام جديد»، «صدر مؤخّرًا»، «خبر»، «حكم حديث».
 - الاستشارة التفسيرية عن نظام مستقر: needs_knowledge_base=true و needs_internet_search=false.
+- legal_basis (استدلال نظامي): المستند المرسَل هو المُدخَل لا الطلب، فـ needs_knowledge_base=true و needs_uploaded_files=true و output_format = "text" — المخرَج خريطةُ إسنادٍ عن نصٍّ قائم لا مستندٌ يُصاغ. واجعل kb_queries استعلاماتٍ عن الأنظمة التي يقوم عليها النصّ.
 - **السياق مهم:** إن وُجد «سجل المحادثة» فالرسالة الحالية غالبًا **متابعة** لما سبق (تعديل، إضافة، تصحيح، سؤال متفرّع). افهمها في ضوء ما دار، ولا تعامِلها كطلب جديد منفصل.
 - لا تطرح clarifying_questions إلا إذا كانت هناك معلومة جوهرية **مفقودة فعلًا** ولا يمكن استنتاجها من سجل المحادثة. في رسائل المتابعة اترك clarifying_questions فارغة غالبًا.
 - **target_regulations مهمّ:** اذكر فيه كل نظام أو لائحة يتوقّف عليه الإسناد في هذه المسألة، بالاسم الرسمي الكامل كما يُنشر («نظام العمل»، «اللائحة التنفيذية لنظام العمل»، «نظام المعاملات المدنية»). المنصّة تقارن هذه الأسماء بقاعدة المعرفة وتعرض على المستخدم طلب إضافة ما ينقص منها، فاسمٌ ناقص أو مختصَر يُضيّع هذه الفرصة. لا تضع فيه أسماء تخمينية لا تتطلّبها المسألة.`;
@@ -102,6 +103,15 @@ function normalize(
     needs_uploaded_files: hasAttachments && (p.needs_uploaded_files ?? true),
     target_regulations: Array.isArray(p.target_regulations) ? p.target_regulations : [],
     clarifying_questions: Array.isArray(p.clarifying_questions) ? p.clarifying_questions : [],
-    output_format: p.output_format === 'docx' ? 'docx' : type === 'consultation' || type === 'litigation.judgment_analysis' ? 'text' : 'docx',
+    /* `legal_basis` مخرَجُه خريطةُ إسنادٍ عن نصٍّ قائم لا مستندٌ يُصاغ، فيبقى
+       `text` ولو قال المُخطِّط غيره. وبقيّةُ الأنواع على ما كانت. */
+    output_format:
+      type === 'legal_basis'
+        ? 'text'
+        : p.output_format === 'docx'
+          ? 'docx'
+          : type === 'consultation' || type === 'litigation.judgment_analysis'
+            ? 'text'
+            : 'docx',
   };
 }
