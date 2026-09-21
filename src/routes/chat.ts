@@ -4,6 +4,7 @@ import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
 import { retrieve, formatRagContext, type RagResult } from '../lib/rag';
+import { extractAnchors, buildAnchorsBlock, BASIS_PER_ANCHOR, type BasisAnchor } from '../lib/basis';
 import {
   streamClaude,
   webSearchTool,
@@ -153,11 +154,27 @@ app.post('/:conversationId', async (c) => {
   // [2] المُنفِّذ: استرجاع RAG
   let ragContext = '';
   let citations: any[] = [];
-  if (plan.needs_knowledge_base && plan.kb_queries.length) {
+  /** مواضع الاستدلال — تُملأ في خدمة «استدلال نظامي» وحدها. */
+  let anchors: BasisAnchor[] = [];
+  if (plan.needs_knowledge_base) {
     try {
-      const results = await retrieve(c.env, plan.kb_queries, 6);
-      ragContext = formatRagContext(results);
-      citations = results.map(toCitation);
+      /* «استدلال نظامي» يمرّ بتمريرتين، وغيرُه بواحدة.
+         المستندُ كلُّه مسألتُه — عشرةُ دفوعٍ أو عشرون بنداً — وخمسةُ
+         استعلاماتٍ يكتبها المُخطِّط عن الطلب تُغطّي أبرزها وتترك الباقي
+         بلا سند. فتُستخرج مواضعُه أولاً ويُبحث لكلٍّ منها. والتفصيل — مع
+         حدِّ الطول الذي يمنعها في أسئلة المتابعة — في `lib/basis.ts`. */
+      if (plan.consultation_type === 'legal_basis') {
+        const own = attByMessage.get(userMsgId) ?? [];
+        const source = [message, ...own.map((a) => a.parsed_text)].join('\n\n');
+        anchors = await extractAnchors(c.env, source, user.id);
+      }
+
+      const queries = anchors.length ? anchors.map((a) => a.query) : plan.kb_queries;
+      if (queries.length) {
+        const results = await retrieve(c.env, queries, anchors.length ? BASIS_PER_ANCHOR : 6);
+        ragContext = formatRagContext(results);
+        citations = results.map(toCitation);
+      }
     } catch (e: any) {
       // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ:
       // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هنا وحده.
@@ -193,7 +210,12 @@ app.post('/:conversationId', async (c) => {
     ? buildAttachmentsBlock(attByMessage.get(userMsgId)!)
     : '';
 
-  const userContent = `${ragContext}${attachmentsBlock}\n\n${message}`.trim();
+  /* المواضع تُدرَج بعد السياق النظامي وقبل النصّ: هي ما بُحث عنه، ولو لم
+     تُدرَج لبناها النموذج من جديد فجاءت صفوفُ الجدول عن مواضعَ غير التي
+     استُرجعت لها المواد. */
+  const anchorsBlock = anchors.length ? buildAnchorsBlock(anchors) : '';
+
+  const userContent = `${ragContext}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
 
   const messages = [
     ...(history.results ?? [])

@@ -42,6 +42,7 @@ const USAGE_KINDS: Record<string, string> = {
   verify: 'تحقّق الإسناد',
   title: 'صياغة العنوان',
   transcribe: 'التفريغ الصوتي',
+  anchors: 'استخراج مواضع الاستدلال',
 };
 
 export function usageKindLabel(k: string | null | undefined): string {
