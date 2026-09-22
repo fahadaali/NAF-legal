@@ -3,7 +3,7 @@
 import { callClaude, webSearchTool, TRACKING_DOMAINS } from './lib/claude';
 import { notify } from './lib/notify';
 import { dualDate } from './lib/hijri';
-import { embedPending, vectorHealth, vectorCheck } from './lib/legal';
+import { embedPending, vectorHealth, vectorCheck, recoverStaleBatches } from './lib/legal';
 import type { Env } from './types';
 
 /**
@@ -380,5 +380,19 @@ export async function runLegalEmbedding(env: Env): Promise<{
     };
   } catch {
     return { embedded: 0, remaining: 0, purged: 0, missing_vector: 0, stale_vector: 0, orphan_vectors: null };
+  }
+}
+
+// ── ردُّ دفعات الاستيراد المتروكة ──
+//
+// دفعةٌ سكتت وهي تُكتب — متصفّحٌ أُغلق في منتصف الإتمام — تُبقي أنظمتها مجمَّدةً
+// غائبةً عن البحث. وهذه المهمّة تردّها من مؤقّتٍ قصير وحدها، فلا يطول غيابٌ لم
+// يقصده أحد ولا تتكرّر معها مهامُّ الليل. وتبتلع خطأها كأخواتها.
+export async function runImportRecovery(env: Env): Promise<{ rolledBack: number; abandoned: number }> {
+  try {
+    return await recoverStaleBatches(env);
+  } catch (e: any) {
+    console.error('import recovery failed:', e?.message ?? e);
+    return { rolledBack: 0, abandoned: 0 };
   }
 }

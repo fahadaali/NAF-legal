@@ -24,7 +24,7 @@ import clauseRoutes from './routes/clauses';
 import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
 import legalRoutes from './routes/legal';
-import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding } from './cron';
+import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
 import type { Env, Variables } from './types';
@@ -205,6 +205,9 @@ app.get('*', async (c) => {
   return new Response(res.body, res);
 });
 
+/** مؤقّتُ ردّ دفعات الاستيراد المتروكة — ومقابلُه في `wrangler.toml`. */
+const RECOVERY_CRON = '*/10 * * * *';
+
 export default {
   fetch: app.fetch,
 
@@ -218,7 +221,12 @@ export default {
    * وكلُّ واحدةٍ تبتلع خطأها في موضعها أيضاً؛ وهذا حارسٌ ثانٍ على ما قد
    * يُكتب غداً: مهمّةٌ خامسة تُضاف بلا `try` لا تُسقط من قبلها.
    */
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // مؤقّتُ ردّ الدفعات المتروكة قصيرٌ ووحده — لا تُشغَّل معه مهامُّ الليل.
+    if (event.cron === RECOVERY_CRON) {
+      ctx.waitUntil(runImportRecovery(env).then(() => {}));
+      return;
+    }
     ctx.waitUntil(
       Promise.allSettled([
         runTrackingScan(env),

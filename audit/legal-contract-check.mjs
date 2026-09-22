@@ -2459,6 +2459,187 @@ await check('٢٦ · وسببُ غياب المادة عن استدعائها ب
   assert.match(routes, /const reason = await hiddenReason\(c\.env, id\)/, 'مسار المادة لا يسأل عن السبب بالشرط');
 });
 
+// ── ٢٧ · الملف يُكتب كاملاً أو لا يُكتب (§4-٦، §8) ──
+// نظامان: «التاسعة» قائمٌ بأربع مواد، و«العاشرة» جديد. والملف الجديد يغيّر مادتين
+// من التاسعة ويُسقط الرابعة ويضيف خامسة، ويُدخل العاشرة بمادتين.
+const N9 = (o) => v6line({ law_id: 'ninth', law_name: 'نظام التاسعة', retrieval_status: 'نافذ', ...o });
+const N10 = (o) => v6line({ law_id: 'tenth', law_name: 'نظام العاشرة', retrieval_status: 'نافذ', ...o });
+await lib.upsertLegalChunks(env, lib.parseJsonl([
+  N9({ id: 'تاسعة/1', article_no: 1, text: 'يُنشأ سجلٌّ للوسطاء العقاريين تديره الهيئة.' }),
+  N9({ id: 'تاسعة/2', article_no: 2, text: 'لا يزاول الوساطة العقارية إلا مرخَّصٌ له.' }),
+  N9({ id: 'تاسعة/3', article_no: 3, text: 'مدة الترخيص سنةٌ تُجدَّد بطلبٍ من صاحبه.' }),
+  N9({ id: 'تاسعة/4', article_no: 4, text: 'تُلغى الرخصة إذا فقد صاحبها أحد شروطها.' }),
+].join('\n')).rows, { importId: 'imp-9a' });
+const NINTH_V2 = [
+  N9({ id: 'تاسعة/1', article_no: 1, text: 'يُنشأ سجلٌّ إلكترونيٌّ للوسطاء العقاريين تديره الهيئة.' }),
+  N9({ id: 'تاسعة/2', article_no: 2, text: 'لا يزاول الوساطة العقارية إلا مرخَّصٌ له.' }),
+  N9({ id: 'تاسعة/3', article_no: 3, text: 'مدة الترخيص سنتان تُجدَّدان بطلبٍ من صاحبه.' }),
+  N9({ id: 'تاسعة/5', article_no: 5, text: 'تنشر الهيئة قائمة الوسطاء المرخَّصين على موقعها.' }),
+  N10({ id: 'عاشرة/1', article_no: 1, text: 'يسري هذا النظام على عقود التأجير التمويلي.' }),
+  N10({ id: 'عاشرة/2', article_no: 2, text: 'يُسجَّل عقد التأجير التمويلي لدى الجهة المختصة.' }),
+];
+const parsed9 = lib.parseJsonl(NINTH_V2.join('\n'));
+const cols9 = () => q("SELECT * FROM legal_chunks WHERE law_id IN ('ninth','tenth') ORDER BY id")
+  .map(({ embedded_at, ...rest }) => rest);
+const before9 = cols9();
+
+await check('٢٧ · الأجزاء تُجمع جانباً ولا يمسّ القاعدةَ منها شيء', async () => {
+  // جزءان متتابعان، وترتيبُ السطر في الملف محفوظ عبرهما.
+  await lib.stageChunks(env, 'batch-s1', parsed9.rows.slice(0, 3), { filename: 'تاسعة.jsonl', lines: 3, failed: 0 });
+  await lib.stageChunks(env, 'batch-s1', parsed9.rows.slice(3), { filename: 'تاسعة.jsonl', lines: 3, failed: 0 });
+  assert.deepEqual(cols9(), before9, 'الجمعُ كتب في القاعدة');
+  const seqs = q("SELECT id, seq FROM legal_staging WHERE batch_id = 'batch-s1' ORDER BY seq").map((r) => r.id);
+  assert.deepEqual(seqs, parsed9.rows.map((r) => r.id), 'ترتيبُ الملف ضاع بين الجزأين');
+  const b = await lib.getBatch(env, 'batch-s1');
+  assert.equal(b.state, 'staging');
+  assert.equal(b.lines, 6);
+  const plan = await lib.planCommit(env, 'batch-s1');
+  assert.equal(plan.staged, 6);
+  assert.equal(plan.laws, 2);
+  assert.equal(plan.orphans, 1, 'الغائبُ عن الملف لم يُعدّ قبل الكتابة');
+  assert.deepEqual(plan.locked, []);
+});
+
+await check('٢٧ · النظام مجمَّدٌ وهو يُكتب — لا يُقرأ نصفُه، وغيرُه يُقرأ', async () => {
+  const step = await lib.commitStep(env, 'batch-s1', { prune: true, actorId: 'مسؤول', budget: 2 });
+  assert.equal(step.done, false);
+  assert.equal(step.remaining, 4);
+  assert.deepEqual(q('SELECT law_id FROM legal_law_locks').map((r) => r.law_id), ['ninth']);
+  // كُتبت مادتان من أربع: لا البحثُ ولا الاستدعاء يقرأ التاسعة الآن.
+  assert.equal(await lib.getChunkById(env, 'تاسعة/1'), null, 'نصفُ نظامٍ يُقرأ بمعرّفه');
+  assert.equal((await lib.getArticle(env, { lawId: 'ninth', articleNo: '3' })).length, 0, 'نصفُ نظامٍ يُستدعى برقمه');
+  const hits = await lib.searchLegal(env, 'الوساطة العقارية مرخص', { limit: 20, lexicalOnly: true });
+  assert.ok(!hits.some((h) => h.lawId === 'ninth'), 'نصفُ نظامٍ في نتائج البحث');
+  assert.equal((await lib.listLawArticles(env, 'ninth')).articles.length, 0, 'صفحةُ النظام تعرض نصفَه');
+  // وما سواه على حاله.
+  assert.ok((await lib.getChunkById(env, 'سابعة/1')), 'التجميدُ أغاب نظاماً لا يُكتب');
+});
+
+await check('٢٧ · ويعود كاملاً: الجديد والمستبدَل، والغائبُ محذوفٌ مع نظامه، ثم قيدٌ واحد', async () => {
+  const done = await lib.commitStep(env, 'batch-s1', { actorId: 'مسؤول' });
+  assert.equal(done.done, true);
+  assert.equal(done.remaining, 0);
+  assert.equal(done.inserted, 3);
+  assert.equal(done.deleted, 1);
+  assert.deepEqual(q('SELECT * FROM legal_law_locks'), [], 'بقي نظامٌ مجمَّداً بعد الإتمام');
+  assert.deepEqual(q("SELECT * FROM legal_staging WHERE batch_id = 'batch-s1'"), []);
+  assert.match((await lib.getChunkById(env, 'تاسعة/1')).text, /إلكترونيٌّ/);
+  assert.ok(await lib.getChunkById(env, 'تاسعة/5'));
+  assert.ok(await lib.getChunkById(env, 'عاشرة/2'));
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_chunks WHERE id = 'تاسعة/4'")[0].n, 0, 'الغائبُ عن الملف بقي');
+  const gone = q("SELECT origin FROM legal_chunk_versions WHERE chunk_id = 'تاسعة/4' AND import_id = ?", done.import_id);
+  assert.deepEqual(gone.map((r) => r.origin), ['deleted'], 'نصُّ المحذوف لم يدخل سجلّ التحديث');
+  const b = await lib.getBatch(env, 'batch-s1');
+  assert.equal(b.state, 'committed');
+  const rec = (await lib.listImports(env)).find((r) => r.batch_id === 'batch-s1');
+  assert.ok(rec, 'الدفعة المعتمدة لا قيدَ لها في سجلّ الدفعات');
+  assert.equal(rec.inserted, 3);
+  assert.equal(rec.deleted, 1);
+  assert.equal(rec.lines, 6);
+  // ونداءٌ يُعاد بعد الاعتماد لا يكتب شيئاً ولا يقيّد ثانيةً.
+  const again = await lib.commitStep(env, 'batch-s1', { actorId: 'مسؤول' });
+  assert.equal(again.done, true);
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_imports WHERE batch_id = 'batch-s1'")[0].n, 1);
+});
+
+await check('٢٧ · وتعذّرُ الإتمام يردّ القاعدة إلى ما كانت عليه — والمحذوفُ يعود بموضعه', async () => {
+  const pre = cols9();
+  // دفعةٌ تكتب التاسعة كاملةً (وتحذف غائبَها) ثم تتعذّر في العاشرة.
+  const v3 = lib.parseJsonl([
+    N9({ id: 'تاسعة/1', article_no: 1, text: 'نصٌّ ثالثٌ للمادة الأولى لن يبقى.' }),
+    N9({ id: 'تاسعة/2', article_no: 2, text: 'لا يزاول الوساطة العقارية إلا مرخَّصٌ له.' }),
+    N9({ id: 'تاسعة/3', article_no: 3, text: 'مدة الترخيص سنتان تُجدَّدان بطلبٍ من صاحبه.' }),
+    N9({ id: 'تاسعة/6', article_no: 6, text: 'مادةٌ مُدرَجة في دفعةٍ ستُردّ.' }),
+    N10({ id: 'عاشرة/1', article_no: 1, text: 'نصٌّ جديد للعاشرة لن يبقى.' }),
+    N10({ id: 'عاشرة/2', article_no: 2, text: 'يُسجَّل عقد التأجير التمويلي لدى الجهة المختصة.' }),
+  ].join('\n'));
+  await lib.stageChunks(env, 'batch-s2', v3.rows, { filename: 'ثالثة.jsonl', lines: 6, failed: 0 });
+  // سطرٌ معطوب فيما جُمع — يُرمى وسط الكتابة كما يُرمى أيُّ عطبٍ في D1.
+  q("UPDATE legal_staging SET row_json = '{' WHERE batch_id = 'batch-s2' AND id = 'عاشرة/2'");
+  const s2 = await lib.commitStep(env, 'batch-s2', { prune: true, actorId: 'مسؤول', budget: 4 });
+  assert.equal(s2.deleted, 1, 'التاسعة لم تُكتب كاملةً قبل التعذّر — الفحص لا يفحص الحذف');
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_chunks WHERE id = 'تاسعة/5'")[0].n, 0);
+  let thrown = null;
+  try {
+    await lib.commitStep(env, 'batch-s2', { actorId: 'مسؤول' });
+  } catch (e) {
+    thrown = e;
+  }
+  assert.ok(thrown, 'السطر المعطوب لم يُرمَ — الفحص لا يفحص الردّ');
+  assert.equal((await lib.getBatch(env, 'batch-s2')).state, 'committing');
+  // وصورُها باقيةٌ وهي تُكتب: في الجدول دفعاتٌ «أحدث» منها بساعةٍ متقدّمة (٢٢)،
+  // والتقليم بالوقت وحده كان يُسقط صورَ هذه فلا يبقى ما يُردّ منه.
+  assert.ok(q("SELECT COUNT(*) AS n FROM legal_snapshots WHERE batch_id = 'batch-s2'")[0].n >= 4,
+    'قُلّمت صورُ دفعةٍ في منتصف كتابتها');
+  const r = await lib.rollbackBatch(env, 'batch-s2', thrown.message);
+  assert.ok(r.restored >= 4 && r.removed === 1, JSON.stringify(r));
+  assert.deepEqual(cols9(), pre, 'القاعدة لم تعد إلى ما كانت عليه');
+  const b = await lib.getBatch(env, 'batch-s2');
+  assert.equal(b.state, 'rolled_back');
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_chunk_versions WHERE import_id = ?", b.import_id)[0].n, 0,
+    'سجلّ التحديث يؤرّخ لدفعةٍ لم تقع');
+  for (const t of ['legal_law_locks', 'legal_staging', 'legal_batch_ids', 'legal_snapshots']) {
+    assert.equal(q(`SELECT COUNT(*) AS n FROM ${t} WHERE batch_id = 'batch-s2'`)[0].n, 0, `بقي أثرُ الدفعة في ${t}`);
+  }
+  // والفهرسُ اللفظي يقرأ ما عاد لا ما رُدّ.
+  const hits = await lib.searchLegal(env, 'تنشر الهيئة قائمة الوسطاء', { limit: 10, lexicalOnly: true });
+  assert.ok(hits.some((h) => h.id === 'تاسعة/5'), 'المحذوفُ عاد ولا يجده البحث');
+  assert.equal((await lib.searchLegal(env, 'نصٌّ ثالثٌ للمادة الأولى', { limit: 10, lexicalOnly: true }))
+    .filter((h) => h.lawId === 'ninth').length, 0, 'البحث يقرأ ما رُدّ');
+});
+
+await check('٢٧ · ولا يُكتب نظامٌ تكتبه دفعةٌ أخرى، ولا حذفَ مع أسطرٍ تُخطّيت', async () => {
+  await lib.stageChunks(env, 'batch-s3', lib.parseJsonl(N10({ id: 'عاشرة/1', article_no: 1,
+    text: 'نصٌّ لا يُكتب.' })).rows, { lines: 1, failed: 0 });
+  q("INSERT INTO legal_law_locks (law_id, batch_id, since) VALUES ('tenth', 'batch-other', ?)", Date.now());
+  try {
+    await assert.rejects(lib.commitStep(env, 'batch-s3', { actorId: 'مسؤول' }), (e) => e.code === 'locked');
+    assert.equal((await lib.getBatch(env, 'batch-s3')).state, 'staging', 'الرفضُ بدأ الكتابة');
+    assert.doesNotMatch(q("SELECT text FROM legal_chunks WHERE id = 'عاشرة/1'")[0].text, /لا يُكتب/, 'كُتب نظامٌ تكتبه دفعةٌ أخرى');
+  } finally {
+    q("DELETE FROM legal_law_locks WHERE batch_id = 'batch-other'");
+  }
+  await lib.stageChunks(env, 'batch-s4', lib.parseJsonl(N10({ id: 'عاشرة/9', article_no: 9, text: 'مادة.' })).rows,
+    { lines: 3, failed: 2 });
+  await assert.rejects(lib.commitStep(env, 'batch-s4', { prune: true }), (e) => e.code === 'skipped');
+  assert.equal((await lib.getBatch(env, 'batch-s4')).state, 'staging');
+  await lib.rollbackBatch(env, 'batch-s3', 'aborted');
+  await lib.rollbackBatch(env, 'batch-s4', 'aborted');
+  assert.equal((await lib.getBatch(env, 'batch-s4')).state, 'abandoned');
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_staging WHERE batch_id IN ('batch-s3','batch-s4')")[0].n, 0);
+});
+
+await check('٢٧ · والدفعة المتروكة تُردّ من المؤقّت، وما جُمع وتُرك يُسقط', async () => {
+  const pre = cols9();
+  await lib.stageChunks(env, 'batch-s5', lib.parseJsonl(NINTH_V2.slice(0, 2).join('\n')).rows, { lines: 2, failed: 0 });
+  await lib.commitStep(env, 'batch-s5', { actorId: 'مسؤول', budget: 1 });
+  assert.deepEqual(q('SELECT law_id FROM legal_law_locks').map((r) => r.law_id), ['ninth']);
+  await lib.stageChunks(env, 'batch-s6', lib.parseJsonl(NINTH_V2.slice(4).join('\n')).rows, { lines: 2, failed: 0 });
+  // لم يمضِ الوقت: لا يُردّ شيء.
+  assert.deepEqual(await lib.recoverStaleBatches(env), { rolledBack: 0, abandoned: 0 });
+  // مضى يومٌ على الجمع، وربعُ ساعةٍ على الكتابة الساكتة.
+  const later = Date.now() + lib.STAGING_TTL_MS + 1000;
+  assert.deepEqual(await lib.recoverStaleBatches(env, later), { rolledBack: 1, abandoned: 1 });
+  assert.equal((await lib.getBatch(env, 'batch-s5')).state, 'rolled_back');
+  assert.equal((await lib.getBatch(env, 'batch-s6')).state, 'abandoned');
+  assert.deepEqual(q('SELECT * FROM legal_law_locks'), [], 'نظامٌ بقي مجمَّداً بعد الردّ');
+  assert.deepEqual(cols9(), pre);
+});
+
+await check('٢٧ · والمسار يجمع ويُتمّ ويُلغي، والمؤقّت القصير وحده', () => {
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /c\.req\.query\('stage'\) === '1'[\s\S]{0,400}stageChunks\(/, '`/import` لا يجمع');
+  assert.match(routes, /app\.post\('\/commit', requireAdmin/);
+  assert.match(routes, /app\.post\('\/abort', requireAdmin/);
+  assert.match(routes, /rollbackBatch\(c\.env, batchId, reason\)/, 'تعذّرُ الإتمام لا يُردّ');
+  const index = readFileSync(path.join(ROOT, 'src', 'index.ts'), 'utf8');
+  const toml = readFileSync(path.join(ROOT, 'wrangler.toml'), 'utf8');
+  const cron = index.match(/const RECOVERY_CRON = '([^']+)'/)?.[1];
+  assert.ok(cron && toml.includes(`"${cron}"`), 'مؤقّتُ الردّ غير مُعلَنٍ في wrangler.toml');
+  assert.match(index, /event\.cron === RECOVERY_CRON\) \{\s*ctx\.waitUntil\(runImportRecovery\(env\)[\s\S]{0,40}return;/,
+    'مؤقّتُ الردّ يُشغّل مهامَّ الليل معه');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

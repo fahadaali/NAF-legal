@@ -27,6 +27,14 @@ import {
   listReviewKinds,
   listBatchOrphans,
   deleteOrphans,
+  stageChunks,
+  planCommit,
+  commitStep,
+  rollbackBatch,
+  recoverStaleBatches,
+  getBatch,
+  BatchError,
+  BATCH_MESSAGES,
   listImports,
   listRevertableBatches,
   planRevert,
@@ -144,6 +152,31 @@ app.post('/import', requireAdmin, async (c) => {
   }
   if (!parsed.rows.length) {
     return c.json({ ...report, ok: false, written: false, error: 'لا سطر صالح في الملف' }, 422);
+  }
+
+  /* ── `stage=1`: يُجمع الجزء جانباً ولا يُكتب (§4-٦، §8) ──
+     الملف يُكتب كاملاً عند `/commit` أو لا يُكتب. والجزء فُحص أعلاه بالفحص نفسه،
+     فما يُجمع هو ما كان سيُكتب — وتقريره كتقرير الكتابة إلا ما لا يُعرف قبلها:
+     الجديد والمستبدَل والمؤرشَف. */
+  if (c.req.query('stage') === '1') {
+    const stageBatch = c.req.query('batch');
+    if (!stageBatch) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
+    await recoverStaleBatches(c.env);
+    try {
+      const { staged } = await stageChunks(c.env, stageBatch, parsed.rows, {
+        filename: filename || null,
+        sha256: c.req.query('sha256') || null,
+        actorId: c.get('user').id,
+        correction,
+        partial,
+        lines: parsed.total,
+        failed: parsed.errors.length,
+      });
+      return c.json({ ...report, ok: true, written: false, staged, batch: stageBatch });
+    } catch (e) {
+      if (e instanceof BatchError) return c.json({ ...report, ok: false, written: false, error: e.message }, 409);
+      throw e;
+    }
   }
 
   // استبدال لا إضافة: المفتاح `id`. وما تغيّر يُؤرشَف قبل أن يُكتب فوقه.
@@ -268,6 +301,73 @@ app.post('/finalize', requireAdmin, async (c) => {
     .run();
 
   return c.json({ ok: true, applied: true, deleted, orphans });
+});
+
+/**
+ * إتمامُ دفعةٍ جُمعت بـ`/import?stage=1` — الملف يُكتب كاملاً أو لا يُكتب.
+ *
+ * بلا `apply=1` يُردّ ما سيقع: كم يُكتب، وكم نظاماً، وكم في القاعدة من أنظمته لم
+ * يرد فيه — ومنه سؤالُ الحذف قبل الكتابة. و`apply=1` يكتب خطوةً (نظاماً نظاماً،
+ * وكلُّ نظامٍ مجمَّدٌ وهو يُكتب)، ويُنادى حتى يعود `done`. و`prune=1` يحذف ما غاب
+ * مع كل نظام، ويُرفض على ملفٍّ تُخطّيت منه أسطر كما في `/finalize`.
+ *
+ * وما تعذّر في أثناء الكتابة يُردّ كلُّه في النداء نفسه: القاعدة إمّا على ما كانت
+ * أو على ما في الملف كلِّه.
+ */
+app.post('/commit', requireAdmin, async (c) => {
+  const batchId = c.req.query('batch') ?? '';
+  if (!batchId) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
+  await recoverStaleBatches(c.env);
+
+  if (!c.req.query('apply')) {
+    const plan = await planCommit(c.env, batchId);
+    if (!plan || plan.state === 'rolled_back' || plan.state === 'abandoned') {
+      return c.json({ ok: false, error: BATCH_MESSAGES.missing }, 404);
+    }
+    return c.json({ ok: true, ...plan });
+  }
+
+  try {
+    const progress = await commitStep(c.env, batchId, {
+      prune: c.req.query('prune') === '1',
+      actorId: c.get('user').id,
+    });
+    if (progress.done) {
+      const batch = await getBatch(c.env, batchId);
+      await audit(c, 'legal.import', progress.import_id ?? batchId, {
+        batch: batchId, filename: batch?.filename, lines: batch?.lines, inserted: progress.inserted,
+        updated: progress.updated, archived: progress.archived, superseded: progress.superseded,
+        deleted: progress.deleted, failed: batch?.failed, kind: batch?.kind, staged: true,
+      });
+      // التضمين بعد الردّ، كما في الكتابة المباشرة — وما لم يلحق يصرّفه الـCron.
+      c.executionCtx.waitUntil(embedPending(c.env, IMPORT_EMBED_BUDGET).then(() => {}));
+    }
+    return c.json({ ok: true, ...progress });
+  } catch (e) {
+    // رُفض قبل أن يُكتب شيء: السبب يُقال ولا يُردّ شيء — الدفعة على حالها.
+    const batch = await getBatch(c.env, batchId);
+    if (e instanceof BatchError && batch?.state !== 'committing') {
+      return c.json({ ok: false, error: e.message, code: e.code }, e.code === 'missing' ? 404 : 409);
+    }
+    const reason = e instanceof Error ? e.message : String(e);
+    console.error(`legal commit ${batchId} failed:`, reason);
+    // تعذّر في أثناء الكتابة: يُردّ ما كُتب. وإن تعذّر الردُّ نفسه بقيت الدفعة
+    // «تُكتب» فيردّها المؤقّت — ولا يُقال «أُعيدت» عن ردٍّ لم يتمّ.
+    await rollbackBatch(c.env, batchId, reason);
+    await audit(c, 'legal.import_rolled_back', batchId, { reason });
+    return c.json({ ok: false, rolled_back: true, error: BATCH_MESSAGES.rolledBack }, 500);
+  }
+});
+
+/**
+ * إلغاءُ دفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ. ولا أثرَ لدفعةٍ اعتُمدت —
+ * ردُّها بعد الاعتماد من `/revert` نظاماً نظاماً.
+ */
+app.post('/abort', requireAdmin, async (c) => {
+  const batchId = c.req.query('batch') ?? '';
+  if (!batchId) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
+  const result = await rollbackBatch(c.env, batchId, 'aborted');
+  return c.json({ ok: true, ...result });
 });
 
 /**
