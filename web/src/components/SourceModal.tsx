@@ -24,6 +24,8 @@ function articleNoOf(c: Citation): string | undefined {
 
 /** هل في الاستشهاد ما يُفتح به؟ الشارة تصير زرّاً حين يكون الجواب نعم. */
 export function isOpenableCitation(c: Citation): boolean {
+  // المقطع الخارجيّ يحمل نصَّه، فلا يحتاج ما يُجلب به.
+  if (c.source === 'external') return !!c.text;
   if (c.source === 'document') return false;
   if (c.id) return true;
   return !!(articleNoOf(c) && (c.lawId || c.title));
@@ -53,6 +55,11 @@ export default function SourceModal({ citation, onClose }: { citation: Citation;
     let live = true;
     setArticles(null);
     setError(null);
+
+    /* المقطع الخارجيّ لا يُجلب: نصُّه وصل مع الاستشهاد وليس في قاعدتنا أصلاً.
+       وبدون هذا الحرس تُنادى `/api/legal/article` بعنوان كتابٍ فقهيّ فتردّ
+       «المادة غير موجودة» — خطأٌ يُقرأ عطلاً وهو ليس بعطل. */
+    if (citation.source === 'external') return;
 
     const articleNo = articleNoOf(citation);
     const by = citation.id
@@ -103,7 +110,11 @@ export default function SourceModal({ citation, onClose }: { citation: Citation;
       <div className="modal-card source-card" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">
-            <Icon.officialSource size={ICON_SM} aria-hidden /> المصدر
+            {citation.source === 'external' ? (
+              <><Icon.fiqhGrounding size={ICON_SM} aria-hidden /> التأصيل الفقهي</>
+            ) : (
+              <><Icon.officialSource size={ICON_SM} aria-hidden /> المصدر</>
+            )}
           </span>
           <button className="modal-close" onClick={onClose} title="إغلاق" aria-label="إغلاق">
             <Icon.close size={ICON_SM} aria-hidden />
@@ -115,13 +126,28 @@ export default function SourceModal({ citation, onClose }: { citation: Citation;
             <h3>
               <bdi>{lawTitle}</bdi>
             </h3>
-            <LawMeta parts={[instrument, first?.authority ?? citation.authority, issued]} />
+            {citation.source === 'external' ? (
+              <LawMeta parts={[citation.ref, citation.sourceLabel]} />
+            ) : (
+              <LawMeta parts={[instrument, first?.authority ?? citation.authority, issued]} />
+            )}
           </div>
 
           {/* وثيقةٌ مرفوعة لا مادةٌ مستوردة: لا نصَّ لها في المحتوى النظامي
               ولا صفحةَ مصدرٍ رسمية، ويُقال ذلك ولا يُترك القارئ أمام نافذةٍ
               فارغة يظنّها عطلاً. */}
-          {citation.source === 'document' ? (
+          {citation.source === 'external' ? (
+            <>
+              {/* الحاشيةُ تُقال حيث تُقرأ كما تُقال حيث تُرسَل: كلامُ المحقِّق
+                  لا المصنِّف، ونسبتُه إلى المؤلف خطأٌ علميّ. */}
+              {citation.section === 'حاشية' && (
+                <p className="legal-notice-meta">
+                  هذا المقطع من الحاشية، وهو كلام المحقِّق لا المصنِّف
+                </p>
+              )}
+              <p className="source-excerpt">{citation.text}</p>
+            </>
+          ) : citation.source === 'document' ? (
             <p className="legal-notice-meta">
               هذا المصدر وثيقةٌ مرفوعة إلى قاعدة المعرفة{citation.ref ? <> — <bdi>{citation.ref}</bdi></> : null}
             </p>
@@ -139,7 +165,10 @@ export default function SourceModal({ citation, onClose }: { citation: Citation;
         {sourceUrl ? (
           <div className="modal-foot">
             <a className="btn-sm primary" href={sourceUrl} target="_blank" rel="noreferrer">
-              <Icon.externalLink size={ICON_SM} aria-hidden /> المصدر في بوابة هيئة الخبراء
+              <Icon.externalLink size={ICON_SM} aria-hidden />{' '}
+              {citation.source === 'external'
+                ? `المصدر في ${citation.sourceLabel ?? 'الموقع'}`
+                : 'المصدر في بوابة هيئة الخبراء'}
             </a>
           </div>
         ) : null}

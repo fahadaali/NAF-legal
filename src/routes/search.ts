@@ -7,12 +7,27 @@
 // والاسترجاع للمحادثة يبقى هجيناً كما هو: تلك خدمةٌ أخرى، والبحث المباشر
 // شيء والاستشهاد في إجابةٍ مولَّدة شيء آخر.
 //
+// ── وقد صار للدلالة بابٌ يُطرق، ولم تصر الافتراض ──
+//
+// `semantic=1` يُفعّل الترتيب الدلاليّ. واللفظيُّ يبقى الافتراض: فوريٌّ بلا
+// نداء نموذج، وأدقُّ حين يُعرف اللفظ — من يبحث عن رقم مادةٍ يحفظه لا يريد
+// تقريباً بالمعنى. فالخيار ظاهرٌ يُطلب، لا سلوكٌ يُبدَّل من تحت القارئ.
+//
+// ── والمصادر الخارجية مجموعاتٌ على حدة ──
+//
+// لكلِّ مصدرٍ مجموعتُه باسمه وحالتِه. ولا تُدمج في قائمةٍ واحدة: القائمة
+// حينئذٍ لا تظهر حتى يردّ أبطأ مصدر، وقد تزاحم الموادَّ النظامية نتائجُ
+// فقهية في منصّةٍ يحكمها النظام.
+//
 // والملكية شرطٌ في كل استعلام: المحادثات والمخرجات تخصّ صاحبها وحده،
 // وقاعدة المعرفة مشتركة. ولو غاب الشرط لقرأ كلُّ مستخدمٍ محادثات غيره.
 import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { arabicGlobPatterns } from '../lib/arabic';
 import { searchLegal } from '../lib/legal';
+import { enabledSources } from '../lib/sources';
+import { searchSources, type SourceOutcome } from '../lib/external';
+import { rerankByMeaning } from '../lib/rerank';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -56,10 +71,11 @@ app.get('/', async (c) => {
      أخرى وشارةُ القضية مضاءة. والحصر هنا لا بعد القصّ: ترشيحُ خمس عشرة
      نتيجةً بعد اختيارها يعطي صفحةً ناقصة أو فارغة. */
   const folder = c.req.query('folder')?.trim() || null;
-  if (!q) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, mode: 'empty' });
+  const semantic = c.req.query('semantic') === '1';
+  if (!q) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, external: [], mode: 'empty' });
 
   const patterns = arabicGlobPatterns(q);
-  if (!patterns.length) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, mode: 'empty' });
+  if (!patterns.length) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, external: [], mode: 'empty' });
 
   const wants = (s: string) => scope === 'all' || scope === s;
   /* شرطُ القضية ومعامِله معاً — فلا يفترقان عند البناء.
@@ -124,7 +140,40 @@ app.get('/', async (c) => {
     documents = rows.results ?? [];
   }
 
-  return c.json({ chats, outputs, kb: { articles, documents }, mode: 'lexical' });
+  /* ── المصادر الخارجية ──
+     تُنادى متى لم يُضيَّق النطاق إلى موضعٍ داخليّ. و`scope` قد يكون معرّف
+     مصدرٍ بعينه، فيُنادى وحده.
+
+     ولا شيء من هذا يقع إن لم يكن ثمّة مصدرٌ مربوط — وهي الحال اليوم. */
+  let external: SourceOutcome[] = [];
+  const internalScopes = ['all', 'chats', 'outputs', 'kb'];
+  if (scope === 'all' || !internalScopes.includes(scope)) {
+    try {
+      const all = await enabledSources(c.env);
+      const picked = scope === 'all' ? all : all.filter((s) => s.id === scope);
+      if (picked.length) {
+        external = await searchSources(c.env, picked, q);
+        if (semantic) {
+          // الترتيب داخل كلّ مصدرٍ على حدة: الدرجات لا تُقارن عبر المصادر،
+          // والمجموعات معروضةٌ منفصلة أصلاً فلا حاجة إلى ترتيبٍ جامع.
+          external = await Promise.all(
+            external.map(async (o) => ({ ...o, hits: await rerankByMeaning(c.env, q, o.hits) }))
+          );
+        }
+      }
+    } catch (e: any) {
+      // البحث الداخليّ نجح: لا يُفقده عطلُ مصدرٍ خارجيّ.
+      console.error('external search failed:', e?.message ?? e);
+    }
+  }
+
+  return c.json({
+    chats,
+    outputs,
+    kb: { articles, documents },
+    external,
+    mode: semantic ? 'semantic' : 'lexical',
+  });
 });
 
 export default app;

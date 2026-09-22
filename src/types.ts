@@ -32,6 +32,11 @@ export interface Env {
   JWT_SECRET: string;
   // سرّ المنصة لدى المركز — عبر `wrangler secret` حصراً
   AUTH_CLIENT_SECRET: string;
+  /* رموز خوادم MCP — خريطة JSON `{"turath":"…"}`، سرٌّ واحد لا سرٌّ لكل
+     مصدر: `Env` نوعٌ مكتوب، فمصدرٌ جديد كان سيقتضي حقلاً جديداً هنا ونشراً
+     جديداً — وهو عكس المقصود من جدول `external_sources`. واختياريّ: خادمٌ
+     عامّ لا يطلب رمزاً. */
+  MCP_TOKENS?: string;
   // اختيارية: لتفعيل إشعارات البريد
   RESEND_API_KEY?: string;
   NOTIFY_FROM?: string;
@@ -76,6 +81,9 @@ export interface PlannerOutput {
   internet_queries: string[];
   needs_uploaded_files: boolean;
   target_regulations: string[];
+  /** تدعيمٌ فقهيّ من المصادر الخارجية — تأصيلٌ لا إسناد. */
+  needs_fiqh_sources: boolean;
+  fiqh_queries: string[];
   clarifying_questions: string[];
   output_format: 'text' | 'docx';
 }

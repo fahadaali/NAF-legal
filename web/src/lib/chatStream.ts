@@ -37,6 +37,8 @@ export interface ChatStream {
   messageId: string;
   text: string;
   citations?: Citation[];
+  /** التأصيل الفقهي — صفٌّ ثانٍ لا يُخلط بالمصادر. */
+  fiqhCitations?: Citation[];
   clarifying?: boolean;
   verification?: { verified: boolean; unsupported: string[]; note: string } | null;
   missingRegulations?: string[];
@@ -204,6 +206,7 @@ async function run(conversationId: string, opts: StartChatOptions) {
           searching: false,
           streaming: true,
           citations: meta.citations,
+          fiqhCitations: meta.fiqhCitations,
           clarifying: meta.clarifying,
         });
       },
@@ -215,6 +218,7 @@ async function run(conversationId: string, opts: StartChatOptions) {
           streaming: false,
           searching: false,
           citations: meta.citations,
+          fiqhCitations: meta.fiqhCitations,
           clarifying: meta.clarifying,
         });
       },

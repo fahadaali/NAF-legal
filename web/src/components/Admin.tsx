@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { api, ConsultConfig, DocTemplate, FieldDef, FieldType, LegalStats, RegulationRequest } from '../lib/api';
+import { api, AdminSource, ConsultConfig, DocTemplate, FieldDef, FieldType, LegalStats, RegulationRequest } from '../lib/api';
 import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import { LegalImport } from './LegalImport';
@@ -16,10 +16,11 @@ import { labelIfKnown } from '../lib/consultations';
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
 
-type Tab = 'kb' | 'requests' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
+type Tab = 'kb' | 'sources' | 'requests' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
 
 const TABS: [Tab, string][] = [
   ['kb', 'قاعدة المعرفة'],
+  ['sources', 'المصادر الخارجية'],
   ['requests', 'طلبات الأنظمة'],
   ['tracking', 'تتبّع الأنظمة'],
   ['news', 'خلاصة الأخبار'],
@@ -64,6 +65,7 @@ export default function Admin() {
           ))}
         </div>
         {tab === 'kb' && <KbTab />}
+        {tab === 'sources' && <SourcesTab />}
         {tab === 'requests' && <RequestsTab onChange={loadPending} />}
         {tab === 'tracking' && <TrackingTab />}
         {tab === 'news' && <NewsTab />}
@@ -1522,5 +1524,112 @@ function AuditTab() {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/* ══ المصادر الخارجية ══
+ *
+ * الغرضُ من الجدول أن يُربط خادمٌ بلا نشرٍ جديد — فالشاشة هي بابُه.
+ *
+ * **والرمز لا يُعرض ولا يُدخَل هنا.** الصفّ يحمل اسم مفتاحه في السرّ
+ * `MCP_TOKENS` لا قيمته، والقيمةُ تُضبط بـ`wrangler secret put`. فشاشةٌ
+ * تعرض رمز وصولٍ تجعله يُقرأ فوق كتفٍ ويُلتقط في صورة.
+ */
+function SourcesTab() {
+  const [rows, setRows] = useState<AdminSource[]>([]);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const load = () => api.adminSources().then((r) => setRows(r.sources)).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const patch = (id: string, change: Partial<AdminSource>) =>
+    setRows((list) => list.map((r) => (r.id === id ? { ...r, ...change } : r)));
+
+  const save = async (r: AdminSource) => {
+    setBusy(r.id); setMsg('');
+    try {
+      await api.saveSource(r.id, {
+        label: r.label, endpoint: r.endpoint, role: r.role, enabled: r.enabled,
+        search_tool: r.searchTool, args_json: JSON.stringify(r.args),
+        query_field: r.queryField, limit_field: r.limitField, max_results: r.maxResults, timeout_ms: r.timeoutMs,
+        token_key: r.tokenKey,
+      });
+      setMsg(`تم الحفظ: ${r.label}`);
+      await load();
+    } catch (e: any) {
+      setMsg(e.message ?? 'تعذّر الحفظ');
+    } finally { setBusy(''); }
+  };
+
+  const test = async (r: AdminSource) => {
+    setBusy(r.id); setMsg('');
+    try {
+      const res = await api.testSource(r.id);
+      setMsg(res.ok ? `${r.label}: مربوط — ${res.hits} نتيجة` : `${r.label}: ${res.error ?? 'تعذّر الوصول إلى المصدر'}`);
+      await load();
+    } catch (e: any) {
+      setMsg(e.message ?? 'تعذّر الفحص');
+    } finally { setBusy(''); }
+  };
+
+  return (
+    <div className="admin-panel">
+      <p className="muted-line">
+        خوادم الكتب التي تُقرأ منها للتأصيل. و«مفتاح الرمز» اسمُ المفتاح داخل السرّ لا قيمتُه —
+        والقيمة تُضبط بـ<bdi>wrangler secret put MCP_TOKENS</bdi> ولا تُعرض هنا. واتركه فارغاً لخادمٍ عامّ.
+      </p>
+      {msg && <div className="notice-line">{msg}</div>}
+      {rows.map((r) => (
+        <div className="cfg-card" key={r.id}>
+          <h4>
+            <Icon.externalSource size={ICON_SM} aria-hidden /> <bdi>{r.label}</bdi>
+            <span className={`pill ${r.lastStatus === 'ok' ? 'ok' : 'pending'}`}>
+              {r.lastStatus === 'ok' ? 'مربوط' : r.lastStatus === 'unconfigured' ? 'غير مربوط' : r.lastStatus ? 'تعذّر الوصول إلى المصدر' : 'لم يُفحص'}
+            </span>
+          </h4>
+          {r.lastError && <p className="legal-notice-meta"><bdi>{r.lastError}</bdi></p>}
+
+          <div className="field">
+            <label htmlFor={`ep-${r.id}`}>عنوان الخادم</label>
+            <input id={`ep-${r.id}`} value={r.endpoint ?? ''} placeholder="https://…/mcp"
+              onChange={(e) => patch(r.id, { endpoint: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`tool-${r.id}`}>أداة البحث</label>
+            <input id={`tool-${r.id}`} value={r.searchTool} onChange={(e) => patch(r.id, { searchTool: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`qf-${r.id}`}>حقل الاستعلام</label>
+            <input id={`qf-${r.id}`} value={r.queryField} onChange={(e) => patch(r.id, { queryField: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`lf-${r.id}`}>حقل السقف</label>
+            <input id={`lf-${r.id}`} value={r.limitField ?? ''} placeholder="اتركه فارغاً إن لم تقبل الأداة سقفاً"
+              onChange={(e) => patch(r.id, { limitField: e.target.value || null })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`tk-${r.id}`}>مفتاح الرمز</label>
+            <input id={`tk-${r.id}`} value={r.tokenKey ?? ''} placeholder="اتركه فارغاً لخادمٍ عامّ لا يطلب رمزاً"
+              onChange={(e) => patch(r.id, { tokenKey: e.target.value || null })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`role-${r.id}`}>الدور</label>
+            <select id={`role-${r.id}`} value={r.role} onChange={(e) => patch(r.id, { role: e.target.value as 'fiqh' | 'legal' })}>
+              <option value="fiqh">التأصيل الفقهي</option>
+              <option value="legal">سياق نظامي</option>
+            </select>
+          </div>
+          <label className="search-semantic">
+            <input type="checkbox" checked={r.enabled} onChange={(e) => patch(r.id, { enabled: e.target.checked })} />
+            مفعّل
+          </label>
+          <div className="modal-foot">
+            <button className="btn-sm" onClick={() => test(r)} disabled={busy === r.id}>فحص</button>
+            <button className="btn-sm primary" onClick={() => save(r)} disabled={busy === r.id}>حفظ</button>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

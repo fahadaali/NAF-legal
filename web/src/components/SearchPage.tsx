@@ -1,16 +1,19 @@
 // البحث في المنصة — محادثاتك ومخرجاتك وقاعدة المعرفة.
 //
-// لفظيٌّ بلا ذكاء اصطناعي: تُطابَق كلماتك كما كتبتَها، فلا انتظارَ نموذجٍ
-// ولا كلفةَ نداء. والاسترجاع في المحادثة يبقى كما هو — ذاك استشهادٌ في
-// إجابةٍ مولَّدة، وهذا بحثٌ مباشر.
+// لفظيٌّ بالافتراض: تُطابَق كلماتك كما كتبتَها، فلا انتظارَ نموذجٍ ولا كلفةَ
+// نداء. و«بحث دلالي» خيارٌ يُطلب لا سلوكٌ يُبدَّل — من يبحث عن رقم مادةٍ
+// يحفظه لا يريد تقريباً بالمعنى. والاسترجاع في المحادثة يبقى كما هو: ذاك
+// استشهادٌ في إجابةٍ مولَّدة، وهذا بحثٌ مباشر.
+//
+// والمصادر الخارجية مجموعاتٌ على حدة بأسمائها وحالاتها، وترتيبُ العرض
+// يضع موادَّ الأنظمة أولاً: شاشةُ منصّةٍ سعودية يتصدّرها النظام.
 import { useEffect, useState } from 'react';
-import { api, type PlatformSearch } from '../lib/api';
+import { api, type PlatformSearch, type ExternalGroup } from '../lib/api';
 import { formatDate } from '../lib/format';
+import { Icon, ICON_SM } from '../lib/icons';
 import { ArticleFlags, ArticleNotices } from './LegalArticleView';
 
-type Scope = 'all' | 'chats' | 'outputs' | 'kb';
-
-const SCOPES: [Scope, string][] = [
+const INTERNAL_SCOPES: [string, string][] = [
   ['all', 'الكل'],
   ['chats', 'المحادثات'],
   ['outputs', 'المخرجات'],
@@ -19,9 +22,14 @@ const SCOPES: [Scope, string][] = [
 
 export default function SearchPage({ initial, onOpenConversation }: { initial: string; onOpenConversation: (id: string) => void }) {
   const [q, setQ] = useState(initial);
-  const [scope, setScope] = useState<Scope>('all');
+  const [scope, setScope] = useState<string>('all');
+  const [semantic, setSemantic] = useState(false);
   const [result, setResult] = useState<PlatformSearch | null>(null);
   const [busy, setBusy] = useState(false);
+  /* رقاقاتُ المصادر تُبنى ممّا ردّه البحث لا من قائمةٍ ثابتة: مصدرٌ يُضاف من
+     لوحة الإدارة تظهر رقاقتُه بلا نشرٍ جديد، ومصدرٌ يُعطَّل تختفي. وتُحفظ بين
+     الاستعلامات لأن حصرَ النطاق في مصدرٍ بعينه يُخرج البقيّةَ من الردّ. */
+  const [known, setKnown] = useState<[string, string][]>([]);
 
   useEffect(() => {
     if (!q.trim()) {
@@ -32,16 +40,30 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
     const t = setTimeout(() => {
       setBusy(true);
       api
-        .search(q, scope)
-        .then(setResult)
+        .search(q, scope, undefined, semantic)
+        .then((r) => {
+          setResult(r);
+          if (r.external?.length) {
+            setKnown((prev) => {
+              const map = new Map(prev);
+              for (const g of r.external) map.set(g.sourceId, g.sourceLabel);
+              return [...map.entries()];
+            });
+          }
+        })
         .catch(() => setResult(null))
         .finally(() => setBusy(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [q, scope]);
+  }, [q, scope, semantic]);
 
   const empty =
-    result && !result.chats.length && !result.outputs.length && !result.kb.articles.length && !result.kb.documents.length;
+    result &&
+    !result.chats.length &&
+    !result.outputs.length &&
+    !result.kb.articles.length &&
+    !result.kb.documents.length &&
+    !(result.external ?? []).some((g) => g.hits.length);
 
   return (
     <div className="admin-wrap">
@@ -57,13 +79,20 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
           />
         </div>
 
-        <div className="intake-toggle">
-          {SCOPES.map(([s, label]) => (
+        <div className="intake-toggle wrap">
+          {[...INTERNAL_SCOPES, ...known].map(([s, label]) => (
             <button key={s} className={`seg ${scope === s ? 'on' : ''}`} onClick={() => setScope(s)}>
               {label}
             </button>
           ))}
         </div>
+
+        {/* الدلاليُّ يُطلب ولا يُفرض: يمرّ بنموذج تضمين فيأخذ زمناً، ولا يفيد
+            من يبحث عن رقم مادةٍ يعرفه. والاسم «دلالي» لا «ذكي» — §6. */}
+        <label className="search-semantic">
+          <input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} />
+          بحث دلالي
+        </label>
 
         {busy ? <p className="muted-line"><span className="spinner" /> جارٍ التحميل</p> : null}
 
@@ -113,6 +142,45 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
             </div>
           </>
         ) : null}
+
+        {/* مجموعةٌ لكلّ مصدر — ومصدرٌ لم يُجب تُقال حالُه ولا تُقرأ مجموعتُه
+            الفارغة «لا نتائج»، فيظنّ القارئ أن الكتب خَلَت من مسألته وهي لم
+            تُسأل أصلاً. */}
+        {(result?.external ?? []).map((g: ExternalGroup) => (
+          <div key={g.sourceId}>
+            <div className="kb-section">
+              <Icon.externalSource size={ICON_SM} aria-hidden /> {g.sourceLabel}
+            </div>
+            {g.status !== 'ok' ? (
+              <p className="legal-notice-meta">
+                {g.status === 'unconfigured' ? 'المصدر غير مربوط' : 'تعذّر الوصول إلى المصدر'}
+              </p>
+            ) : !g.hits.length ? (
+              <p className="muted-line">لا نتائج في هذا المصدر</p>
+            ) : (
+              g.hits.map((h, i) => (
+                <article key={i} className="legal-article">
+                  <h4>
+                    <bdi>{h.title}</bdi>
+                    {h.ref ? <span className="pill pending">ص. <bdi>{h.ref}</bdi></span> : null}
+                    {h.section === 'حاشية' ? <span className="chip-note">حاشية</span> : null}
+                  </h4>
+                  {h.author || h.category ? (
+                    <p className="legal-notice-meta">
+                      <bdi>{[h.author, h.category].filter(Boolean).join(' — ')}</bdi>
+                    </p>
+                  ) : null}
+                  <p>{h.text}</p>
+                  {h.url ? (
+                    <a className="btn-sm" href={h.url} target="_blank" rel="noreferrer">
+                      <Icon.externalLink size={ICON_SM} aria-hidden /> المصدر في {g.sourceLabel}
+                    </a>
+                  ) : null}
+                </article>
+              ))
+            )}
+          </div>
+        ))}
 
         {result?.chats.length ? (
           <>

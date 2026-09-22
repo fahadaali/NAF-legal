@@ -14,6 +14,8 @@ const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشا
   "internet_queries": [<استعلامات إنترنت إن لزم>],
   "needs_uploaded_files": <bool>,
   "target_regulations": [<الأسماء الرسمية الكاملة للأنظمة واللوائح التي تتطلّبها المسألة>],
+  "needs_fiqh_sources": <bool>,
+  "fiqh_queries": [<استعلامات عربية عن التأصيل الفقهي إن لزم>],
   "clarifying_questions": [<أسئلة استيضاح إن نقص بيان جوهري، وإلا مصفوفة فارغة>],
   "output_format": "<text | docx>"
 }
@@ -22,6 +24,7 @@ const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشا
 - مهام الصياغة (عقد، صحيفة دعوى، مذكرة، لائحة) تحتاج غالبًا قاعدة المعرفة، و output_format = "docx".
 - فعّل needs_internet_search=true فقط عند مؤشّرات مثل: «آخر تعديل»، «نظام جديد»، «صدر مؤخّرًا»، «خبر»، «حكم حديث».
 - الاستشارة التفسيرية عن نظام مستقر: needs_knowledge_base=true و needs_internet_search=false.
+- **needs_fiqh_sources بخلاً لا سخاءً.** كتب الفقه تدعيمٌ لا إسناد، والمنصّة سعودية يحكمها النظام. فلا تطلبها لمسألةٍ يحكمها نظامٌ سعوديّ مستقرّ (مهلة اعتراض، إجراء مرافعات، بند عقدٍ نمطيّ) — إنما حين يُسأل عن تأصيلٍ فقهيّ صراحةً، أو قاعدةٍ كلّية يقوم عليها حكم، أو مسألةٍ لا نصّ نظاميّ فيها فيُرجع فيها إلى أصلها. و fiqh_queries بألفاظ الفقهاء لا بألفاظ الأنظمة: «شروط صحة الإجارة» لا «المادة كذا من نظام الإيجار».
 - legal_basis (استدلال نظامي): المستند المرسَل هو المُدخَل لا الطلب، فـ needs_knowledge_base=true و needs_uploaded_files=true و output_format = "text" — المخرَج خريطةُ إسنادٍ عن نصٍّ قائم لا مستندٌ يُصاغ. واجعل kb_queries استعلاماتٍ عن الأنظمة التي يقوم عليها النصّ.
 - **السياق مهم:** إن وُجد «سجل المحادثة» فالرسالة الحالية غالبًا **متابعة** لما سبق (تعديل، إضافة، تصحيح، سؤال متفرّع). افهمها في ضوء ما دار، ولا تعامِلها كطلب جديد منفصل.
 - لا تطرح clarifying_questions إلا إذا كانت هناك معلومة جوهرية **مفقودة فعلًا** ولا يمكن استنتاجها من سجل المحادثة. في رسائل المتابعة اترك clarifying_questions فارغة غالبًا.
@@ -102,6 +105,9 @@ function normalize(
     internet_queries: Array.isArray(p.internet_queries) ? p.internet_queries.slice(0, 3) : [],
     needs_uploaded_files: hasAttachments && (p.needs_uploaded_files ?? true),
     target_regulations: Array.isArray(p.target_regulations) ? p.target_regulations : [],
+    needs_fiqh_sources: p.needs_fiqh_sources === true,
+    // ثلاثةٌ سقفاً: كلُّ استعلامٍ نداءُ شبكةٍ إلى كلّ مصدرٍ مفعَّل، ثم تضمين.
+    fiqh_queries: Array.isArray(p.fiqh_queries) ? p.fiqh_queries.slice(0, 3) : [],
     clarifying_questions: Array.isArray(p.clarifying_questions) ? p.clarifying_questions : [],
     /* `legal_basis` مخرَجُه خريطةُ إسنادٍ عن نصٍّ قائم لا مستندٌ يُصاغ، فيبقى
        `text` ولو قال المُخطِّط غيره. وبقيّةُ الأنواع على ما كانت. */

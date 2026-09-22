@@ -116,3 +116,6 @@ AUTH_ISSUER = "https://app.naflaw.sa"
 #                         ولا يضرّ، ونزعُه من الحساب قرارُ تشغيل لا شيفرة.
 #   AUTH_CLIENT_SECRET  — سرّ هذه المنصة لدى المركز:
 #                         wrangler secret put AUTH_CLIENT_SECRET
+#   MCP_TOKENS          — اختياريّ: رموز خوادم المصادر الخارجية، خريطةُ JSON
+#                         مفاتيحُها `token_key` في جدول `external_sources`.
+#                         wrangler secret put MCP_TOKENS

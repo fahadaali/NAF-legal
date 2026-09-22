@@ -30,6 +30,7 @@ import {
   BadgeCheck,
   BookCheck,
   BookMarked,
+  BookOpenText,
   BookText,
   Bell,
   Briefcase,
@@ -70,6 +71,7 @@ import {
   RotateCcw,
   ScanText,
   ScrollText,
+  Server,
   Search,
   Send,
   Share2,
@@ -132,6 +134,11 @@ export const Icon = {
   // `BookOpen` مركز المعرفة، و`BookCheck` إسنادٌ متحقَّق منه (شارةٌ تحت ردّ)،
   // وهذه بطاقةُ خدمة. ولا تُستعمل لحفظ صفحةٍ أو تعليمها — تلك `Bookmark`.
   legalBasis: BookMarked,
+  // التأصيل الفقهي — النصُّ المنقول من كتاب الفقه، لا الكتاب ولا مكانُه:
+  // `BookMarked` بطاقةُ خدمة، و`BookOpen` مركزُ المعرفة، و`BookCheck` شارةُ تحقّق.
+  fiqhGrounding: BookOpenText,
+  // مصدر خارجي — البنيةُ لا المحتوى: جدولُ المصادر وترويسةُ مجموعة النتائج.
+  externalSource: Server,
   litigation: Swords,          // التقاضي — تصنيف لا كيان
   appointment: Calendar,   // موعد
   attachment: Paperclip,   // مرفق
