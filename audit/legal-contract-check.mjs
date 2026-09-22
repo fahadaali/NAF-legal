@@ -2635,12 +2635,13 @@ await check('٢٧ · والمسار يجمع ويُتمّ ويُلغي، وال�
   assert.match(routes, /app\.post\('\/commit', requireAdmin/);
   assert.match(routes, /app\.post\('\/abort', requireAdmin/);
   assert.match(routes, /rollbackBatch\(c\.env, batchId, reason\)/, 'تعذّرُ الإتمام لا يُردّ');
+  // مؤقّتٌ واحد لا اثنان: عددُ المؤقّتات في الحساب محدود، وثانٍ يجاوزه يُسقط النشر.
   const index = readFileSync(path.join(ROOT, 'src', 'index.ts'), 'utf8');
   const toml = readFileSync(path.join(ROOT, 'wrangler.toml'), 'utf8');
-  const cron = index.match(/const RECOVERY_CRON = '([^']+)'/)?.[1];
-  assert.ok(cron && toml.includes(`"${cron}"`), 'مؤقّتُ الردّ غير مُعلَنٍ في wrangler.toml');
-  assert.match(index, /event\.cron === RECOVERY_CRON\) \{\s*ctx\.waitUntil\(runImportRecovery\(env\)[\s\S]{0,40}return;/,
-    'مؤقّتُ الردّ يُشغّل مهامَّ الليل معه');
+  assert.match(toml, /^crons = \["\*\/10 \* \* \* \*"\]$/m, 'المؤقّت ليس واحداً كل عشر دقائق');
+  assert.match(index, /ctx\.waitUntil\(runImportRecovery\(env\)[^\n]*\n\s*if \(!isNightlyTick\(event\.scheduledTime\)\) return;/,
+    'الردُّ لا يقع في كل نبضة، أو مهامُّ الليل تقع في غير نبضتها');
+  assert.match(index, /getUTCHours\(\) === 3 && at\.getUTCMinutes\(\) === 0/, 'نبضةُ الليل ليست الثالثة فجراً');
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');

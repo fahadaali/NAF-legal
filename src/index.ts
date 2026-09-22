@@ -205,8 +205,16 @@ app.get('*', async (c) => {
   return new Response(res.body, res);
 });
 
-/** مؤقّتُ ردّ دفعات الاستيراد المتروكة — ومقابلُه في `wrangler.toml`. */
-const RECOVERY_CRON = '*/10 * * * *';
+/**
+ * نبضةُ مهامّ الليل: الثالثة فجراً بتوقيت غرينتش، كما كان مؤقّتُها وحده.
+ *
+ * المؤقّت الوحيد في `wrangler.toml` كل عشر دقائق، و`scheduledTime` وقتُ النبضة
+ * المقصود لا وقتُ وصولها — فنبضةُ ٠٣:٠٠ تُعرف بدقيقتها بالضبط.
+ */
+function isNightlyTick(scheduledTime: number): boolean {
+  const at = new Date(scheduledTime);
+  return at.getUTCHours() === 3 && at.getUTCMinutes() === 0;
+}
 
 export default {
   fetch: app.fetch,
@@ -222,11 +230,9 @@ export default {
    * يُكتب غداً: مهمّةٌ خامسة تُضاف بلا `try` لا تُسقط من قبلها.
    */
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    // مؤقّتُ ردّ الدفعات المتروكة قصيرٌ ووحده — لا تُشغَّل معه مهامُّ الليل.
-    if (event.cron === RECOVERY_CRON) {
-      ctx.waitUntil(runImportRecovery(env).then(() => {}));
-      return;
-    }
+    // ردُّ دفعات الاستيراد المتروكة في كل نبضة، ومهامُّ الليل في نبضتها وحدها.
+    ctx.waitUntil(runImportRecovery(env).then(() => {}));
+    if (!isNightlyTick(event.scheduledTime)) return;
     ctx.waitUntil(
       Promise.allSettled([
         runTrackingScan(env),
