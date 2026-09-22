@@ -176,6 +176,16 @@ export function LegalImport() {
        التقرير نفسه، ورسالةُ الرفض تُقال مرّة لا مرّتين. */
     setNow({ name: file.name, file: index + 1, files: count, batch: 0, batches: 0 });
     const preview = await api.importLegal(lines, file.name, { buildEmbed, partial, dryRun: true });
+    /* والوضعُ الصارم صارمٌ على الملف كلِّه لا على جزئه (§4-٦): المقارنة قرأت
+       الأسطر كلَّها، فإن رُفض منها سطرٌ لم يُكتب شيء. وكان الجزءُ الذي يحمله
+       يُرفض وما قبله مكتوب — نظامٌ نصفُه مستورد، وهو ما وُضع الصارم لمنعه.
+       وأرقامُ الأسطر هنا من الملف كاملاً، فلا تُزاح. */
+    if (!partial && preview.ok && (preview.failed ?? 0) > 0) {
+      return {
+        name: file.name, ok: false, inserted: 0, updated: 0,
+        report: { ...preview, ok: false, error: 'أسطر غير صالحة — لم يُكتب شيء' },
+      };
+    }
     const diff = preview.ok ? preview.diff : undefined;
     if (diff && (diff.changed > 0 || diff.unchanged > 0)) {
       const apply = await new Promise<boolean>((decide) => setConflict({ filename: file.name, diff, decide }));
@@ -442,8 +452,9 @@ export function LegalImport() {
                 {r.ok ? 'أسطر تُخطّيت' : (r.report?.error ?? 'أسطر غير صالحة — لم يُكتب شيء')}
               </p>
               {/* «وما استُورد قبلها محفوظ» تُقال حين يكون قبلها شيء فعلاً. وقولها
-                  مع صفر يُقلق بلا سبب: يوهم أن شيئاً كُتب ثم ضاع. */}
-              {r.inserted + r.updated > 0 ? (
+                  مع صفر يُقلق بلا سبب: يوهم أن شيئاً كُتب ثم ضاع. ولا تُقال
+                  لاستيرادٍ جزئيّ لم يُرفض: «قبل الرفض» عن ملفٍّ لم يُرفض خبرٌ كاذب. */}
+              {!r.ok && r.inserted + r.updated > 0 ? (
                 <p>
                   وما استُورد من هذا الملف قبل الرفض محفوظ: <bdi>{formatNumber(r.inserted + r.updated)}</bdi> مادة.
                 </p>

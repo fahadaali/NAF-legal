@@ -121,6 +121,16 @@ async function comparefirst() {
     for (const g of r.error_summary ?? []) console.error(`  ${g.count} سطراً: ${g.error}`);
     process.exit(1);
   }
+  // والصارمُ صارمٌ على الملف كلِّه (§4-٦): المقارنة قرأت الأسطر كلَّها، فسطرٌ
+  // مرفوض في أيّ موضع يقف قبل أوّل كتابة — لا بعد أن تُكتب الأجزاء التي سبقته.
+  if (!partial && r.failed) {
+    console.error(`\nالملف رُفض: ${r.failed} سطراً غير صالح — لم يُكتب شيء.`);
+    for (const g of r.error_summary ?? []) {
+      const at = g.lines?.length ? ` (أسطر: ${g.lines.join(' · ')}…)` : '';
+      console.error(`  ${g.count} سطراً: ${g.error}${at}`);
+    }
+    process.exit(1);
+  }
   const d = r.diff ?? {};
   console.log('── المقارنة قبل الكتابة ──');
   console.log(`جديد ${d.added ?? 0} · متغيّر ${d.changed ?? 0} · بلا تغيير ${d.unchanged ?? 0} · غائب عن الملف ${d.missing ?? 0}`);
