@@ -22,7 +22,7 @@
 import type { Env } from '../types';
 import type { ExternalSource } from './sources';
 import type { DiscoveredAuth } from './discover';
-import { seal, unseal } from './sealed';
+import { seal, unseal, base64UrlFromBytes } from './sealed';
 import { callTool } from './mcp';
 
 export type AuthMethod = 'none' | 'client_secret_post' | 'client_secret_basic';
@@ -41,6 +41,23 @@ export interface TokenSet {
   /** ملّي ثانية — أو `null` إن لم يُرسل الخادم `expires_in`. */
   expiresAt: number | null;
   scope: string | null;
+  refreshToken?: string | null;
+}
+
+/** ما يُحفظ بين شقَّي الرحلة، مفتاحُه بصمةُ `state` لا `state` نفسه. */
+export interface PendingAuth {
+  sourceId: string;
+  verifier: string;
+  redirectUri: string;
+  issuer: string;
+  tokenEndpoint: string;
+  resource: string | null;
+  scope: string | null;
+  /** بصمةُ سرِّ الكوكي — فلا يكفي أن يكون الزائرُ مسؤولاً، بل أن يكون البادئ. */
+  bindHash: string;
+  /** هل يُتحقَّق من `iss` في الردّ (RFC 9207) — بحسب ما أعلنه الخادم. */
+  checkIss: boolean;
+  createdAt: number;
 }
 
 /** هامشٌ قبل الانتهاء: انحرافُ الساعات وزمنُ الطلب نفسه. */
@@ -49,6 +66,12 @@ const SKEW_MS = 60_000;
 const BODY_MAX = 64 * 1024;
 
 const clientKey = (id: string) => `mcpoauth:cli:${id}`;
+/* مفتاحُ الحالة **بصمتُها** لا هي: مسحُ المساحة يجب ألّا يُسلّم قدرةً حيّة —
+   وهي حجّةُ `sessionKeyFor` نفسها في حزمة الدخول الموحّد. */
+const stateKey = (hash: string) => `mcpoauth:st:${hash}`;
+/** عمرُ الحالة: صفحةُ إذنٍ قد تسبقها صفحةُ دخولٍ عند الخادم، فعشرُ دقائق. */
+const STATE_TTL_S = 600;
+export const BIND_COOKIE = 'naf_mcp_bind';
 const tokenKey = (id: string) => `mcpoauth:tok:${id}`;
 
 export interface OAuthFail {
@@ -124,14 +147,31 @@ function applyClientAuth(
  * وشاشاتُ الموافقة تُعطبها كثيراً — واسمٌ مشوَّه في شاشةِ خادمٍ أجنبيّ لا
  * نملك إصلاحه.
  */
+export interface RegisterOptions {
+  grantTypes?: string[];
+  redirectUris?: string[];
+  scope?: string | null;
+}
+
 export async function registerClient(
   found: DiscoveredAuth,
-  timeoutMs: number
+  timeoutMs: number,
+  opts: RegisterOptions = {}
 ): Promise<RegisteredClient | OAuthFail> {
   if (!found.registrationEndpoint) {
     return { ok: false, message: 'الخادم لا يقبل تسجيلاً ديناميّاً' };
   }
-  const method = pickAuthMethod(found.tokenEndpointAuthMethodsSupported);
+  const grantTypes = opts.grantTypes ?? ['client_credentials'];
+  const redirects = opts.redirectUris ?? [];
+  /* وعميلُ المتصفّح عامٌّ بلا سرّ حيث أمكن: `none` هي ما توصي به OAuth 2.1
+     لعميلٍ يحمل PKCE، والسرُّ الذي لا يُحتاج إليه اعتمادٌ يُحرَس بلا فائدة.
+     وعميلُ الآلة لا يصحّ عامّاً — من ملك معرّفه انتحله. */
+  const wantsSecret = grantTypes.includes('client_credentials');
+  const method: AuthMethod = wantsSecret
+    ? pickAuthMethod(found.tokenEndpointAuthMethodsSupported)
+    : found.tokenEndpointAuthMethodsSupported?.includes('none') === false
+      ? pickAuthMethod(found.tokenEndpointAuthMethodsSupported)
+      : 'none';
   let res: Response;
   try {
     res = await fetch(found.registrationEndpoint, {
@@ -139,12 +179,17 @@ export async function registerClient(
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({
         client_name: 'NAF Legal',
-        grant_types: ['client_credentials'],
-        /* لا `response_types` ولا `redirect_uris`: منحةُ الآلة لا تُحوّل
-           متصفّحاً، والمواصفة تُلزم بالعناوين للمنح المحوِّلة وحدها. */
-        response_types: [],
+        grant_types: grantTypes,
+        /* و`redirect_uris` للمنح المحوِّلة وحدها: منحةُ الآلة لا تُحوّل
+           متصفّحاً، والمواصفة تُلزم بالعناوين حيث يقع التحويل. */
+        response_types: grantTypes.includes('authorization_code') ? ['code'] : [],
+        ...(redirects.length ? { redirect_uris: redirects } : {}),
         token_endpoint_auth_method: method,
-        ...(found.scopesSupported?.length ? { scope: found.scopesSupported.join(' ') } : {}),
+        ...(opts.scope
+          ? { scope: opts.scope }
+          : found.scopesSupported?.length
+            ? { scope: found.scopesSupported.join(' ') }
+            : {}),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -258,6 +303,13 @@ export async function accessTokenFor(env: Env, source: ExternalSource): Promise<
     const cached = await unseal<TokenSet>(env, slot, await env.KV.get(slot).catch(() => null));
     if (cached && (!cached.expiresAt || cached.expiresAt - Date.now() > SKEW_MS)) {
       return cached.accessToken;
+    }
+    /* ورمزُ تجديدٍ محفوظ يُقدَّم على سكٍّ جديد: منحةُ الإذن لا تُعاد بلا
+       إنسان، فإسقاطُها إلى منحة الآلة يُخرج المصدر من الخدمة بلا داعٍ. */
+    if (cached?.refreshToken) {
+      const renewed = await refreshWith(env, source, cached);
+      if (renewed) return renewed.accessToken;
+      return null;
     }
     const client = await storedClient(env, source.id);
     if (!client) return null;
@@ -373,4 +425,239 @@ export async function authorizeMachine(
     scope: token.scope,
     hits,
   };
+}
+
+// ══════════ منحةُ الإذن في المتصفّح ══════════
+
+const encoder = new TextEncoder();
+
+async function sha256(value: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value)));
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  return [...(await sha256(value))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function randomHex(bytes: number): string {
+  const buf = crypto.getRandomValues(new Uint8Array(bytes));
+  return [...buf].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * زوجُ PKCE بـS256 (RFC 7636).
+ *
+ * والمُثبِت ٦٤ محرفاً ستّ عشريّاً — داخل مجال المواصفة (٤٣–١٢٨) ومن المجموعة
+ * غير المحجوزة كلُّه. **ولا تراجعَ إلى `plain` أبداً**: خادمٌ لا يُعلن S256
+ * يُرَدّ، لا يُنزَل إليه.
+ */
+export async function pkcePair(): Promise<{ verifier: string; challenge: string }> {
+  const verifier = randomHex(32);
+  return { verifier, challenge: base64UrlFromBytes(await sha256(verifier)) };
+}
+
+/**
+ * النطاقُ المطلوب، بترتيب المواصفة:
+ * نطاقُ التحدّي، فإن غاب فـ`scopes_supported` من وثيقة الموارد، فإن غابت
+ * فلا يُرسَل نطاقٌ أصلاً — ويُترك للخادم افتراضُه.
+ */
+export function scopeFor(found: DiscoveredAuth, challengeScope?: string | null): string | null {
+  if (challengeScope) return challengeScope;
+  if (found.scopesSupported?.length) return found.scopesSupported.join(' ');
+  return null;
+}
+
+export interface StartedAuth {
+  url: string;
+  bindSecret: string;
+}
+
+/**
+ * يبدأ الرحلة: يُسجّل عميلاً إن لزم، ويولّد PKCE وحالةً، ويبني العنوان.
+ *
+ * و`resource` يُرسَل على طلب التفويض **وعلى طلب الرمز** — تُلزم به المواصفة
+ * «regardless of whether authorization servers support it»، وقيمتُه المعرّفُ
+ * القانونيّ من وثيقة الموارد.
+ */
+export async function startAuthorization(
+  env: Env,
+  source: ExternalSource,
+  found: DiscoveredAuth,
+  redirectUri: string,
+  challengeScope?: string | null
+): Promise<StartedAuth | OAuthFail> {
+  if (!found.authorizationEndpoint || !found.tokenEndpoint) {
+    return { ok: false, message: 'بيانات الخادم بلا نقطة تفويضٍ أو نقطة رمز' };
+  }
+  /* S256 شرطٌ لا يُتنازل عنه: النزولُ إلى `plain` يُبطل حمايةَ الاعتراض كلَّها. */
+  if (found.codeChallengeMethodsSupported && !found.codeChallengeMethodsSupported.includes('S256')) {
+    return { ok: false, message: 'الخادم لا يدعم S256 — ولا نزولَ إلى plain' };
+  }
+
+  const scope = scopeFor(found, challengeScope);
+  let client = await storedClient(env, source.id);
+  if (client && found.issuer && client.issuer && client.issuer !== found.issuer) client = null;
+  if (!client) {
+    const made = await registerClient(found, source.timeoutMs, {
+      grantTypes: ['authorization_code', 'refresh_token'],
+      redirectUris: [redirectUri],
+      scope,
+    });
+    if ('ok' in made) return made;
+    client = made;
+    const sealed = await seal(env, clientKey(source.id), client);
+    if (!sealed) return { ok: false, message: 'تعذّر ختم اعتماد العميل' };
+    await env.KV.put(clientKey(source.id), sealed).catch(() => {});
+  }
+
+  const { verifier, challenge } = await pkcePair();
+  const state = randomHex(32);
+  const bindSecret = randomHex(32);
+  const pending: PendingAuth = {
+    sourceId: source.id,
+    verifier,
+    redirectUri,
+    issuer: found.issuer ?? found.authorizationServers[0] ?? '',
+    tokenEndpoint: found.tokenEndpoint,
+    resource: found.resource ?? null,
+    scope,
+    bindHash: await sha256Hex(bindSecret),
+    checkIss: found.authorizationResponseIssParameterSupported === true,
+    createdAt: Date.now(),
+  };
+  const slot = stateKey(await sha256Hex(state));
+  const sealedState = await seal(env, slot, pending);
+  if (!sealedState) return { ok: false, message: 'تعذّر ختم حالة التفويض' };
+  await env.KV.put(slot, sealedState, { expirationTtl: STATE_TTL_S }).catch(() => {});
+
+  const url = new URL(found.authorizationEndpoint);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', client.clientId);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  if (pending.resource) url.searchParams.set('resource', pending.resource);
+  if (scope) url.searchParams.set('scope', scope);
+  await rememberDiscovery(env, source.id, found);
+  return { url: url.toString(), bindSecret };
+}
+
+export interface CompletedAuth {
+  ok: boolean;
+  sourceId?: string;
+  error?: string;
+}
+
+/**
+ * يُتمّ الرحلة: يتحقّق من الحالة ويستهلكها، ثم يُبادل الرمز.
+ *
+ * والحالة تُقرأ وتُمحى **قبل** المبادلة: إعادةٌ تصل في أثنائها لا تجد شيئاً.
+ */
+export async function completeAuthorization(
+  env: Env,
+  state: string,
+  code: string,
+  bindSecret: string | null,
+  issFromServer: string | null
+): Promise<CompletedAuth> {
+  if (!state || !code) return { ok: false, error: 'ردٌّ بلا حالةٍ أو بلا رمز' };
+  const slot = stateKey(await sha256Hex(state));
+  const raw = await env.KV.get(slot).catch(() => null);
+  await env.KV.delete(slot).catch(() => {});
+  const pending = await unseal<PendingAuth>(env, slot, raw);
+  if (!pending) return { ok: false, error: 'حالةٌ غير معروفة أو انقضت' };
+
+  if (!bindSecret || (await sha256Hex(bindSecret)) !== pending.bindHash) {
+    return { ok: false, sourceId: pending.sourceId, error: 'الردّ وصل من متصفّحٍ غير الذي بدأ' };
+  }
+  /* RFC 9207: خادمٌ يُعلن إرسال `iss` يُتحقَّق منه — وهو ما يمنع خلطَ الردود
+     بين خادمَي تفويض. والشاملة تُعلنه، فالتحقّق واجبٌ لا احتياط. */
+  if (pending.checkIss) {
+    const norm = (v: string) => v.replace(/\/+$/, '');
+    if (!issFromServer || norm(issFromServer) !== norm(pending.issuer)) {
+      return { ok: false, sourceId: pending.sourceId, error: `المُصدِر في الردّ لا يطابق: ${issFromServer ?? 'غائب'}` };
+    }
+  }
+
+  const client = await storedClient(env, pending.sourceId);
+  if (!client) return { ok: false, sourceId: pending.sourceId, error: 'اعتماد العميل غير موجود' };
+
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: pending.redirectUri,
+    code_verifier: pending.verifier,
+  });
+  if (pending.resource) body.set('resource', pending.resource);
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+    accept: 'application/json',
+  };
+  applyClientAuth(client, body, headers);
+
+  let res: Response;
+  try {
+    res = await fetch(pending.tokenEndpoint, { method: 'POST', headers, body: body.toString(), signal: AbortSignal.timeout(15000) });
+  } catch (e) {
+    return { ok: false, sourceId: pending.sourceId, error: `مبادلة الرمز: ${reason(e)}` };
+  }
+  const data = await readJson(res);
+  if (!res.ok || typeof data?.access_token !== 'string') {
+    const detail = data?.error_description ?? data?.error ?? '';
+    return { ok: false, sourceId: pending.sourceId, error: `مبادلة الرمز ${res.status}${detail ? ` · ${detail}` : ''}` };
+  }
+  const expiresIn = typeof data.expires_in === 'number' ? data.expires_in : null;
+  await storeToken(env, pending.sourceId, {
+    accessToken: data.access_token,
+    expiresAt: expiresIn ? Date.now() + expiresIn * 1000 : null,
+    scope: typeof data.scope === 'string' ? data.scope : pending.scope,
+    refreshToken: typeof data.refresh_token === 'string' ? data.refresh_token : null,
+  });
+  return { ok: true, sourceId: pending.sourceId };
+}
+
+/**
+ * تجديدٌ برمز التجديد.
+ *
+ * **ورمزُ تجديدٍ لم يُرسَل في الردّ يُبقي القديم.** إسقاطُه لأن الردّ سكت
+ * عنه خروجٌ صامتٌ بعد أسبوع — وهو أسوأ أعطاب هذا الباب.
+ */
+export async function refreshWith(
+  env: Env,
+  source: ExternalSource,
+  current: TokenSet
+): Promise<TokenSet | null> {
+  if (!current.refreshToken) return null;
+  const client = await storedClient(env, source.id);
+  const found = await cachedDiscovery(env, source.id);
+  if (!client || !found?.tokenEndpoint) return null;
+
+  const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: current.refreshToken });
+  if (found.resource) body.set('resource', found.resource);
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+    accept: 'application/json',
+  };
+  applyClientAuth(client, body, headers);
+  try {
+    const res = await fetch(found.tokenEndpoint, { method: 'POST', headers, body: body.toString(), signal: AbortSignal.timeout(source.timeoutMs) });
+    const data = await readJson(res);
+    if (!res.ok || typeof data?.access_token !== 'string') {
+      console.error(`oauth ${source.id}: تجديدٌ مرفوض ${res.status}`);
+      return null;
+    }
+    const expiresIn = typeof data.expires_in === 'number' ? data.expires_in : null;
+    const next: TokenSet = {
+      accessToken: data.access_token,
+      expiresAt: expiresIn ? Date.now() + expiresIn * 1000 : null,
+      scope: typeof data.scope === 'string' ? data.scope : current.scope,
+      refreshToken: typeof data.refresh_token === 'string' ? data.refresh_token : current.refreshToken,
+    };
+    await storeToken(env, source.id, next);
+    return next;
+  } catch (e) {
+    console.error(`oauth ${source.id}: ${reason(e)}`);
+    return null;
+  }
 }

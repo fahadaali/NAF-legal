@@ -57,6 +57,15 @@ export interface McpFail {
    * جملةٍ تُقرأ ولا يُفعل بها شيء — فصار حقلاً يُقرأ آلياً.
    */
   resourceMetadata?: string;
+  /**
+   * النطاقُ المطلوب من التحدّي نفسه — **وهو الحاكم**.
+   *
+   * تنصّ المواصفة: «Clients MUST treat the scopes provided in the challenge
+   * as authoritative»، وتُرتّب الاختيار: نطاقُ التحدّي، فإن غاب فـ
+   * `scopes_supported` من وثيقة الموارد، فإن غابت فلا نطاقَ يُرسَل. وكان
+   * يُهمَل فيُطلب ما تُعلنه الوثيقة — وقد يكون أوسعَ مما يلزم أو أضيق.
+   */
+  challengeScope?: string;
 }
 export type McpOutcome = McpOk | McpFail;
 
@@ -222,7 +231,12 @@ async function handshake(
       ok: false,
       kind: authFailure ? 'config' : 'transport',
       message: authFailure ? `مصافحة ${authProblem(res, !!token)}` : `initialize ${res.status}`,
-      ...(authFailure ? { resourceMetadata: resourceMetadataUrl(res) ?? undefined } : {}),
+      ...(authFailure
+        ? {
+            resourceMetadata: resourceMetadataUrl(res) ?? undefined,
+            challengeScope: challengeScope(res) ?? undefined,
+          }
+        : {}),
     };
   }
   if (body?.error) return { ok: false, kind: 'protocol', message: body.error.message ?? 'initialize error' };
@@ -324,7 +338,12 @@ export async function callTool(
         ok: false,
         kind: authFailure ? 'config' : 'transport',
         message: authFailure ? `${tool} ${authProblem(res, !!token)}` : `${tool} ${res.status}`,
-        ...(authFailure ? { resourceMetadata: resourceMetadataUrl(res) ?? undefined } : {}),
+        ...(authFailure
+          ? {
+              resourceMetadata: resourceMetadataUrl(res) ?? undefined,
+              challengeScope: challengeScope(res) ?? undefined,
+            }
+          : {}),
       };
     }
     if (body?.error) return { ok: false, kind: 'protocol', message: body.error.message ?? 'خطأ بروتوكول' };
@@ -392,13 +411,16 @@ function textOf(result: any): string {
  * عارياً، فيُقرأ الشكلان. و**`https` وحدها تُقبل**: العنوان يأتي من الخادم
  * لا منّا، ومتابعةُ ما يُملى علينا على `http` تُرسل ترويساتِنا بلا تعمية.
  */
-function resourceMetadataUrl(res: Response): string | null {
-  const challenge = res.headers.get('www-authenticate');
+function challengeParam(challenge: string | null, name: string): string | null {
   if (!challenge) return null;
-  const m =
-    /resource_metadata\s*=\s*"([^"]+)"/i.exec(challenge) ??
-    /resource_metadata\s*=\s*([^\s,]+)/i.exec(challenge);
-  const raw = m?.[1]?.trim();
+  const quoted = new RegExp(`${name}\\s*=\\s*"([^"]*)"`, 'i').exec(challenge);
+  const bare = new RegExp(`${name}\\s*=\\s*([^\\s,]+)`, 'i').exec(challenge);
+  const raw = (quoted?.[1] ?? bare?.[1] ?? '').trim();
+  return raw || null;
+}
+
+function resourceMetadataUrl(res: Response): string | null {
+  const raw = challengeParam(res.headers.get('www-authenticate'), 'resource_metadata');
   if (!raw) return null;
   try {
     const url = new URL(raw);
@@ -406,6 +428,11 @@ function resourceMetadataUrl(res: Response): string | null {
   } catch {
     return null;
   }
+}
+
+/** نطاقُ التحدّي (RFC 6750 §3) — يُقدَّم على ما تُعلنه الوثيقة. */
+function challengeScope(res: Response): string | null {
+  return challengeParam(res.headers.get('www-authenticate'), 'scope');
 }
 
 function authProblem(res: Response, sentToken: boolean): string {

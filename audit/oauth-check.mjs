@@ -29,7 +29,9 @@ registerHooks({
 
 const { discoverAuth } = await import('../src/lib/discover.ts');
 const { seal, unseal } = await import('../src/lib/sealed.ts');
-const { accessTokenFor, authorizeMachine, forget } = await import('../src/lib/oauth.ts');
+const { accessTokenFor, authorizeMachine, forget, pkcePair, scopeFor, startAuthorization, completeAuthorization, refreshWith } =
+  await import('../src/lib/oauth.ts');
+const { createHash } = await import('node:crypto');
 
 const asked = [];
 /** خريطةُ عنوانٍ → ردّ. وما ليس فيها يعود ٤٠٤. */
@@ -341,6 +343,103 @@ await forget(env, 'shamela');
 check('★ وسحبُ التفويض يمحو العميل والرمز معاً',
   ![...store.keys()].some((k) => k.startsWith('mcpoauth:cli') || k.startsWith('mcpoauth:tok')), [...store.keys()].join(','));
 check('وبعد السحب لا رمزَ يُعطى', (await accessTokenFor(env, src)) === null);
+
+
+// ═══ منحةُ الإذن في المتصفّح ═══
+console.log('\nمنحةُ الإذن:');
+
+const { verifier, challenge } = await pkcePair();
+const independent = createHash('sha256').update(verifier).digest('base64url');
+check('★ PKCE: التحدّي = base64url(SHA-256(المُثبِت)) — محسوبٌ باستقلال',
+  challenge === independent, `${challenge} ≠ ${independent}`);
+check('والمُثبِت داخل مجال المواصفة (٤٣–١٢٨) ومن المجموعة غير المحجوزة',
+  verifier.length >= 43 && verifier.length <= 128 && /^[A-Za-z0-9\-._~]+$/.test(verifier), verifier);
+check('وزوجان متتاليان يختلفان', (await pkcePair()).verifier !== verifier);
+
+// ترتيبُ اختيار النطاق
+check('★ نطاقُ التحدّي يُقدَّم على ما تُعلنه الوثيقة',
+  scopeFor({ ...AS, scopesSupported: ['a', 'b'] }, 'books:read') === 'books:read');
+check('وبلا تحدٍّ تُستعمل scopes_supported كاملةً',
+  scopeFor({ ...AS, scopesSupported: ['a', 'b'] }, null) === 'a b');
+check('وبلا الاثنين لا يُرسَل نطاقٌ أصلاً', scopeFor({ ...AS }, null) === null);
+
+const AS_CODE = { ...AS, authorizationEndpoint: 'https://as.test/authorize', authorizationResponseIssParameterSupported: true };
+const REDIRECT = 'https://advisor.test/auth/mcp/callback';
+
+setup(asRoutes()); store.clear();
+let started = await startAuthorization(env, src, AS_CODE, REDIRECT, 'books:read');
+const au = new URL(started.url);
+check('★ عنوانُ التفويض يحمل ما تُلزم به المواصفة',
+  au.searchParams.get('response_type') === 'code' &&
+  au.searchParams.get('code_challenge_method') === 'S256' &&
+  !!au.searchParams.get('code_challenge') &&
+  au.searchParams.get('redirect_uri') === REDIRECT &&
+  au.searchParams.get('resource') === 'https://res.test/mcp' &&
+  au.searchParams.get('scope') === 'books:read' &&
+  !!au.searchParams.get('state'),
+  started.url);
+check('وتسجيلُ عميل المتصفّح يطلب منحة الإذن والتجديد وعنوانَ الردّ',
+  seenReg.grant_types.includes('authorization_code') && seenReg.grant_types.includes('refresh_token') &&
+  seenReg.redirect_uris?.[0] === REDIRECT && seenReg.response_types?.[0] === 'code', JSON.stringify(seenReg));
+
+const rawState = au.searchParams.get('state');
+check('★ ومفتاحُ الحالة بصمتُها لا هي — فمسحُ المساحة لا يُسلّم قدرةً حيّة',
+  [...store.keys()].some((k) => k === 'mcpoauth:st:' + createHash('sha256').update(rawState).digest('hex')) &&
+  ![...store.keys()].some((k) => k.includes(rawState)), [...store.keys()].join(','));
+
+// كوكي ربطٍ خاطئ ثم غائب
+check('★ وردٌّ بكوكي ربطٍ خاطئ يُرفض',
+  (await completeAuthorization(env, rawState, 'CODE', 'bogus', 'https://as.test')).ok === false);
+started = await startAuthorization(env, src, AS_CODE, REDIRECT, null);
+let st = new URL(started.url).searchParams.get('state');
+check('وبلا كوكي ربطٍ أصلاً يُرفض',
+  (await completeAuthorization(env, st, 'CODE', null, 'https://as.test')).ok === false);
+
+// iss مخالف
+started = await startAuthorization(env, src, AS_CODE, REDIRECT, null);
+st = new URL(started.url).searchParams.get('state');
+let done = await completeAuthorization(env, st, 'CODE', started.bindSecret, 'https://evil.test');
+check('★ و RFC 9207: مُصدِرٌ مخالفٌ في الردّ يُرفض', done.ok === false && done.error?.includes('المُصدِر'), JSON.stringify(done));
+
+// الطريق السعيد
+seenTok = null;
+started = await startAuthorization(env, src, AS_CODE, REDIRECT, null);
+st = new URL(started.url).searchParams.get('state');
+routes.set('https://as.test/token', (init) => {
+  seenTok = { body: init.body, type: init.headers?.['content-type'] };
+  return new Response(JSON.stringify({ access_token: 'AC-1', token_type: 'Bearer', expires_in: 3600, refresh_token: 'RT-1' }),
+    { status: 200, headers: { 'content-type': 'application/json' } });
+});
+done = await completeAuthorization(env, st, 'CODE-XYZ', started.bindSecret, 'https://as.test');
+check('★ مبادلةٌ ناجحة تُنتج رمزاً مخزَّناً', done.ok === true && (await accessTokenFor(env, src)) === 'AC-1', JSON.stringify(done));
+const tf = new URLSearchParams(seenTok.body);
+check('★ وطلبُ المبادلة يحمل code_verifier وresource ومنحةَ الإذن',
+  seenTok.type === 'application/x-www-form-urlencoded' &&
+  tf.get('grant_type') === 'authorization_code' && !!tf.get('code_verifier') &&
+  tf.get('resource') === 'https://res.test/mcp' && tf.get('redirect_uri') === REDIRECT, seenTok.body);
+check('★ والمُثبِت المُرسَل يطابق تحدّي عنوان التفويض',
+  createHash('sha256').update(tf.get('code_verifier')).digest('base64url') ===
+  new URL(started.url).searchParams.get('code_challenge'));
+
+// إعادةُ استعمال الحالة
+check('★ وحالةٌ استُعملت مرّةً لا تُقبل ثانية',
+  (await completeAuthorization(env, st, 'CODE-XYZ', started.bindSecret, 'https://as.test')).ok === false);
+
+// التجديد: الجديد يحلّ، والساكت يُبقي القديم
+routes.set('https://as.test/token', () => new Response(JSON.stringify({ access_token: 'AC-2', token_type: 'Bearer', expires_in: 3600, refresh_token: 'RT-2' }),
+  { status: 200, headers: { 'content-type': 'application/json' } }));
+let next = await refreshWith(env, src, { accessToken: 'AC-1', expiresAt: 0, scope: null, refreshToken: 'RT-1' });
+check('★ ورمزُ تجديدٍ جديد يحلّ محلّ القديم', next?.accessToken === 'AC-2' && next?.refreshToken === 'RT-2');
+routes.set('https://as.test/token', () => new Response(JSON.stringify({ access_token: 'AC-3', token_type: 'Bearer', expires_in: 3600 }),
+  { status: 200, headers: { 'content-type': 'application/json' } }));
+next = await refreshWith(env, src, { accessToken: 'AC-2', expiresAt: 0, scope: null, refreshToken: 'RT-2' });
+check('★ وردٌّ ساكتٌ عن التجديد يُبقي القديم — لا خروجَ صامتٌ بعد أسبوع',
+  next?.accessToken === 'AC-3' && next?.refreshToken === 'RT-2', JSON.stringify(next));
+
+// لا نزولَ إلى plain
+const noS256 = await startAuthorization(env, src, { ...AS_CODE, codeChallengeMethodsSupported: ['plain'] }, REDIRECT, null);
+check('★ وخادمٌ بلا S256 يُرَدّ ولا يُنزَل إلى plain',
+  noS256.ok === false && noS256.message?.includes('S256'), JSON.stringify(noS256));
 
 console.log(`\n${pass} نجحت · ${fail} أخفقت`);
 process.exit(fail ? 1 : 0);

@@ -1046,7 +1046,7 @@ export const api = {
   saveSource: (id: string, payload: Record<string, unknown>) =>
     req<{ ok: boolean; source: AdminSource }>(`/admin/sources/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   authorizeSource: (id: string) =>
-    req<{ ok: boolean; steps: string[]; clientId?: string; authMethod?: string; expiresAt?: number | null; scope?: string | null; hits?: number; error?: string }>(
+    req<{ ok: boolean; steps: string[]; url?: string; grant?: string; clientId?: string; authMethod?: string; expiresAt?: number | null; scope?: string | null; hits?: number; error?: string }>(
       `/admin/sources/${encodeURIComponent(id)}/authorize`,
       { method: 'POST' }
     ),

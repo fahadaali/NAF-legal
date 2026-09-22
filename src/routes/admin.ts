@@ -15,8 +15,8 @@ import {
 import { uuid } from '../lib/crypto';
 import { listSources, getSource, recordCheck } from '../lib/sources';
 import { searchSource } from '../lib/external';
-import { discoverAuth } from '../lib/discover';
-import { authorizeMachine, forget } from '../lib/oauth';
+import { discoverForEndpoint } from '../lib/discover';
+import { authorizeMachine, forget, startAuthorization, BIND_COOKIE } from '../lib/oauth';
 import { callTool } from '../lib/mcp';
 import type { ExternalSource } from '../lib/sources';
 import { notify } from '../lib/notify';
@@ -431,7 +431,7 @@ app.post('/sources/:id/test', async (c) => {
      يُفوّض، وأيَّ نطاقاتٍ يطلب، وهل يقبل تسجيلاً ديناميّاً.
      وسقوطُ المسبار لا يمسّ النتيجة: تبقى كما كانت، ويُقرأ سببُها كما كان. */
   const discovered = outcome.resourceMetadata
-    ? await discoverAuth(outcome.resourceMetadata, source.timeoutMs, source.endpoint)
+    ? await discoverForEndpoint(source.endpoint!, source.timeoutMs, outcome.resourceMetadata)
     : null;
 
   /* ويُقيَّد في الصفّ سطرٌ واحد — اسمُ خادم التفويض — لا الوثيقةُ كلُّها:
@@ -483,18 +483,46 @@ app.post('/sources/:id/authorize', async (c) => {
     return c.json({ error: `لا وثيقةَ موارد في ردّ الخادم · ${challenge.message}` }, 400);
   }
 
-  const found = await discoverAuth(challenge.resourceMetadata, source.timeoutMs, source.endpoint);
+  const found = await discoverForEndpoint(source.endpoint, source.timeoutMs, challenge.resourceMetadata);
   if (!found) return c.json({ error: 'تعذّرت قراءة وثيقة الموارد' }, 400);
 
-  const result = await authorizeMachine(c.env, source, found);
-  await recordCheck(
+  /* منحةُ الآلة أوّلاً: إن قبلها الخادم انتهى الأمر بلا إنسانٍ ولا متصفّح،
+     ولا رمزَ مسحوبٌ من حسابِ أحد. وخادمُ الشاملة يُعلنها ثم يشترط لها تسجيلاً
+     مُصادَقاً — فالمحاولةُ تبقى لأن غيره قد يقبلها، وسقوطُها ليس نهاية. */
+  const machine = await authorizeMachine(c.env, source, found);
+  if (machine.ok) {
+    await recordCheck(c.env, id, 'ok', null);
+    await audit(c, 'external_source.authorize', id, { ok: true, grant: 'client_credentials' });
+    return c.json({ ...machine, grant: 'client_credentials' });
+  }
+
+  /* وإلّا فإذنُ إنسانٍ في متصفّح. وسرُّ الربط يُكتب كوكيّاً على مسار
+     الاستقبال وحده: يُثبت أن الردّ عاد إلى المتصفّح الذي بدأ — وكونُ الزائر
+     مسؤولاً لا يُثبت ذلك. */
+  const redirectUri = `${new URL(c.req.url).origin}/auth/mcp/callback`;
+  const started = await startAuthorization(
     c.env,
-    id,
-    result.ok ? 'ok' : 'unconfigured',
-    result.ok ? null : (result.error ?? 'تعذّر التفويض')
+    source,
+    found,
+    redirectUri,
+    challenge.challengeScope
   );
-  await audit(c, 'external_source.authorize', id, { ok: result.ok, issuer: found.issuer });
-  return c.json(result);
+  if ('ok' in started) {
+    await recordCheck(c.env, id, 'unconfigured', `${machine.error ?? ''} · ${started.message}`.trim());
+    await audit(c, 'external_source.authorize', id, { ok: false });
+    return c.json({ ok: false, steps: machine.steps, error: started.message }, 400);
+  }
+  await audit(c, 'external_source.authorize', id, { ok: false, grant: 'authorization_code', issuer: found.issuer });
+  c.header(
+    'set-cookie',
+    `${BIND_COOKIE}=${encodeURIComponent(started.bindSecret)}; HttpOnly; Secure; SameSite=Lax; Path=/auth/mcp; Max-Age=600`
+  );
+  return c.json({
+    ok: false,
+    grant: 'authorization_code',
+    steps: [...machine.steps, `منحةُ الآلة تعذّرت: ${machine.error ?? '—'}`, 'يلزم إذنُك في المتصفّح'],
+    url: started.url,
+  });
 });
 
 /* سحبُ التفويض — يُمحى المختوم ويعود المصدر «غير مربوط».

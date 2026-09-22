@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 import authRoutes from './routes/auth';
 import ssoRoutes from './routes/ssoCallback';
+import mcpOAuthRoutes from './routes/mcpOAuth';
 import memberRoutes from './routes/members';
 import conversationRoutes from './routes/conversations';
 import chatRoutes from './routes/chat';
@@ -90,6 +91,10 @@ app.use('*', (c, next) =>
 // مسار الاستقبال والخروج قبل الوسيط: الأول عام بطبيعته — إليه يعود القادم
 // من المركز بلا جلسة بعد — والثاني لا معنى لحمايته بجلسةٍ هو يُسقطها.
 app.route('/auth', ssoRoutes);
+
+/* واستقبالُ تفويض المصادر الخارجية معه وللعلّة نفسها — وحارسُه حالتُه
+   وكوكي ربطه لا الجلسة (انظر `routes/mcpOAuth.ts`). */
+app.route('/auth/mcp', mcpOAuthRoutes);
 
 // الدخول الموحّد — يحمي كل ما بعده. وأي مسار جديد محمي افتراضياً ما لم
 // يُضَف صراحةً إلى القائمة العامة في `lib/sso.ts`.
