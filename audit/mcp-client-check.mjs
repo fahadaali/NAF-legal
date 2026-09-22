@@ -30,6 +30,12 @@ function makeServer() {
       };
 
       if (msg.method === 'initialize') {
+        /* تحدّيات ٤٠١ بأشكالها — يُستخرَج منها عنوانُ وثيقة الموارد */
+        const wa = (v) => send(401, { error: 'no' }, { 'www-authenticate': v });
+        if (scenario === 'oauth401') return wa('Bearer resource_metadata="https://as.test/.well-known/oauth-protected-resource/mcp"');
+        if (scenario === 'oauthbare') return wa('Bearer realm="x", resource_metadata=https://as.test/bare');
+        if (scenario === 'oauthhttp') return wa('Bearer resource_metadata="http://as.test/insecure"');
+        if (scenario === 'basicchal') return wa('Basic realm="shamela"');
         state.handshakes++;
         const id = 'sess-' + state.handshakes;
         state.sessions.add(id);
@@ -47,6 +53,7 @@ function makeServer() {
         if (scenario === 'mangled') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{not json'); }
         if (scenario === 'hang') return; // لا ردّ أبداً — تُختبر المهلة
         if (scenario === 'unauth') return send(401, { error: 'no' });
+        if (scenario === 'oauthcall') return send(401, { error: 'no' }, { 'www-authenticate': 'Bearer realm="x", resource_metadata="https://as.test/from-call"' });
 
         const payload = { count: 1, results: [{ book_id: 7, meta: { book_name: 'الملخص الفقهي', author_name: 'صالح الفوزان', vol: '2', page: 146 }, snip: 'شروط صحة الإجارة', link: 'https://app.turath.io/book/7?page=1' }] };
         if (scenario === 'sse') {
@@ -174,6 +181,29 @@ check('★ واعتمادٌ عربيّ لا يرمي (btoa وحدها ترمي)'
 store.clear();
 let r401 = await call('unauth');
 check('٤٠١ بلا اعتماد: تقول «لم يُرسَل»', !r401.ok && r401.kind === 'config' && r401.message.includes('لم يُرسَل'), JSON.stringify(r401));
+
+// ── عنوانُ وثيقة الموارد يُستخرَج بنيةً لا نصّاً (RFC 9728) ──
+store.clear(); r = await call('oauth401');
+check('★ تحدّي OAuth: العنوان يُستخرَج من المصافحة',
+  !r.ok && r.kind === 'config' && r.resourceMetadata === 'https://as.test/.well-known/oauth-protected-resource/mcp',
+  JSON.stringify(r));
+
+store.clear(); r = await call('oauthbare');
+check('★ ومعاملٌ عارٍ بلا اقتباس يُقرأ كذلك',
+  !r.ok && r.resourceMetadata === 'https://as.test/bare', JSON.stringify(r));
+
+store.clear(); r = await call('oauthhttp');
+check('★ وعنوانٌ على http يُرفض — لا تُتبَع وجهةٌ بلا تعمية',
+  !r.ok && r.kind === 'config' && r.resourceMetadata === undefined, JSON.stringify(r));
+
+store.clear(); r = await call('basicchal');
+check('★ وتحدٍّ أساسيّ لا يُخرج عنواناً',
+  !r.ok && r.kind === 'config' && r.resourceMetadata === undefined && r.message.includes('أساسية'),
+  JSON.stringify(r));
+
+store.clear(); r = await call('oauthcall');
+check('★ و٤٠١ بعد المصافحة تُخرجه أيضاً',
+  !r.ok && r.kind === 'config' && r.resourceMetadata === 'https://as.test/from-call', JSON.stringify(r));
 
 server.close();
 console.log(`\n${pass} نجحت · ${fail} أخفقت`);

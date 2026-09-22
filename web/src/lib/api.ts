@@ -321,6 +321,30 @@ export interface PlatformSearch {
   mode: string;
 }
 
+/**
+ * ما سبره الفحص من باب تفويض مصدرٍ على OAuth.
+ *
+ * أسماءُ الحقول أسماءُ المواصفة (RFC 9728 و8414) لا ترجمةً لها: من يقرأ هذه
+ * الشاشة يُطابقها بوثيقةِ خادمٍ أمامه، وترجمةُ اسمِ حقلٍ تقطع المطابقة.
+ */
+export interface DiscoveredAuth {
+  resourceMetadata: string;
+  resource?: string;
+  authorizationServers: string[];
+  scopesSupported?: string[];
+  metadataUrl?: string;
+  issuer?: string;
+  authorizationEndpoint?: string;
+  tokenEndpoint?: string;
+  registrationEndpoint?: string | null;
+  grantTypesSupported?: string[];
+  codeChallengeMethodsSupported?: string[];
+  tokenEndpointAuthMethodsSupported?: string[];
+  responseTypesSupported?: string[];
+  authorizationResponseIssParameterSupported?: boolean;
+  notes: string[];
+}
+
 /** صفُّ مصدرٍ خارجيّ في لوحة الإدارة. */
 export interface AdminSource {
   id: string;
@@ -1022,7 +1046,10 @@ export const api = {
   saveSource: (id: string, payload: Record<string, unknown>) =>
     req<{ ok: boolean; source: AdminSource }>(`/admin/sources/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   testSource: (id: string) =>
-    req<{ ok: boolean; status: string; error?: string; hits?: number }>(`/admin/sources/${id}/test`, { method: 'POST' }),
+    req<{ ok: boolean; status: string; error?: string; hits?: number; discovered?: DiscoveredAuth | null }>(
+      `/admin/sources/${encodeURIComponent(id)}/test`,
+      { method: 'POST' }
+    ),
 
   adminConsultationConfigs: () => req<{ configs: ConsultConfig[] }>('/admin/consultation-configs'),
   saveConsultationConfig: (key: string, config: ConsultConfig) =>

@@ -913,6 +913,15 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
   border-inline-start: 1px solid var(--border);
   background: var(--muted); border-radius: var(--radius-md);
 }
+/* تقريرُ مسبار التفويض: ما ردّه خادمٌ عن بابه، بأسماء المواصفة.
+   و`overflow-wrap: anywhere` ليست زينة — قيمُه عناوينُ طويلة بلا فراغ،
+   وبدونها تمدّ البطاقةَ أفقياً وتكسر الشاشة على ٣٧٥ بكسل. */
+.probe-report {
+  margin-block-start: var(--space-2); padding: var(--space-2) var(--space-3);
+  border-inline-start: 1px solid var(--border);
+  background: var(--muted); border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
+}
 .legal-amendment > * + * { margin-top: var(--space-3); }
 /* يلتفّ: السابق والتالي والعدّاد وسطرُ الاختصارات لا تسع سطراً عند 375px. */
 .law-pager { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-block: var(--space-4); color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); }

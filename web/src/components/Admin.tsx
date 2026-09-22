@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { api, AdminSource, ConsultConfig, DocTemplate, FieldDef, FieldType, LegalStats, RegulationRequest } from '../lib/api';
+import { api, AdminSource, DiscoveredAuth, ConsultConfig, DocTemplate, FieldDef, FieldType, LegalStats, RegulationRequest } from '../lib/api';
 import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import { LegalImport } from './LegalImport';
@@ -1527,6 +1527,51 @@ function AuditTab() {
   );
 }
 
+/**
+ * ما سبره الفحص من باب التفويض — بأسماء المواصفة لا بترجمتها.
+ *
+ * وهذه شاشةُ مسؤولٍ يُطابق ما هنا بوثيقةِ خادمٍ أمامه، فـ`registration_endpoint`
+ * تُكتب كما هي: ترجمتُها تقطع المطابقة وتُضيف مصطلحاً لا يقابله شيء في
+ * الوثيقة. وهو عينُ ما يُفعل بترويسة `WWW-Authenticate` في السطر فوقه.
+ */
+function ProbeReport({ found }: { found: DiscoveredAuth }) {
+  const rows: [string, string][] = [];
+  const add = (k: string, v?: string | string[] | null) => {
+    if (v === undefined) return;
+    if (v === null) rows.push([k, '—']);
+    else if (Array.isArray(v)) { if (v.length) rows.push([k, v.join('، ')]); }
+    else rows.push([k, v]);
+  };
+  add('resource', found.resource);
+  add('authorization_servers', found.authorizationServers);
+  add('scopes_supported', found.scopesSupported);
+  add('issuer', found.issuer);
+  add('authorization_endpoint', found.authorizationEndpoint);
+  add('token_endpoint', found.tokenEndpoint);
+  add('registration_endpoint', found.registrationEndpoint);
+  add('grant_types_supported', found.grantTypesSupported);
+  add('code_challenge_methods_supported', found.codeChallengeMethodsSupported);
+  add('token_endpoint_auth_methods_supported', found.tokenEndpointAuthMethodsSupported);
+  add('response_types_supported', found.responseTypesSupported);
+  if (found.authorizationResponseIssParameterSupported !== undefined) {
+    add('authorization_response_iss_parameter_supported', String(found.authorizationResponseIssParameterSupported));
+  }
+  add('metadata_url', found.metadataUrl);
+
+  return (
+    <div className="probe-report">
+      {rows.map(([k, v]) => (
+        <p className="legal-notice-meta" key={k}>
+          <bdi>{k}</bdi>: <bdi>{v}</bdi>
+        </p>
+      ))}
+      {found.notes.map((n, i) => (
+        <p className="legal-notice-meta" key={`n${i}`}><bdi>{n}</bdi></p>
+      ))}
+    </div>
+  );
+}
+
 /* ══ المصادر الخارجية ══
  *
  * الغرضُ من الجدول أن يُربط خادمٌ بلا نشرٍ جديد — فالشاشة هي بابُه.
@@ -1539,6 +1584,10 @@ function SourcesTab() {
   const [rows, setRows] = useState<AdminSource[]>([]);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
+  /* ما سبره آخرُ فحصٍ من باب التفويض — بالمصدر، فلا يُعرض تحت صفٍّ آخر.
+     وهو عابرٌ عمداً: لا يُقيَّد في الصفّ إلا سطرُ خادم التفويض، والتفصيلُ
+     يُقرأ عند الفحص ثم يذهب. */
+  const [probe, setProbe] = useState<Record<string, DiscoveredAuth>>({});
 
   const load = () => api.adminSources().then((r) => setRows(r.sources)).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -1567,6 +1616,12 @@ function SourcesTab() {
     try {
       const res = await api.testSource(r.id);
       setMsg(res.ok ? `${r.label}: مربوط — ${res.hits} نتيجة` : `${r.label}: ${res.error ?? 'تعذّر الوصول إلى المصدر'}`);
+      setProbe((p) => {
+        const next = { ...p };
+        if (res.discovered) next[r.id] = res.discovered;
+        else delete next[r.id];
+        return next;
+      });
       await load();
     } catch (e: any) {
       setMsg(e.message ?? 'تعذّر الفحص');
@@ -1590,6 +1645,7 @@ function SourcesTab() {
             </span>
           </h4>
           {r.lastError && <p className="legal-notice-meta"><bdi>{r.lastError}</bdi></p>}
+          {probe[r.id] && <ProbeReport found={probe[r.id]} />}
 
           <div className="field">
             <label htmlFor={`ep-${r.id}`}>عنوان الخادم</label>
