@@ -26,7 +26,7 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
  * و `/review/:token` كانتا مفتوحتين للعميل الخارجي بلا حساب، وقرار هذه
  * الجلسة إخضاعهما للدخول الموحّد. الأثر موصوف في `audit/sso-report.md`.
  */
-const PUBLIC_PATHS = ['/auth/callback', '/denied', '/api/health'];
+const PUBLIC_PATHS = ['/auth/callback', '/auth/mcp/callback', '/denied', '/api/health'];
 
 /**
  * الأصول الساكنة — بادئات مُعلنة لا اجتهاد على الامتداد.

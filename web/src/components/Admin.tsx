@@ -1615,6 +1615,9 @@ function SourcesTab() {
     setBusy(r.id); setMsg('');
     try {
       const res = await api.authorizeSource(r.id);
+      /* عنوانٌ في الردّ يعني: الخادم يطلب إذنَ إنسان. والانتقال يقع هنا بعد
+         `POST` لا برابطٍ يُفتح — فلا يبدأ تفويضٌ بمجرّد فتح صفحة. */
+      if (res.url) { window.location.assign(res.url); return; }
       /* الخطوات تُعرض بالترتيب: يُعرف أين وقف لا أنه وقف. */
       const trail = res.steps.length ? ` — ${res.steps.join(' · ')}` : '';
       setMsg(res.ok ? `${r.label}: مربوط${trail}` : `${r.label}: ${res.error ?? 'تعذّر التفويض'}${trail}`);

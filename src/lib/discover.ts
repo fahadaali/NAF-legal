@@ -131,6 +131,28 @@ function wellKnownCandidates(issuer: string): string[] {
   return [...new Set(out)];
 }
 
+/**
+ * مواضعُ وثيقة الموارد حين لا يدلّ التحدّي عليها.
+ *
+ * والمواصفة تُلزم بهما معاً: «MCP clients MUST support both discovery
+ * mechanisms and use the resource metadata URL from the parsed
+ * `WWW-Authenticate` headers when present; otherwise, they MUST fall back to
+ * constructing and requesting the well-known URIs in the order listed above.»
+ * فالترويسةُ أوّلاً — وخادمٌ لا يُرسلها ليس خادماً بلا تفويض.
+ */
+export function protectedResourceCandidates(endpoint: string): string[] {
+  let u: URL;
+  try {
+    u = new URL(endpoint);
+  } catch {
+    return [];
+  }
+  const path = u.pathname.replace(/\/+$/, '');
+  const out = [`${u.origin}/.well-known/oauth-protected-resource`];
+  if (path) out.unshift(`${u.origin}/.well-known/oauth-protected-resource${path}`);
+  return out;
+}
+
 /** نصٌّ إن كان نصّاً، وإلا `undefined` — فحقلٌ مشوَّه لا يُسقط الوثيقة. */
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v ? v : undefined;
@@ -228,4 +250,24 @@ export async function discoverAuth(
 
   out.notes.push(`تعذّرت بيانات خادم التفويض: ${tried.join(' · ')}`);
   return out;
+}
+
+/**
+ * يكتشف بابَ التفويض لمصدر: من عنوان التحدّي إن جاء، وإلا من المواضع
+ * المعلومة. وهو ما تُلزم به المواصفة لا تحسينٌ زائد.
+ */
+export async function discoverForEndpoint(
+  endpoint: string,
+  timeoutMs: number,
+  fromChallenge?: string | null
+): Promise<DiscoveredAuth | null> {
+  if (fromChallenge) {
+    const found = await discoverAuth(fromChallenge, timeoutMs, endpoint);
+    if (found) return found;
+  }
+  for (const candidate of protectedResourceCandidates(endpoint)) {
+    const found = await discoverAuth(candidate, timeoutMs, endpoint);
+    if (found) return found;
+  }
+  return null;
 }
