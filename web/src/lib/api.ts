@@ -337,6 +337,7 @@ export interface AdminSource {
   maxResults: number;
   timeoutMs: number;
   tokenKey: string | null;
+  authScheme: 'bearer' | 'basic';
   lastChecked?: number | null;
   lastStatus?: string | null;
   lastError?: string | null;

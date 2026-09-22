@@ -86,7 +86,7 @@ const src = (scenario, over = {}) => ({
   id: 'mock', label: 'صوري', kind: 'mcp',
   endpoint: `http://127.0.0.1:${port}/${scenario}`,
   role: 'fiqh', enabled: true, searchTool: 'search_turath',
-  args: {}, queryField: 'q', maxResults: 5, timeoutMs: 2000, tokenKey: null, ...over,
+  args: {}, queryField: 'q', limitField: null, maxResults: 5, timeoutMs: 2000, tokenKey: null, authScheme: 'bearer', ...over,
 });
 
 let pass = 0, fail = 0;
@@ -154,6 +154,26 @@ store.clear();
 await callTool(env, src('json', { tokenKey: 'k' }), 'TOK', 'search_turath', { q: 'x' });
 const withTok = state.seenHeaders.filter((h) => h.headers.authorization === 'Bearer TOK');
 check('الرمز على المصافحة والنداء معاً', withTok.length >= 2, `count=${withTok.length}`);
+
+// ── نوعا المصادقة ──
+store.clear(); state.seenHeaders.length = 0;
+await callTool(env, src('json', { tokenKey: 'k' }), 'TOK', 'search_turath', { q: 'x' });
+check('«رمز حامل» يُرسَل كما هو', state.seenHeaders.every((h) => !h.headers.authorization || h.headers.authorization === 'Bearer TOK'));
+
+store.clear(); state.seenHeaders.length = 0;
+await callTool(env, src('json', { tokenKey: 'k', authScheme: 'basic' }), 'admin:pa55', 'search_turath', { q: 'x' });
+const basic = state.seenHeaders.find((h) => h.headers.authorization)?.headers.authorization;
+check('★ «مصادقة أساسية» تُرمَّز base64', basic === 'Basic ' + Buffer.from('admin:pa55', 'utf8').toString('base64'), String(basic));
+
+store.clear(); state.seenHeaders.length = 0;
+await callTool(env, src('json', { tokenKey: 'k', authScheme: 'basic' }), 'مستخدم:كلمةمرور', 'search_turath', { q: 'x' });
+const arabic = state.seenHeaders.find((h) => h.headers.authorization)?.headers.authorization;
+check('★ واعتمادٌ عربيّ لا يرمي (btoa وحدها ترمي)', arabic === 'Basic ' + Buffer.from('مستخدم:كلمةمرور', 'utf8').toString('base64'), String(arabic));
+
+// ── ٤٠١ تقول ما ينقص لا رقمها ──
+store.clear();
+let r401 = await call('unauth');
+check('٤٠١ بلا اعتماد: تقول «لم يُرسَل»', !r401.ok && r401.kind === 'config' && r401.message.includes('لم يُرسَل'), JSON.stringify(r401));
 
 server.close();
 console.log(`\n${pass} نجحت · ${fail} أخفقت`);

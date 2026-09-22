@@ -43,6 +43,7 @@ const src = (id, label) => ({
   args: {},
   queryField: 'q',
   limitField: null,
+  authScheme: 'bearer',
   maxResults: 8,
   timeoutMs: 1000,
   tokenKey: null,
