@@ -332,6 +332,8 @@ export interface AdminSource {
   searchTool: string;
   args: Record<string, unknown>;
   queryField: string;
+  /** اسم حقل السقف — فارغٌ يعني: لا تُرسل سقفاً لهذه الأداة. */
+  limitField: string | null;
   maxResults: number;
   timeoutMs: number;
   tokenKey: string | null;

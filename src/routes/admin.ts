@@ -380,7 +380,7 @@ app.put('/sources/:id', async (c) => {
 
   await c.env.DB.prepare(
     `UPDATE external_sources SET label = ?, endpoint = ?, role = ?, enabled = ?, search_tool = ?,
-       args_json = ?, query_field = ?, max_results = ?, timeout_ms = ?, token_key = ?, updated_at = ?
+       args_json = ?, query_field = ?, limit_field = ?, max_results = ?, timeout_ms = ?, token_key = ?, updated_at = ?
      WHERE id = ?`
   )
     .bind(
@@ -391,6 +391,7 @@ app.put('/sources/:id', async (c) => {
       typeof b.search_tool === 'string' && b.search_tool.trim() ? b.search_tool.trim() : existing.searchTool,
       args,
       typeof b.query_field === 'string' && b.query_field.trim() ? b.query_field.trim() : existing.queryField,
+      typeof b.limit_field === 'string' ? b.limit_field.trim() || null : existing.limitField,
       Math.min(Math.max(Number(b.max_results) || existing.maxResults, 1), 25),
       Math.min(Math.max(Number(b.timeout_ms) || existing.timeoutMs, 2000), 30000),
       typeof b.token_key === 'string' ? b.token_key.trim() || null : existing.tokenKey,

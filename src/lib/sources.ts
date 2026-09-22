@@ -21,6 +21,8 @@ export interface ExternalSource {
   args: Record<string, unknown>;
   /** اسم الحقل الذي يُوضع فيه نصُّ الاستعلام: `q` في تراث، `query` في الشاملة. */
   queryField: string;
+  /** اسم حقل السقف إن كان للأداة سقف — و`null` يعني: لا تُرسل سقفاً. */
+  limitField: string | null;
   maxResults: number;
   timeoutMs: number;
   tokenKey: string | null;
@@ -39,6 +41,7 @@ interface Row {
   search_tool: string;
   args_json: string;
   query_field: string;
+  limit_field: string | null;
   max_results: number;
   timeout_ms: number;
   token_key: string | null;
@@ -66,6 +69,7 @@ function toSource(r: Row): ExternalSource {
     searchTool: r.search_tool,
     args,
     queryField: r.query_field || 'q',
+    limitField: r.limit_field || null,
     maxResults: r.max_results,
     timeoutMs: r.timeout_ms,
     tokenKey: r.token_key,
@@ -76,7 +80,7 @@ function toSource(r: Row): ExternalSource {
 }
 
 const SELECT = `SELECT id, label, kind, endpoint, role, enabled, search_tool, args_json,
-                       query_field, max_results, timeout_ms, token_key,
+                       query_field, limit_field, max_results, timeout_ms, token_key,
                        last_checked, last_status, last_error
                 FROM external_sources`;
 

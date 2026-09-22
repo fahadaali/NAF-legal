@@ -186,10 +186,15 @@ export async function searchSource(
     sourceLabel: source.label,
   };
   const token = tokenFor(env, source);
+  /* السقفُ يُرسَل باسمه المسجَّل، أو لا يُرسَل.
+     و`limit` لم تكن تُفرض عبثاً: `search_turath` لا تعرفها أصلاً، وخادمٌ
+     يضبط `additionalProperties: false` يردّ الطلبَ كلَّه لأجل معاملٍ زائد —
+     فيبدو المصدرُ معطَّلاً وهو سليم. والحدُّ عندنا قائمٌ على أي حال في
+     `adapt` بسقفَي المقطع والمجموع. */
   const args: Record<string, unknown> = {
     ...source.args,
     [source.queryField]: query,
-    limit: source.maxResults,
+    ...(source.limitField ? { [source.limitField]: source.maxResults } : {}),
   };
   const outcome = await callTool(env, source, token, source.searchTool, args);
   if (!outcome.ok) {

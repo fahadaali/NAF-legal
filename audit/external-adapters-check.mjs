@@ -42,6 +42,7 @@ const src = (id, label) => ({
   searchTool: 't',
   args: {},
   queryField: 'q',
+  limitField: null,
   maxResults: 8,
   timeoutMs: 1000,
   tokenKey: null,
@@ -191,6 +192,33 @@ const capped = adapt(src('turath', 'تراث'), big);
 const total = capped.reduce((n, h) => n + h.text.length, 0);
 check('السقف الكلّي يمنع مزاحمة السياق النظامي', total <= 12000 && capped.length < 40, `chars=${total} hits=${capped.length}`);
 check('وسقفُ المقطع الواحد', capped.every((h) => h.text.length <= 1500), 'مقطعٌ تجاوز');
+
+// ── السقف يُرسَل باسمه أو لا يُرسَل ──
+const { searchSource } = await import('../src/lib/external.ts');
+const sent = [];
+const fakeEnv = {
+  KV: { async get() { return null; }, async put() {}, async delete() {} },
+  MCP_TOKENS: undefined,
+};
+globalThis.fetch = async (_url, init) => {
+  const body = JSON.parse(init.body);
+  if (body.method === 'tools/call') sent.push(body.params.arguments);
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { structuredContent: { results: [] } } }), {
+    status: body.method === 'notifications/initialized' ? 202 : 200,
+    headers: { 'content-type': 'application/json' },
+  });
+};
+
+await searchSource(fakeEnv, src('turath', 'تراث'), 'الإجارة');
+check('★ تراث: لا يُرسَل `limit` — الأداة لا تعرفها', sent.length === 1 && !('limit' in sent[0]) && sent[0].q === 'الإجارة', JSON.stringify(sent[0]));
+
+sent.length = 0;
+await searchSource(fakeEnv, { ...src('shamela', 'الشاملة'), queryField: 'query', limitField: 'limit', maxResults: 6, args: { mode: 'near' } }, 'الإجارة');
+check('الشاملة: يُرسَل `limit` باسمه مع معاملاتها', sent.length === 1 && sent[0].limit === 6 && sent[0].query === 'الإجارة' && sent[0].mode === 'near', JSON.stringify(sent[0]));
+
+sent.length = 0;
+await searchSource(fakeEnv, { ...src('x', 'آخر'), limitField: 'top_k', maxResults: 4 }, 'س');
+check('حقلُ سقفٍ باسمٍ آخر يُحترم', sent.length === 1 && sent[0].top_k === 4 && !('limit' in sent[0]), JSON.stringify(sent[0]));
 
 console.log(`\n${pass} نجحت · ${fail} أخفقت`);
 process.exit(fail ? 1 : 0);

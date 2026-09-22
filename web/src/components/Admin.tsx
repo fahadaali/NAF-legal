@@ -1552,7 +1552,7 @@ function SourcesTab() {
       await api.saveSource(r.id, {
         label: r.label, endpoint: r.endpoint, role: r.role, enabled: r.enabled,
         search_tool: r.searchTool, args_json: JSON.stringify(r.args),
-        query_field: r.queryField, max_results: r.maxResults, timeout_ms: r.timeoutMs,
+        query_field: r.queryField, limit_field: r.limitField, max_results: r.maxResults, timeout_ms: r.timeoutMs,
         token_key: r.tokenKey,
       });
       setMsg(`تم الحفظ: ${r.label}`);
@@ -1597,6 +1597,15 @@ function SourcesTab() {
           <div className="field">
             <label htmlFor={`tool-${r.id}`}>أداة البحث</label>
             <input id={`tool-${r.id}`} value={r.searchTool} onChange={(e) => patch(r.id, { searchTool: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`qf-${r.id}`}>حقل الاستعلام</label>
+            <input id={`qf-${r.id}`} value={r.queryField} onChange={(e) => patch(r.id, { queryField: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`lf-${r.id}`}>حقل السقف</label>
+            <input id={`lf-${r.id}`} value={r.limitField ?? ''} placeholder="اتركه فارغاً إن لم تقبل الأداة سقفاً"
+              onChange={(e) => patch(r.id, { limitField: e.target.value || null })} />
           </div>
           <div className="field">
             <label htmlFor={`role-${r.id}`}>الدور</label>

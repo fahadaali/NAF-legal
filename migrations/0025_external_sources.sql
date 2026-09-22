@@ -27,6 +27,12 @@ CREATE TABLE IF NOT EXISTS external_sources (
   args_json     TEXT NOT NULL DEFAULT '{}',
   -- اسم الحقل الذي يُوضع فيه نصُّ الاستعلام: `q` في تراث، `query` في الشاملة.
   query_field   TEXT NOT NULL DEFAULT 'q',
+  -- واسمُ حقل السقف إن كان للأداة سقف. و**لا يُفترض**: `shamela_search_phrase`
+  -- تقبل `limit`، و`search_turath` لا تعرفها أصلاً (معاملاتُها: q وpage
+  -- وbook_id وauthor_id وcat_id). ومعاملٌ لا تعرفه الأداة يُتجاهل في خادمٍ
+  -- متساهل ويُرفض الطلبُ كلُّه في خادمٍ يضبط `additionalProperties: false`.
+  -- فالفارغ يعني: لا تُرسل سقفاً، وحُدّ النتائج عندنا بعد وصولها.
+  limit_field   TEXT,
   max_results   INTEGER NOT NULL DEFAULT 8,
   timeout_ms    INTEGER NOT NULL DEFAULT 12000,
   token_key     TEXT,                      -- المفتاح في MCP_TOKENS، لا الرمز
@@ -44,9 +50,9 @@ CREATE INDEX IF NOT EXISTS idx_external_sources_enabled ON external_sources(enab
 -- الصفّان مبدئيّان: معطَّلان وبلا عنوان. الشكل مأخوذ من فحصِ الخادمين حيّين،
 -- فأسماء الأدوات وحقول الاستعلام صحيحة لا مُخمَّنة — ويبقى العنوان وحده.
 INSERT OR IGNORE INTO external_sources
-  (id, label, kind, endpoint, role, enabled, search_tool, args_json, query_field, max_results, timeout_ms, token_key, created_at, updated_at)
+  (id, label, kind, endpoint, role, enabled, search_tool, args_json, query_field, limit_field, max_results, timeout_ms, token_key, created_at, updated_at)
 VALUES
   ('turath',  'تراث',            'mcp', NULL, 'fiqh', 0, 'search_turath',
-   '{}', 'q', 8, 12000, 'turath',  unixepoch() * 1000, unixepoch() * 1000),
+   '{}', 'q', NULL, 8, 12000, 'turath',  unixepoch() * 1000, unixepoch() * 1000),
   ('shamela', 'المكتبة الشاملة', 'mcp', NULL, 'fiqh', 0, 'shamela_search_phrase',
-   '{"mode":"near","distance":5,"response_format":"json"}', 'query', 8, 15000, 'shamela', unixepoch() * 1000, unixepoch() * 1000);
+   '{"mode":"near","distance":5,"response_format":"json"}', 'query', 'limit', 8, 15000, 'shamela', unixepoch() * 1000, unixepoch() * 1000);
