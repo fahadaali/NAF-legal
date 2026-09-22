@@ -1553,7 +1553,7 @@ function SourcesTab() {
         label: r.label, endpoint: r.endpoint, role: r.role, enabled: r.enabled,
         search_tool: r.searchTool, args_json: JSON.stringify(r.args),
         query_field: r.queryField, limit_field: r.limitField, max_results: r.maxResults, timeout_ms: r.timeoutMs,
-        token_key: r.tokenKey,
+        token_key: r.tokenKey, auth_scheme: r.authScheme,
       });
       setMsg(`تم الحفظ: ${r.label}`);
       await load();
@@ -1578,6 +1578,7 @@ function SourcesTab() {
       <p className="muted-line">
         خوادم الكتب التي تُقرأ منها للتأصيل. و«مفتاح الرمز» اسمُ المفتاح داخل السرّ لا قيمتُه —
         والقيمة تُضبط بـ<bdi>wrangler secret put MCP_TOKENS</bdi> ولا تُعرض هنا. واتركه فارغاً لخادمٍ عامّ.
+        والقيمة رمزٌ في «رمز حامل»، و<bdi>مستخدم:كلمة مرور</bdi> في «مصادقة أساسية».
       </p>
       {msg && <div className="notice-line">{msg}</div>}
       {rows.map((r) => (
@@ -1609,9 +1610,17 @@ function SourcesTab() {
               onChange={(e) => patch(r.id, { limitField: e.target.value || null })} />
           </div>
           <div className="field">
-            <label htmlFor={`tk-${r.id}`}>مفتاح الرمز</label>
-            <input id={`tk-${r.id}`} value={r.tokenKey ?? ''} placeholder="اتركه فارغاً لخادمٍ عامّ لا يطلب رمزاً"
+            <label htmlFor={`tk-${r.id}`}>مفتاح الاعتماد</label>
+            <input id={`tk-${r.id}`} value={r.tokenKey ?? ''} placeholder="اتركه فارغاً لخادمٍ عامّ لا يطلب اعتماداً"
               onChange={(e) => patch(r.id, { tokenKey: e.target.value || null })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`as-${r.id}`}>نوع المصادقة</label>
+            <select id={`as-${r.id}`} value={r.authScheme}
+              onChange={(e) => patch(r.id, { authScheme: e.target.value as 'bearer' | 'basic' })}>
+              <option value="bearer">رمز حامل</option>
+              <option value="basic">مصادقة أساسية</option>
+            </select>
           </div>
           <div className="field">
             <label htmlFor={`role-${r.id}`}>الدور</label>

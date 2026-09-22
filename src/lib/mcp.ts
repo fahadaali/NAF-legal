@@ -63,7 +63,32 @@ function sessionKey(sourceId: string): string {
   return `mcp:${sourceId}`;
 }
 
-/** ترويسات كل طلب. والرمز على **كلِّ** طلب — الجلسة لا تنوب عنه (المواصفة). */
+/**
+ * ترميزُ base64 سليمٌ لغير اللاتينية.
+ *
+ * `btoa` تقبل بايتاتٍ لاتينية وحدها، فترمي على حرفٍ عربيّ واحد في كلمة
+ * المرور — واعتمادُ خادمٍ عربيّ ليس فرضاً بعيداً. فيُرمَّز النصّ UTF-8 أوّلاً
+ * ثم تُغذّى `btoa` بايتاتِه. وRFC 7617 يجعل UTF-8 هو المُفترض في الأساسية.
+ */
+function base64(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+
+/**
+ * قيمةُ ترويسة التفويض حسب نوع مصادقة المصدر.
+ *
+ * والقيمةُ واحدةٌ في السرّ ونوعُها في الصفّ: رمزٌ يُرسَل كما هو، أو
+ * «مستخدم:كلمة مرور» تُرمَّز. فلا حقلَ اسمِ مستخدمٍ في شاشة ولا كلمةَ مرورٍ
+ * تُقرأ فوق كتف.
+ */
+function authorization(credential: string, scheme: ExternalSource['authScheme']): string {
+  return scheme === 'basic' ? `Basic ${base64(credential)}` : `Bearer ${credential}`;
+}
+
+/** ترويسات كل طلب. والاعتماد على **كلِّ** طلب — الجلسة لا تنوب عنه (المواصفة). */
 function headers(
   source: ExternalSource,
   token: string | null,
@@ -82,7 +107,7 @@ function headers(
   if (name) h['mcp-name'] = name;
   if (protocolVersion) h['mcp-protocol-version'] = protocolVersion;
   if (sessionId) h['mcp-session-id'] = sessionId;
-  if (token) h.authorization = `Bearer ${token}`;
+  if (token) h.authorization = authorization(token, source.authScheme);
   return h;
 }
 
@@ -182,10 +207,11 @@ async function handshake(
   }
 
   if (!res.ok) {
+    const authFailure = res.status === 401 || res.status === 403;
     return {
       ok: false,
-      kind: res.status === 401 || res.status === 403 ? 'config' : 'transport',
-      message: `initialize ${res.status}`,
+      kind: authFailure ? 'config' : 'transport',
+      message: authFailure ? `مصافحة ${authProblem(res, !!token)}` : `initialize ${res.status}`,
     };
   }
   if (body?.error) return { ok: false, kind: 'protocol', message: body.error.message ?? 'initialize error' };
@@ -242,7 +268,7 @@ export async function callTool(
   args: Record<string, unknown>
 ): Promise<McpOutcome> {
   if (!source.endpoint) return { ok: false, kind: 'config', message: 'لا عنوان للمصدر' };
-  if (source.tokenKey && !token) return { ok: false, kind: 'config', message: 'رمز المصدر غير مضبوط' };
+  if (source.tokenKey && !token) return { ok: false, kind: 'config', message: 'اعتماد المصدر غير مضبوط' };
 
   let session = await cachedSession(env, source.id);
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -277,10 +303,11 @@ export async function callTool(
       continue;
     }
     if (!res.ok) {
+      const authFailure = res.status === 401 || res.status === 403;
       return {
         ok: false,
-        kind: res.status === 401 || res.status === 403 ? 'config' : 'transport',
-        message: `${tool} ${res.status}`,
+        kind: authFailure ? 'config' : 'transport',
+        message: authFailure ? `${tool} ${authProblem(res, !!token)}` : `${tool} ${res.status}`,
       };
     }
     if (body?.error) return { ok: false, kind: 'protocol', message: body.error.message ?? 'خطأ بروتوكول' };
@@ -327,6 +354,37 @@ function textOf(result: any): string {
     .map((b: any) => b.text)
     .join('\n')
     .trim();
+}
+
+/**
+ * رسالةُ ٤٠١/٤٠٣ — تقول ما ينقص لا رقم الحالة وحده.
+ *
+ * كان الردّ «initialize 401» فحسب: صحيحٌ ولا يُفعَل به شيء. والمواصفة تُلزم
+ * الخادم بترويسة `WWW-Authenticate` على الـ٤٠١ — وفيها يفترق البابان:
+ *   • `Bearer realm=…` أو تحدٍّ مجرَّد → رمزٌ ثابت يكفي: يُضبط سرُّ
+ *     `MCP_TOKENS` ويُسمّى مفتاحُه في الشاشة.
+ *   • `Bearer resource_metadata="…"` → الخادم على OAuth 2.1: يدلّ على وثيقة
+ *     الموارد المحمية (RFC 9728)، ورمزٌ ثابتٌ لا يُجزئ فيه.
+ *
+ * والفرق بينهما هو الفرق بين دقيقةٍ ومشروع، فيُقال للمسؤول في شاشته.
+ */
+function authProblem(res: Response, sentToken: boolean): string {
+  const parts = [`${res.status}`];
+  parts.push(sentToken ? 'والرمز المرسَل مرفوض' : 'ولم يُرسَل رمز');
+  const challenge = res.headers.get('www-authenticate');
+  if (challenge) {
+    parts.push(
+      /resource_metadata/i.test(challenge)
+        ? 'والخادم على OAuth — لا يكفيه اعتمادٌ ثابت'
+        : /^\s*basic/i.test(challenge)
+          ? 'والخادم على مصادقة أساسية: اضبط «نوع المصادقة» أساسية، والقيمةُ «مستخدم:كلمة مرور» في سرّ MCP_TOKENS'
+          : 'والخادم يطلب اعتماداً ثابتاً: اضبط سرّ MCP_TOKENS وسمِّ مفتاحه في «مفتاح الاعتماد»'
+    );
+    parts.push(`WWW-Authenticate: ${challenge}`);
+  } else if (!sentToken) {
+    parts.push('اضبط سرّ MCP_TOKENS وسمِّ مفتاحه في «مفتاح الاعتماد»');
+  }
+  return parts.join(' · ');
 }
 
 function reason(e: unknown): string {

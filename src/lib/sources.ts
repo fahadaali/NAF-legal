@@ -8,6 +8,7 @@
 import type { Env } from '../types';
 
 export type SourceRole = 'fiqh' | 'legal';
+export type AuthScheme = 'bearer' | 'basic';
 
 export interface ExternalSource {
   id: string;
@@ -25,7 +26,10 @@ export interface ExternalSource {
   limitField: string | null;
   maxResults: number;
   timeoutMs: number;
+  /** اسم المفتاح في `MCP_TOKENS` — لا قيمتُه. */
   tokenKey: string | null;
+  /** `bearer` القيمةُ رمزٌ يُرسَل كما هو · `basic` القيمةُ «مستخدم:كلمة مرور». */
+  authScheme: AuthScheme;
   lastChecked?: number | null;
   lastStatus?: string | null;
   lastError?: string | null;
@@ -45,6 +49,7 @@ interface Row {
   max_results: number;
   timeout_ms: number;
   token_key: string | null;
+  auth_scheme: string;
   last_checked: number | null;
   last_status: string | null;
   last_error: string | null;
@@ -73,6 +78,7 @@ function toSource(r: Row): ExternalSource {
     maxResults: r.max_results,
     timeoutMs: r.timeout_ms,
     tokenKey: r.token_key,
+    authScheme: r.auth_scheme === 'basic' ? 'basic' : 'bearer',
     lastChecked: r.last_checked,
     lastStatus: r.last_status,
     lastError: r.last_error,
@@ -80,7 +86,7 @@ function toSource(r: Row): ExternalSource {
 }
 
 const SELECT = `SELECT id, label, kind, endpoint, role, enabled, search_tool, args_json,
-                       query_field, limit_field, max_results, timeout_ms, token_key,
+                       query_field, limit_field, max_results, timeout_ms, token_key, auth_scheme,
                        last_checked, last_status, last_error
                 FROM external_sources`;
 
