@@ -35,7 +35,10 @@ CREATE TABLE IF NOT EXISTS external_sources (
   limit_field   TEXT,
   max_results   INTEGER NOT NULL DEFAULT 8,
   timeout_ms    INTEGER NOT NULL DEFAULT 12000,
-  token_key     TEXT,                      -- المفتاح في MCP_TOKENS، لا الرمز
+  -- المفتاح في MCP_TOKENS، لا الرمز. وفارغٌ بالافتراض: الخادم العامّ لا يطلب
+  -- رمزاً، ومفتاحٌ مضبوطٌ بلا سرٍّ يقابله يردّ «رمز المصدر غير مضبوط» —
+  -- فيُمنع مصدرٌ سليم لأجل إعدادٍ لم يُطلب.
+  token_key     TEXT,
   -- آخر فحصٍ ونتيجته — يملؤهما زرُّ الفحص في لوحة الإدارة، فيُقرأ سببُ
   -- التعذّر في الشاشة بدل أن يُبحث عنه في السجلّات.
   last_checked  INTEGER,
@@ -48,11 +51,12 @@ CREATE TABLE IF NOT EXISTS external_sources (
 CREATE INDEX IF NOT EXISTS idx_external_sources_enabled ON external_sources(enabled, role);
 
 -- الصفّان مبدئيّان: معطَّلان وبلا عنوان. الشكل مأخوذ من فحصِ الخادمين حيّين،
--- فأسماء الأدوات وحقول الاستعلام صحيحة لا مُخمَّنة — ويبقى العنوان وحده.
+-- فأسماء الأدوات وحقولها صحيحة لا مُخمَّنة — ويبقى العنوان وحده، ويُضبط من
+-- لوحة الإدارة لا من هنا: الجدول بابُه الشاشة.
 INSERT OR IGNORE INTO external_sources
   (id, label, kind, endpoint, role, enabled, search_tool, args_json, query_field, limit_field, max_results, timeout_ms, token_key, created_at, updated_at)
 VALUES
   ('turath',  'تراث',            'mcp', NULL, 'fiqh', 0, 'search_turath',
-   '{}', 'q', NULL, 8, 12000, 'turath',  unixepoch() * 1000, unixepoch() * 1000),
+   '{}', 'q', NULL, 8, 12000, NULL, unixepoch() * 1000, unixepoch() * 1000),
   ('shamela', 'المكتبة الشاملة', 'mcp', NULL, 'fiqh', 0, 'shamela_search_phrase',
-   '{"mode":"near","distance":5,"response_format":"json"}', 'query', 'limit', 8, 15000, 'shamela', unixepoch() * 1000, unixepoch() * 1000);
+   '{"mode":"near","distance":5,"response_format":"json"}', 'query', 'limit', 8, 15000, NULL, unixepoch() * 1000, unixepoch() * 1000);

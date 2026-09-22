@@ -1576,7 +1576,8 @@ function SourcesTab() {
   return (
     <div className="admin-panel">
       <p className="muted-line">
-        خوادم الكتب التي تُقرأ منها للتأصيل. والرمز يُضبط بـ<bdi>wrangler secret put MCP_TOKENS</bdi> ولا يُعرض هنا.
+        خوادم الكتب التي تُقرأ منها للتأصيل. و«مفتاح الرمز» اسمُ المفتاح داخل السرّ لا قيمتُه —
+        والقيمة تُضبط بـ<bdi>wrangler secret put MCP_TOKENS</bdi> ولا تُعرض هنا. واتركه فارغاً لخادمٍ عامّ.
       </p>
       {msg && <div className="notice-line">{msg}</div>}
       {rows.map((r) => (
@@ -1606,6 +1607,11 @@ function SourcesTab() {
             <label htmlFor={`lf-${r.id}`}>حقل السقف</label>
             <input id={`lf-${r.id}`} value={r.limitField ?? ''} placeholder="اتركه فارغاً إن لم تقبل الأداة سقفاً"
               onChange={(e) => patch(r.id, { limitField: e.target.value || null })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`tk-${r.id}`}>مفتاح الرمز</label>
+            <input id={`tk-${r.id}`} value={r.tokenKey ?? ''} placeholder="اتركه فارغاً لخادمٍ عامّ لا يطلب رمزاً"
+              onChange={(e) => patch(r.id, { tokenKey: e.target.value || null })} />
           </div>
           <div className="field">
             <label htmlFor={`role-${r.id}`}>الدور</label>
