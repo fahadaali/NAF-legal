@@ -13,6 +13,7 @@
  * معاً — كما تُحمل تنبيهات التعديل في `noticeLines()` بـ`lib/rag.ts`.
  */
 import { callTool } from './mcp';
+import { accessTokenFor } from './oauth';
 import { tokenFor, type ExternalSource } from './sources';
 import type { Env } from '../types';
 
@@ -193,7 +194,11 @@ export async function searchSource(
     sourceId: source.id,
     sourceLabel: source.label,
   };
-  const token = tokenFor(env, source);
+  /* الرمز: قيمةٌ من السرّ في الأنواع الثابتة، ومسكوكٌ يُجدَّد في التفويض.
+     و`accessTokenFor` لا ترمي وتردّ `null` حين يلزم تفويض — فيتولّاه الحارس
+     في `callTool` برسالةٍ تُقرأ. */
+  const token =
+    source.authScheme === 'oauth' ? await accessTokenFor(env, source) : tokenFor(env, source);
   /* السقفُ يُرسَل باسمه المسجَّل، أو لا يُرسَل.
      و`limit` لم تكن تُفرض عبثاً: `search_turath` لا تعرفها أصلاً، وخادمٌ
      يضبط `additionalProperties: false` يردّ الطلبَ كلَّه لأجل معاملٍ زائد —

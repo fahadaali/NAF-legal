@@ -1611,6 +1611,30 @@ function SourcesTab() {
     } finally { setBusy(''); }
   };
 
+  const authorize = async (r: AdminSource) => {
+    setBusy(r.id); setMsg('');
+    try {
+      const res = await api.authorizeSource(r.id);
+      /* الخطوات تُعرض بالترتيب: يُعرف أين وقف لا أنه وقف. */
+      const trail = res.steps.length ? ` — ${res.steps.join(' · ')}` : '';
+      setMsg(res.ok ? `${r.label}: مربوط${trail}` : `${r.label}: ${res.error ?? 'تعذّر التفويض'}${trail}`);
+      await load();
+    } catch (e: any) {
+      setMsg(e.message ?? 'تعذّر التفويض');
+    } finally { setBusy(''); }
+  };
+
+  const revoke = async (r: AdminSource) => {
+    setBusy(r.id); setMsg('');
+    try {
+      await api.revokeSource(r.id);
+      setMsg(`${r.label}: سُحب التفويض`);
+      await load();
+    } catch (e: any) {
+      setMsg(e.message ?? 'تعذّر سحب التفويض');
+    } finally { setBusy(''); }
+  };
+
   const test = async (r: AdminSource) => {
     setBusy(r.id); setMsg('');
     try {
@@ -1634,6 +1658,7 @@ function SourcesTab() {
         خوادم الكتب التي تُقرأ منها للتأصيل. و«مفتاح الرمز» اسمُ المفتاح داخل السرّ لا قيمتُه —
         والقيمة تُضبط بـ<bdi>wrangler secret put MCP_TOKENS</bdi> ولا تُعرض هنا. واتركه فارغاً لخادمٍ عامّ.
         والقيمة رمزٌ في «رمز حامل»، و<bdi>مستخدم:كلمة مرور</bdi> في «مصادقة أساسية».
+        و«تفويض» لا سرَّ له: تُسجَّل المنصة عميلاً عند خادم التفويض فتأخذ رمزاً باسمها، ويُجدَّد وحده.
       </p>
       {msg && <div className="notice-line">{msg}</div>}
       {rows.map((r) => (
@@ -1665,17 +1690,20 @@ function SourcesTab() {
             <input id={`lf-${r.id}`} value={r.limitField ?? ''} placeholder="اتركه فارغاً إن لم تقبل الأداة سقفاً"
               onChange={(e) => patch(r.id, { limitField: e.target.value || null })} />
           </div>
-          <div className="field">
+          {/* و«مفتاح الاعتماد» يُخفى في التفويض: لا قيمةَ في سرٍّ يُسمّى مفتاحُها —
+              الرمزُ يُسَكّ ويُختم. وحقلٌ لا يفعل شيئاً أسوأ من حقلٍ غائب. */}
+          {r.authScheme !== 'oauth' && <div className="field">
             <label htmlFor={`tk-${r.id}`}>مفتاح الاعتماد</label>
             <input id={`tk-${r.id}`} value={r.tokenKey ?? ''} placeholder="اتركه فارغاً لخادمٍ عامّ لا يطلب اعتماداً"
               onChange={(e) => patch(r.id, { tokenKey: e.target.value || null })} />
-          </div>
+          </div>}
           <div className="field">
             <label htmlFor={`as-${r.id}`}>نوع المصادقة</label>
             <select id={`as-${r.id}`} value={r.authScheme}
-              onChange={(e) => patch(r.id, { authScheme: e.target.value as 'bearer' | 'basic' })}>
+              onChange={(e) => patch(r.id, { authScheme: e.target.value as AdminSource['authScheme'] })}>
               <option value="bearer">رمز حامل</option>
               <option value="basic">مصادقة أساسية</option>
+              <option value="oauth">تفويض</option>
             </select>
           </div>
           <div className="field">
@@ -1691,6 +1719,12 @@ function SourcesTab() {
           </label>
           <div className="modal-foot">
             <button className="btn-sm" onClick={() => test(r)} disabled={busy === r.id}>فحص</button>
+            {r.authScheme === 'oauth' && (
+              <>
+                <button className="btn-sm" onClick={() => authorize(r)} disabled={busy === r.id}>بدء التفويض</button>
+                <button className="btn-sm" onClick={() => revoke(r)} disabled={busy === r.id}>سحب التفويض</button>
+              </>
+            )}
             <button className="btn-sm primary" onClick={() => save(r)} disabled={busy === r.id}>حفظ</button>
           </div>
         </div>
