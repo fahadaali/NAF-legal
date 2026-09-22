@@ -316,7 +316,49 @@ export interface PlatformSearch {
     articles: LegalArticle[];
     documents: { id: string; title: string; category: string | null; source_authority: string | null; status: string }[];
   };
+  /** مجموعةٌ لكلّ مصدرٍ خارجيّ، بحالتها — ومصدرٌ لم يُجب يُقال ولا يُسكت عنه. */
+  external: ExternalGroup[];
   mode: string;
+}
+
+/** صفُّ مصدرٍ خارجيّ في لوحة الإدارة. */
+export interface AdminSource {
+  id: string;
+  label: string;
+  kind: 'mcp';
+  endpoint: string | null;
+  role: 'fiqh' | 'legal';
+  enabled: boolean;
+  searchTool: string;
+  args: Record<string, unknown>;
+  queryField: string;
+  maxResults: number;
+  timeoutMs: number;
+  tokenKey: string | null;
+  lastChecked?: number | null;
+  lastStatus?: string | null;
+  lastError?: string | null;
+}
+
+/** نتائجُ مصدرٍ خارجيّ واحد، وحالُه. */
+export interface ExternalGroup {
+  sourceId: string;
+  sourceLabel: string;
+  status: 'ok' | 'unreachable' | 'unconfigured';
+  hits: ExternalSearchHit[];
+}
+
+export interface ExternalSearchHit {
+  /** الكتاب. */
+  title: string;
+  author?: string;
+  /** الجزء والصفحة. */
+  ref?: string;
+  category?: string;
+  text: string;
+  url?: string;
+  /** من المتن أم من الحاشية. والحاشية كلام المحقِّق لا المصنِّف. */
+  section?: 'متن' | 'حاشية';
 }
 
 /** نظامٌ مستورد وحالُ مواده. */
@@ -920,13 +962,17 @@ export const api = {
   /**
    * البحث في المنصة — لفظيٌّ بلا ذكاء اصطناعي.
    *
-   * `scope` يحصره في موضع: `chats` أو `outputs` أو `kb`، و`all` يعمّها.
+   * `scope` يحصره في موضع: `chats` أو `outputs` أو `kb` أو **معرّف مصدرٍ
+   * خارجيّ**، و`all` يعمّها.
+   * و`semantic` يُفعّل الترتيب الدلاليّ لنتائج المصادر الخارجية. واللفظيُّ
+   * يبقى الافتراض: فوريٌّ بلا نداء نموذج، وأدقُّ حين يُعرف اللفظ.
    * و`folder` يحصره في قضية — للشريط الجانبي حين تكون شارةُ قضيةٍ مضاءة.
    * ولا يمسّ قاعدة المعرفة: تلك مشتركة لا تخصّ قضيةً بعينها.
    */
-  search: (q: string, scope: 'all' | 'chats' | 'outputs' | 'kb' = 'all', folder?: string) =>
+  search: (q: string, scope = 'all', folder?: string, semantic = false) =>
     req<PlatformSearch>(
-      `/search?q=${encodeURIComponent(q)}&scope=${scope}${folder ? `&folder=${encodeURIComponent(folder)}` : ''}`
+      `/search?q=${encodeURIComponent(q)}&scope=${encodeURIComponent(scope)}` +
+        `${folder ? `&folder=${encodeURIComponent(folder)}` : ''}${semantic ? '&semantic=1' : ''}`
     ),
 
   // بنك البنود
@@ -968,6 +1014,13 @@ export const api = {
 
   // إعداد نماذج الاستشارات
   consultationConfigs: () => req<{ configs: ConsultConfig[] }>('/consultations/configs'),
+  // المصادر الخارجية — الرمز لا يمرّ من هنا: مكانه `wrangler secret put`.
+  adminSources: () => req<{ sources: AdminSource[] }>('/admin/sources'),
+  saveSource: (id: string, payload: Record<string, unknown>) =>
+    req<{ ok: boolean; source: AdminSource }>(`/admin/sources/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  testSource: (id: string) =>
+    req<{ ok: boolean; status: string; error?: string; hits?: number }>(`/admin/sources/${id}/test`, { method: 'POST' }),
+
   adminConsultationConfigs: () => req<{ configs: ConsultConfig[] }>('/admin/consultation-configs'),
   saveConsultationConfig: (key: string, config: ConsultConfig) =>
     req<{ config: ConsultConfig }>(`/admin/consultation-configs/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(config) }),

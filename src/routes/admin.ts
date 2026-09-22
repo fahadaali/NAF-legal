@@ -13,6 +13,8 @@ import {
   normalizeDocTemplate,
 } from '../lib/docTemplate';
 import { uuid } from '../lib/crypto';
+import { listSources, getSource, recordCheck } from '../lib/sources';
+import { searchSource } from '../lib/external';
 import { notify } from '../lib/notify';
 import type { Env, Variables } from '../types';
 
@@ -348,6 +350,74 @@ app.delete('/consultation-configs/:key', async (c) => {
   await c.env.DB.prepare('DELETE FROM consultation_configs WHERE key = ?').bind(key).run();
   await audit(c, 'consultation_config.reset', key, {});
   return c.json({ ok: true, config: await getEffectiveConfig(c.env, key) });
+});
+
+// ── المصادر الخارجية (خوادم MCP) ──
+app.get('/sources', async (c) => c.json({ sources: await listSources(c.env) }));
+
+/* الحقول القابلة للتحرير — قائمةٌ بيضاء لا `...body`.
+   `id` و`kind` ليسا منها: تبديلُ معرّفٍ يفصل الصفَّ عن مفتاحه في `MCP_TOKENS`
+   وعن محوّله في `lib/external.ts` معاً، فيصير مصدراً بلا قارئ. */
+app.put('/sources/:id', async (c) => {
+  const id = c.req.param('id');
+  const existing = await getSource(c.env, id);
+  if (!existing) return c.json({ error: 'المصدر غير موجود' }, 404);
+  const b = await c.req.json().catch(() => ({} as any));
+
+  const endpoint = typeof b.endpoint === 'string' ? b.endpoint.trim() : existing.endpoint;
+  /* العنوان `https` أو لا شيء: رمزُ وصولٍ على `http` يُرسَل بلا تعمية.
+     والفارغ مسموح — هو حالُ مصدرٍ لم يُضبط بعد. */
+  if (endpoint && !endpoint.startsWith('https://')) {
+    return c.json({ error: 'العنوان يجب أن يبدأ بـ https://' }, 400);
+  }
+  const role = b.role === 'legal' || b.role === 'fiqh' ? b.role : existing.role;
+  const args = typeof b.args_json === 'string' ? b.args_json : JSON.stringify(existing.args);
+  try {
+    JSON.parse(args);
+  } catch {
+    return c.json({ error: 'المعاملات ليست JSON صحيحاً' }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE external_sources SET label = ?, endpoint = ?, role = ?, enabled = ?, search_tool = ?,
+       args_json = ?, query_field = ?, max_results = ?, timeout_ms = ?, token_key = ?, updated_at = ?
+     WHERE id = ?`
+  )
+    .bind(
+      typeof b.label === 'string' && b.label.trim() ? b.label.trim() : existing.label,
+      endpoint || null,
+      role,
+      b.enabled === true || b.enabled === 1 ? 1 : 0,
+      typeof b.search_tool === 'string' && b.search_tool.trim() ? b.search_tool.trim() : existing.searchTool,
+      args,
+      typeof b.query_field === 'string' && b.query_field.trim() ? b.query_field.trim() : existing.queryField,
+      Math.min(Math.max(Number(b.max_results) || existing.maxResults, 1), 25),
+      Math.min(Math.max(Number(b.timeout_ms) || existing.timeoutMs, 2000), 30000),
+      typeof b.token_key === 'string' ? b.token_key.trim() || null : existing.tokenKey,
+      Date.now(),
+      id
+    )
+    .run();
+  // والرمز نفسه لا يمرّ من هنا ولا يُسجَّل: مكانه `wrangler secret put`.
+  await audit(c, 'external_source.update', id, { role, enabled: b.enabled === true });
+  return c.json({ ok: true, source: await getSource(c.env, id) });
+});
+
+/* فحصٌ حيّ: مصافحةٌ واستعلامٌ قصير، ونتيجتُه تُقيَّد في الصفّ.
+   فسببُ التعذّر يُقرأ في الشاشة — «غير مربوط» أم «تعذّر الوصول» — لا في
+   سجلّات العامل. */
+app.post('/sources/:id/test', async (c) => {
+  const id = c.req.param('id');
+  const source = await getSource(c.env, id);
+  if (!source) return c.json({ error: 'المصدر غير موجود' }, 404);
+  if (!source.endpoint) {
+    await recordCheck(c.env, id, 'unconfigured', 'لا عنوان للمصدر');
+    return c.json({ ok: false, status: 'unconfigured', error: 'لا عنوان للمصدر' });
+  }
+  const outcome = await searchSource(c.env, source, 'الإجارة');
+  await recordCheck(c.env, id, outcome.status, outcome.error ?? null);
+  await audit(c, 'external_source.test', id, { status: outcome.status });
+  return c.json({ ok: outcome.status === 'ok', status: outcome.status, error: outcome.error, hits: outcome.hits.length });
 });
 
 // ── خلاصة أخبار جريدة أم القرى (§5) ──
