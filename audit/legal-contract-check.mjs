@@ -2433,6 +2433,32 @@ await check('٢٦ · ولا تحذيرَ يُشتقّ في سياق المساع
   assert.ok(legacy.includes(`تنبيه: ${lib.AMENDMENT_NOTICE}`), 'المادة القديمة فقدت تحذيرها: ' + legacy);
 });
 
+await check('٢٦ · وسببُ غياب المادة عن استدعائها بمعرّفها بالشرط الذي يحجبها — لا بعمودها', async () => {
+  // حلّ تاريخُ إلغائها المجدول بعد رفعها وعمودُها «نافذ»: ملغاةٌ اليوم لا
+  // «بانتظار المراجعة». والتاريخ يُنقل إلى الماضي كما في ٢٤، ثم يُردّ.
+  q("UPDATE legal_chunks SET scheduled_repeal_from = ? WHERE id = 'سادسة/art-004'", PAST);
+  try {
+    assert.equal(q("SELECT retrieval_status FROM legal_chunks WHERE id = 'سادسة/art-004'")[0].retrieval_status,
+      lib.RETRIEVAL_EFFECTIVE, 'الفحص لا يفحص شيئاً: العمود ليس «نافذ»');
+    assert.equal(await lib.getChunkById(env, 'سادسة/art-004'), null);
+    assert.equal(await lib.hiddenReason(env, 'سادسة/art-004'), 'repealed');
+  } finally {
+    q("UPDATE legal_chunks SET scheduled_repeal_from = ? WHERE id = 'سادسة/art-004'", FUTURE);
+  }
+  assert.equal(await lib.hiddenReason(env, 'ثامنة/2'), 'repealed');
+  assert.equal(await lib.hiddenReason(env, 'لا-وجود-لها/art-1'), 'missing');
+  // ومحجوبةٌ لعطبٍ تنتظر المراجعة — لا ملغاة.
+  q("UPDATE legal_chunks SET needs_review = 1, has_defect = 1, defect_kind = 'preamble_leak', review_status = 'pending' WHERE id = 'ثامنة/3'");
+  try {
+    assert.equal(await lib.getChunkById(env, 'ثامنة/3'), null, 'المعطوبة لم تُحجب — الفحص لا يفحص شيئاً');
+    assert.equal(await lib.hiddenReason(env, 'ثامنة/3'), 'review');
+  } finally {
+    q("UPDATE legal_chunks SET needs_review = 0, has_defect = 0, defect_kind = NULL WHERE id = 'ثامنة/3'");
+  }
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /const reason = await hiddenReason\(c\.env, id\)/, 'مسار المادة لا يسأل عن السبب بالشرط');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

@@ -3070,6 +3070,21 @@ export async function getChunkById(
 }
 
 /**
+ * لماذا غابت مادةٌ عن استدعائها بمعرّفها — ليُقال السبب لا «غير موجودة».
+ *
+ * بالشرط نفسه الذي يحجبها لا بأعمدةٍ تُقرأ من جديد: مادةٌ حلّ تاريخ إلغائها
+ * المجدول (§6-8) ملغاةٌ اليوم وعمودُها يقول «نافذ»، فقراءةُ العمود وحده كانت
+ * تقول عنها «بانتظار المراجعة». وما ليس ملغى فحجبُه للمراجعة.
+ */
+export async function hiddenReason(env: Env, id: string): Promise<'missing' | 'repealed' | 'review'> {
+  const row = await env.DB.prepare(`SELECT NOT (${EFFECTIVE_SQL}) AS repealed FROM legal_chunks c WHERE c.id = ?`)
+    .bind(id)
+    .first<{ repealed: number }>();
+  if (!row) return 'missing';
+  return row.repealed ? 'repealed' : 'review';
+}
+
+/**
  * معرّف النظام من عنوانه — لاستشهادٍ لا يحمل إلا العنوان.
  *
  * استشهادات المحادثات القديمة حُفظت بعنوان النظام ورقم المادة وحدهما، بلا

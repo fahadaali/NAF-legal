@@ -17,6 +17,7 @@ import {
   getArticle,
   getChunkAmendment,
   getChunkById,
+  hiddenReason,
   withAttachments,
   listLaws,
   listLawArticles,
@@ -522,12 +523,9 @@ app.get('/article', async (c) => {
     }
     // موجودةٌ لكنها محجوبة: يُقال لماذا غابت بدل «غير موجودة» المضلّلة —
     // والسببان مختلفان، فمنسوخةٌ خرجت من النظام ومحجوبةٌ لم تُراجَع بعد.
-    const exists = await c.env.DB
-      .prepare('SELECT is_repealed, status, needs_review, reviewed_at FROM legal_chunks WHERE id = ?')
-      .bind(id)
-      .first<{ is_repealed: number; status: string; needs_review: number; reviewed_at: number | null }>();
-    if (!exists) return c.json({ error: 'المادة غير موجودة' }, 404);
-    if (exists.is_repealed === 1 || exists.status === 'repealed') {
+    const reason = await hiddenReason(c.env, id);
+    if (reason === 'missing') return c.json({ error: 'المادة غير موجودة' }, 404);
+    if (reason === 'repealed') {
       return c.json({ error: 'المادة منسوخة — أضِف include_repealed=1 للاطّلاع عليها', repealed: true }, 404);
     }
     return c.json(
