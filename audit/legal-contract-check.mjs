@@ -2374,6 +2374,49 @@ await check('٢٥ · مرشّحُ نوع التعديل حيٌّ من القاع
     'مرشّح النوع لا يصل الطابور واللوحة والتحديد الشامل معاً');
 });
 
+// ── ٢٦ · حالُ ما سبق عمودَها — تُشتقّ مرّةً في الهجرة لا في كل عرض (§3-4) ──
+// مادتان تُحاكيان ما استُورد قبل 0017: لا خطَّ زمنيّاً لهما، وحالُهما «نافذ»
+// بالافتراض. وثالثةٌ بعدها قال ملفُّها «نافذ» وتعديلُها لم يُدمج — أو صعّدها
+// مراجعٌ بعد أن قرأ ألواحها. وهذه لا يمسّها شيء.
+const EIGHTH = [
+  v6line({ id: 'ثامنة/1', law_id: 'eighth', law_name: 'نظام الثامنة', article_no: 1,
+    text: 'تُحسب مدة التقادم الخاصة بدعاوى الأجور المتأخرة من تاريخ استحقاقها.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'ثامنة/2', law_id: 'eighth', law_name: 'نظام الثامنة', article_no: 2,
+    text: 'تُرفع دعوى التعويض عن الضرر الجسدي خلال سنةٍ من وقوعه.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'ثامنة/3', law_id: 'eighth', law_name: 'نظام الثامنة', article_no: 3,
+    text: 'يُقيَّد طلب التسوية الودية للنزاعات العمالية في سجلّ الهيئة المختصة.', retrieval_status: 'نافذ' }),
+];
+await lib.upsertLegalChunks(env, lib.parseJsonl(EIGHTH.join('\n')).rows, { importId: 'imp-8' });
+q(`UPDATE legal_chunks SET text_versions = NULL, has_amendments = 1, amendment_applied = 0,
+     amendment_instrument = 'م/7', retrieval_warning = NULL WHERE id = 'ثامنة/1'`);
+q("UPDATE legal_chunks SET text_versions = NULL, is_repealed = 1, status = 'repealed' WHERE id = 'ثامنة/2'");
+q(`UPDATE legal_chunks SET has_amendments = 1, amendment_applied = 0, amendment_instrument = 'م/8',
+     retrieval_warning = NULL WHERE id = 'ثامنة/3'`);
+sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0030_retrieval_status_backfill.sql'), 'utf8'));
+
+await check('٢٦ · ما سبق عمودَ الحال يأخذ حالَه من الهجرة — وما قال ملفُّه قولَه لا يُمسّ', () => {
+  const at = (id) => q('SELECT retrieval_status, retrieval_warning FROM legal_chunks WHERE id = ?', id)[0];
+  assert.equal(at('ثامنة/1').retrieval_status, lib.RETRIEVAL_WARNING, 'تعديلٌ لم يُدمج بقي «نافذ» بلا تحذير');
+  assert.equal(at('ثامنة/1').retrieval_warning, lib.AMENDMENT_NOTICE, 'التحذير بغير لفظه المسجَّل');
+  assert.equal(at('ثامنة/2').retrieval_status, 'repealed', 'الملغاة بقيت «نافذة» في عمودها');
+  assert.equal(at('ثامنة/3').retrieval_status, lib.RETRIEVAL_EFFECTIVE, 'الهجرة مسّت ما قال ملفُّه «نافذ»');
+  assert.equal(at('ثامنة/3').retrieval_warning, null);
+});
+
+await check('٢٦ · ولا تحذيرَ يُشتقّ في سياق المساعد من الحقول — التنبيه من الحال وحدها', async () => {
+  const blockOf = async (query, text) => {
+    const context = lib.formatRagContext(await lib.retrieve(env, [query], 10));
+    const block = context.split('\n\n---\n\n').find((b) => b.includes(text));
+    assert.ok(block, 'المادة لم تبلغ السياق: ' + context.slice(0, 1200));
+    return block;
+  };
+  const kept = await blockOf('طلب التسوية الودية للنزاعات العمالية', 'طلب التسوية الودية');
+  // سطرُ التنبيه يبدأ به السطر — والكلمة نفسها في تمهيد السياق لا تُحسب.
+  assert.ok(!/^تنبيه:/m.test(kept), 'تحذيرٌ اشتُقّ لمادةٍ حالُها «نافذ»: ' + kept);
+  const legacy = await blockOf('مدة التقادم الخاصة بدعاوى الأجور المتأخرة', 'مدة التقادم');
+  assert.ok(legacy.includes(`تنبيه: ${lib.AMENDMENT_NOTICE}`), 'المادة القديمة فقدت تحذيرها: ' + legacy);
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

@@ -299,12 +299,9 @@ function noticeLines(r: RagResult): string {
     const by = r.amendmentPending ? [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' — ') : '';
     lines.push(`تنبيه: ${r.retrievalWarning}${by ? ` (${by})` : ''}`);
   }
-  // وتعديلٌ لم يُدمج بلا تحذير حال — مادةٌ استُوردت قبل أن يكون للحال عمود —
-  // يبقى تنبيهُه كما كان: غيابُ الحقل لا يُقرأ دمجاً.
-  if (r.amendmentPending && !r.retrievalWarning) {
-    const by = [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' — ');
-    lines.push(`تنبيه: ${AMENDMENT_NOTICE}${by ? ` (${by})` : ''}`);
-  }
+  // ولا تحذيرَ يُشتقّ هنا من الحقول المنطقية (§3-4): مادةٌ صعّد مراجعٌ حالها
+  // بعد أن قرأ ألواحها كان الاشتقاق يعيد تحذيرها، فلا يبقى للاعتماد أثر. وما
+  // سبق عمودَ الحال اشتُقّت حالُه مرّةً في الهجرة 0030.
   if (r.effectivePending && r.retrievalWarning !== DEFERRED_NOTICE) {
     lines.push(`تنبيه: ${DEFERRED_NOTICE}${r.effectiveFrom ? ` (${r.effectiveFrom})` : ''}`);
   }
