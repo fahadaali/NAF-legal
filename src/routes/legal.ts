@@ -31,7 +31,7 @@ import {
   reviewChunk,
   reviewChunks,
   reviewDashboard,
-  resolveLawIdByTitle,
+  resolveLawByTitle,
   BULK_LIMIT,
   getLawWithRegulations,
   legalStats,
@@ -217,7 +217,32 @@ app.post('/finalize', requireAdmin, async (c) => {
   if (!batchId) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
 
   const orphans = await listBatchOrphans(c.env, batchId);
-  if (!c.req.query('apply')) return c.json({ ok: true, applied: false, orphans, count: orphans.length });
+  /* **ولا حذف على دفعةٍ تُخطّيت منها أسطر.** السطر المتخطّى لم يُكتب، فمعرّفُه
+     غائبٌ عن الدفعة وحاضرٌ في القاعدة — والحذف على هذا الظنّ يمحو مادةً لم
+     يُسقطها المصدر، بل أسقطها فحصُ خانة. والحارس هنا لا في الشاشة وحدها: السكربت
+     والأتمتة يصلان هذا المسار مباشرةً. */
+  const skipped =
+    (
+      await c.env.DB.prepare('SELECT COALESCE(SUM(failed), 0) AS n FROM legal_imports WHERE batch_id = ?')
+        .bind(batchId)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+  if (!c.req.query('apply')) {
+    return c.json({ ok: true, applied: false, orphans, count: orphans.length, skipped });
+  }
+  if (skipped > 0) {
+    return c.json(
+      {
+        ok: false,
+        applied: false,
+        orphans,
+        count: orphans.length,
+        skipped,
+        error: 'لم يُعرض حذف ما غاب عن الملف: تُخطّيت منه أسطر، والغائب قد يكون ما تُخطّي',
+      },
+      409
+    );
+  }
 
   const importId = uuid();
   const deleted = await deleteOrphans(c.env, orphans.map((o) => o.id), {
@@ -278,7 +303,16 @@ app.post('/revert', requireAdmin, async (c) => {
   return c.json({ ok: true, applied: true, ...result, plan });
 });
 
-app.get('/stats', requireAdmin, async (c) => c.json(await legalStats(c.env)));
+/**
+ * صحّة القاعدة — عدٌّ حيّ يُقابَل ببيان آخر دفعة.
+ *
+ * و`vectors=1` يسأل الفهرس المتجهي نفسه عن عدده ويقابله بسجلاته (§6-7). وهو
+ * بطلبٍ صريح لا مع كل جسّ: شريط الحال يجسّ كل خمس ثوانٍ، وسؤالُ الفهرس نداءٌ
+ * خارج القاعدة لا يستحقّ هذا الإيقاع.
+ */
+app.get('/stats', requireAdmin, async (c) =>
+  c.json(await legalStats(c.env, { vectors: c.req.query('vectors') === '1' }))
+);
 
 /**
  * سجلّ الدفعات — وأثرُ كلٍّ: مضاف ومحدَّث ومحذوف.
@@ -437,6 +471,8 @@ app.get('/search', async (c) => {
     lawId: c.req.query('law_id') ?? null,
     docType: c.req.query('doc_type') ?? null,
     articleNo: c.req.query('article_no') ?? null,
+    // الباب كما ورد في الملف — ويُطابَق مطبَّعاً في طبقة الاسترجاع (§6-1).
+    book: c.req.query('book') ?? null,
     withRegulations: c.req.query('with_regulations') !== '0',
     includeRepealed: c.req.query('include_repealed') === '1',
     // `lexical=1` يبحث بلا نموذج تضمين — لشاشات البحث المباشر.
@@ -477,7 +513,15 @@ app.get('/article', async (c) => {
 
   const articleNo = c.req.query('article_no');
   const lawTitle = c.req.query('law_title')?.trim();
-  const lawId = c.req.query('law_id') || (lawTitle ? await resolveLawIdByTitle(c.env, lawTitle) : null);
+  const byTitle = !c.req.query('law_id') && lawTitle ? await resolveLawByTitle(c.env, lawTitle) : null;
+  // الاسم يطابق نظامين: لا يُفتح أقربُهما، ويُقال لماذا (`naf-terms.md` — نافذة المصدر).
+  if (byTitle?.ambiguous) {
+    return c.json(
+      { error: 'في المنصة أكثر من نظام بهذا الاسم — افتح المادة من صفحة نظامها', ambiguous: true },
+      409
+    );
+  }
+  const lawId = c.req.query('law_id') || byTitle?.lawId || null;
   if (!lawId || !articleNo) {
     // عنوانٌ أُرسل ولم يُطابق نظاماً: السبب غيابُ النظام لا نقصُ المعاملات.
     if (lawTitle && articleNo) return c.json({ error: 'المادة غير موجودة' }, 404);

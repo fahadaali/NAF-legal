@@ -152,6 +152,10 @@ const VECTORIZE = {
   async deleteByIds(ids) {
     for (const id of ids) vectorStore.delete(id);
   },
+  // عدُّ الفهرس بصيغة الربط الحاليّ — لفحص «المتجه بلا سجل» (§6-7).
+  async describe() {
+    return { vectorCount: vectorStore.size, dimensions: DIM };
+  },
 };
 
 const env = { DB, AI, VECTORIZE, EMBEDDING_MODEL: '@cf/baai/bge-m3' };
@@ -1879,7 +1883,8 @@ const V6_BASE = {
   status: 'ساري', law_repealed: false, has_amendments: false, is_repealed: false, needs_review: false,
   amendment_events: [], instrument_no: 'م/60', date_hijri: '1440/01/01',
 };
-const v6line = (o) => line({ ...V6_BASE, embed_text: `نظام السادسة — ${o.id}`, ...o });
+// ونصُّ التضمين يحمل نصَّ المادة كما يحمله في الملفّات الحقيقية: مسبوقاً بسياقه.
+const v6line = (o) => line({ ...V6_BASE, embed_text: `${o.law_name ?? V6_BASE.law_name} — ${o.text ?? o.id}`, ...o });
 
 const V6_LINES = [
   v6line({ id: 'سادسة-معلّق/art-001', law_id: 'sixth-pending', law_name: 'نظام السادسة الجديد',
@@ -2051,6 +2056,203 @@ await check('٢٣ · والحقول تُكتب في أعمدتها وتبقى ب
   const again = await lib.upsertLegalChunks(env, v6.rows, { importId: 'imp-v6b', batchId: 'batch-v6b' });
   assert.equal(again.inserted, 0);
   assert.equal(again.archived, 0, 'إعادةُ رفع الملف نفسه أرشفت نسخاً');
+});
+
+// ═══ ٢٤) الاسترجاع في الإصدار السادس: الحال والتاريخ والرقم والمرفق ═══
+//
+// كلُّ شرطٍ هنا في طبقة الاسترجاع لا في الواجهة (§5): المحادثة والتقرير
+// والواجهة البرمجية يمرّون به سواء.
+
+await lib.embedPending(env, 200);
+const ids = (hits) => hits.map((h) => h.id);
+
+await check('٢٤ · المستبقاة بعد إلغاء نظامها تدخل البحث، وسائرُ مواد النظام اللاغي لا تدخله', async () => {
+  const kept = await lib.searchLegal(env, 'مادةٌ مستبقاة تبقى نافذةً بعد إلغاء نظامها', { limit: 10, lexicalOnly: true });
+  assert.ok(ids(kept).includes('سادسة-قديم/art-002'), 'المستبقاة غابت عن البحث وهي نافذة');
+  const gone = await lib.searchLegal(env, 'مادةٌ من نظامٍ ألغاه اللاحقُ كلَّه', { limit: 10, lexicalOnly: true });
+  assert.ok(!ids(gone).includes('سادسة-قديم/art-001'), 'مادةٌ من نظامٍ لاغٍ دخلت البحث');
+  const archive = await lib.searchLegal(env, 'مادةٌ من نظامٍ ألغاه اللاحقُ كلَّه', {
+    limit: 10, lexicalOnly: true, includeRepealed: true,
+  });
+  const found = archive.find((h) => h.id === 'سادسة-قديم/art-001');
+  assert.ok(found, 'ولا يُستدعى بوسمه صراحةً');
+  assert.equal(found.lawRepealed, true);
+  assert.equal(found.retrievalStatus, lib.RETRIEVAL_REPEALED);
+  // ولا متجهَ لها: الملغاة لا تُفهرَس أصلاً.
+  const seq = q("SELECT seq FROM legal_chunks WHERE id = 'سادسة-قديم/art-001'")[0].seq;
+  assert.ok(!vectorStore.has(`legal:${seq}`), 'مادةُ نظامٍ لاغٍ فُهرست');
+});
+
+await check('٢٤ · الإلغاء المجدول يُقيَّم وقت الاستعلام، لا حين تُرفع دفعةٌ بعده (§6-8)', async () => {
+  // دفعةٌ رُفعت قبل اليوم والتاريخ لم يحلّ؛ ثم حلّ ولم تُرفع دفعة.
+  const before = await lib.searchLegal(env, 'مادةٌ مجدولٌ إلغاؤها في تاريخٍ لم يحلّ', { limit: 10, lexicalOnly: true });
+  const hit = before.find((h) => h.id === 'سادسة/art-004');
+  assert.ok(hit, 'مادةٌ لم يحلّ تاريخُ إلغائها غابت');
+  assert.equal(hit.scheduledRepealFrom, FUTURE);
+  q("UPDATE legal_chunks SET scheduled_repeal_from = ? WHERE id = 'سادسة/art-004'", PAST);
+  try {
+    const after = await lib.searchLegal(env, 'مادةٌ مجدولٌ إلغاؤها في تاريخٍ لم يحلّ', { limit: 10, lexicalOnly: true });
+    assert.ok(!ids(after).includes('سادسة/art-004'), 'إلغاءٌ حلّ يومه ينتظر دفعةً تقوله');
+    const direct = await lib.getChunkById(env, 'سادسة/art-004', true);
+    assert.equal(direct.retrievalStatus, lib.RETRIEVAL_REPEALED, 'الاستدعاء المباشر لا يقول إنها ملغاة');
+    // والتنظيف يحذف متجهها في أوّل دورة بعد يومها.
+    await lib.embedPending(env, 50);
+    const seq = q("SELECT seq FROM legal_chunks WHERE id = 'سادسة/art-004'")[0].seq;
+    assert.ok(!vectorStore.has(`legal:${seq}`), 'بقي متجهُ مادةٍ حلّ إلغاؤها');
+  } finally {
+    q("UPDATE legal_chunks SET scheduled_repeal_from = ? WHERE id = 'سادسة/art-004'", FUTURE);
+    q("UPDATE legal_chunks SET embedded_at = NULL WHERE id = 'سادسة/art-004'");
+    await lib.embedPending(env, 50);
+  }
+});
+
+await check('٢٤ · وتحذيرُ نظامٍ لم يبدأ العمل به يسقط وحده حين يحلّ يومه', async () => {
+  const pending = await lib.getChunkById(env, 'سادسة-معلّق/art-001');
+  assert.equal(pending.lawPending, true);
+  assert.equal(pending.retrievalStatus, lib.RETRIEVAL_WARNING);
+  assert.match(pending.retrievalWarning, /لم يبدأ العمل به/);
+  q("UPDATE legal_chunks SET law_effective_from = ? WHERE id = 'سادسة-معلّق/art-001'", PAST);
+  try {
+    const started = await lib.getChunkById(env, 'سادسة-معلّق/art-001');
+    assert.equal(started.lawPending, false, 'نظامٌ حلّ يومُ نفاذه بقي «لم يبدأ العمل به»');
+    assert.equal(started.retrievalStatus, lib.RETRIEVAL_EFFECTIVE);
+    assert.equal(started.retrievalWarning, null, 'تحذيرُ النفاذ بقي بعد يومه');
+    // وتعديلٌ لم يُدمج يبقى تحذيرُه ولو حلّ يومُ النظام.
+    q("UPDATE legal_chunks SET has_amendments = 1, amendment_applied = 0 WHERE id = 'سادسة-معلّق/art-001'");
+    const amended = await lib.getChunkById(env, 'سادسة-معلّق/art-001');
+    assert.equal(amended.retrievalStatus, lib.RETRIEVAL_WARNING);
+    assert.equal(amended.retrievalWarning, lib.AMENDMENT_NOTICE, 'سقط تحذيرُ التعديل مع تحذير النفاذ');
+    const [law] = (await lib.listLaws(env)).filter((l) => l.law_id === 'sixth-pending');
+    assert.equal(law.law_pending, 0, 'قائمة الأنظمة تقول «لم يبدأ العمل به» بعد يومه');
+  } finally {
+    q("UPDATE legal_chunks SET law_effective_from = ?, has_amendments = 0 WHERE id = 'سادسة-معلّق/art-001'", FUTURE);
+  }
+  const [law] = (await lib.listLaws(env)).filter((l) => l.law_id === 'sixth-pending');
+  assert.equal(law.law_pending, 1);
+  assert.equal(law.law_effective_from, FUTURE);
+});
+
+await check('٢٤ · الاستدعاء بالرقم: المرفق بعد مادته، و«مكرر» وحدها، والملحق لا برقمه، والمنقولة بالرقمين', async () => {
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '14' })),
+    ['سادسة/art-014', 'سادسة/art-014-attach'], 'المرفق لم يُرجَع مع مادته بعدها');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '15' })),
+    ['سادسة/art-015'], 'مادة «مكرر» رُدّت مع الأصل');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '15 مكرر' })),
+    ['سادسة/art-015-mukarrar'], 'مادة «مكرر» لا تُستدعى بعنوانها');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '1001' })), [],
+    'الملحق استُدعي برقمه الاصطلاحيّ');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '240' })), ['سادسة/art-231'],
+    'المنقولة لا تُستدعى برقمها السابق');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '231' })), ['سادسة/art-231']);
+});
+
+await check('٢٤ · والبحث يرجّح بالشرط نفسه، والملحق يُجد بعنوانه', async () => {
+  const byNo = await lib.searchLegal(env, 'ما نصّ المادة 14', { lawId: 'sixth', limit: 10, lexicalOnly: true });
+  const order = ids(byNo);
+  assert.ok(order.includes('سادسة/art-014-attach'), 'البحث بالرقم لم يُرجع المرفق مع مادته');
+  const mk = await lib.searchLegal(env, 'المادة 15 مكرر', { lawId: 'sixth', limit: 10, lexicalOnly: true });
+  assert.equal(mk[0]?.id, 'سادسة/art-015-mukarrar', 'مادة «مكرر» لم تتصدّر حين طُلبت بعنوانها');
+  const annex = await lib.searchLegal(env, 'المادة 1001', { lawId: 'sixth', limit: 10, lexicalOnly: true });
+  assert.ok(!annex.some((h) => h.isAnnex && h.signals.includes('article')), 'الملحق رُجِّح برقمه الاصطلاحيّ');
+  const table = await lib.searchLegal(env, 'جدول المخالفات', { limit: 10, lexicalOnly: true });
+  assert.ok(ids(table).includes('سادسة/annex-01'), 'الملحق لا يُجد بعنوانه');
+});
+
+await check('٢٤ · تحذيرُ الحال يبلغ سياق المساعد بنصّه، والملحق يُستشهد به بعنوانه (§6-4)', async () => {
+  const rag = await lib.retrieve(env, ['يُعمل بهذا النظام الجديد في التاريخ المحدّد لنفاذه'], 10);
+  const context = lib.formatRagContext(rag);
+  assert.match(context, /تنبيه: هذا النظام لم يبدأ العمل به/, 'تحذيرُ النفاذ لم يبلغ البرومبت: ' + context.slice(0, 2400));
+  const annexRag = await lib.retrieve(env, ['مخالفة السرعة غرامة'], 5);
+  const annexCtx = lib.formatRagContext(annexRag);
+  assert.match(annexCtx, /جدول المخالفات رقم \(6\)/, 'الملحق بلا عنوانه في سطر الإسناد');
+  assert.ok(!/المادة 1001/.test(annexCtx), 'الملحق استُشهد به برقمه الاصطلاحيّ');
+  assert.match(context, /أحِل إلى سجل التعديلات/, 'السياق لا يمنع صياغة نصٍّ نافذٍ غير متاح');
+});
+
+await check('٢٤ · الملغاة بإلغاء نظامها لا تدخل الطابور، ولا تُعدّ فيه', async () => {
+  q("UPDATE legal_chunks SET needs_review = 1 WHERE id IN ('سادسة-قديم/art-001', 'سادسة-قديم/art-002')");
+  try {
+    const queue = await lib.listReviewQueue(env, { lawId: 'sixth-old', limit: 50 });
+    assert.ok(!ids(queue.articles).includes('سادسة-قديم/art-001'), 'مادةُ نظامٍ لاغٍ دخلت الطابور');
+    assert.ok(ids(queue.articles).includes('سادسة-قديم/art-002'), 'والمستبقاة النافذة غابت عنه');
+    const dash = await lib.reviewDashboard(env, { lawId: 'sixth-old' });
+    assert.ok(dash.repealed >= 1, 'عدُّ الملغاة لا يرى مادةَ النظام اللاغي');
+  } finally {
+    q("UPDATE legal_chunks SET needs_review = 0 WHERE id IN ('سادسة-قديم/art-001', 'سادسة-قديم/art-002')");
+  }
+  const law = (await lib.listLaws(env)).find((l) => l.law_id === 'sixth-old');
+  assert.equal(law.repealed, 1, 'قائمة الأنظمة تعدّ الملغاة بحقلٍ واحد');
+  assert.equal(law.effective, 1);
+  assert.equal(law.law_repealed, 1);
+});
+
+await check('٢٤ · اسمٌ يطابق نظامين لا يُفتح أقربُهما', async () => {
+  await lib.upsertLegalChunks(env, lib.parseJsonl(v6line({ id: 'سادسة-ثانية/art-001', law_id: 'sixth-twin',
+    law_name: 'نظام السادسة القديم', instrument_no: 'م/99', date_hijri: '1446/01/01', article_no: 1,
+    text: 'مادةٌ من نظامٍ آخر بالاسم نفسه.', retrieval_status: 'نافذ' })).rows, { importId: 'imp-twin' });
+  const twin = await lib.resolveLawByTitle(env, 'نظام السادسة القديم');
+  assert.deepEqual(twin, { lawId: null, ambiguous: true }, 'فُتح أحدُ نظامين بالاسم وحده');
+  const single = await lib.resolveLawByTitle(env, 'نظام السادسة الجديد');
+  assert.deepEqual(single, { lawId: 'sixth-pending', ambiguous: false });
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /في المنصة أكثر من نظام بهذا الاسم — افتح المادة من صفحة نظامها/);
+  assert.match(routes, /ambiguous: true \},\s*409/, 'الاسم المشترك لا يُردّ بما يميّزه');
+});
+
+await check('٢٤ · الاعتماد لا يُسقط تحذيرَ نظامٍ لم يبدأ العمل به، والتحرير يُبقي الخطّ الزمني صادقاً', async () => {
+  q("UPDATE legal_chunks SET needs_review = 1 WHERE id = 'سادسة-معلّق/art-001'");
+  const res = await lib.reviewChunk(env, 'سادسة-معلّق/art-001', 'approve', 'مراجع');
+  assert.equal(res.ok, true);
+  const row = q("SELECT retrieval_status, retrieval_warning FROM legal_chunks WHERE id = 'سادسة-معلّق/art-001'")[0];
+  assert.equal(row.retrieval_status, lib.RETRIEVAL_WARNING, 'الاعتماد أسقط تحذيرَ نظامٍ لم يبدأ العمل به');
+  assert.match(row.retrieval_warning, /لم يبدأ العمل به/);
+
+  await lib.reviewChunk(env, 'سادسة/art-015', 'edit', 'مراجع', { text: 'يُنشأ سجلٌّ للمنشآت التجارية في الوزارة.' });
+  const edited = q("SELECT text, text_versions, embed_text FROM legal_chunks WHERE id = 'سادسة/art-015'")[0];
+  const current = JSON.parse(edited.text_versions).filter((v) => v.current);
+  assert.equal(current.length, 1);
+  assert.equal(current[0].text, edited.text, 'النسخة المعتمدة في الخطّ الزمني تخالف النصّ المحرَّر');
+  await lib.reviewChunk(env, 'سادسة/art-015', 'undo', 'مراجع');
+  const undone = q("SELECT text, text_versions FROM legal_chunks WHERE id = 'سادسة/art-015'")[0];
+  assert.equal(undone.text, 'يُنشأ سجلٌّ للمنشآت في الوزارة.');
+  assert.equal(JSON.parse(undone.text_versions).find((v) => v.current).text, undone.text, 'التراجع ترك الخطّ الزمني على المحرَّر');
+
+  // ونصُّ التضمين للملحق بعنوانه: تحريرُه لا يُدخل رقمه الاصطلاحيّ المتجه.
+  await lib.reviewChunk(env, 'سادسة/annex-01', 'edit', 'مراجع', { text: 'مخالفة السرعة: غرامةٌ من ثلاثمئة إلى ستمئة ريال.' });
+  const annexEmbed = q("SELECT embed_text FROM legal_chunks WHERE id = 'سادسة/annex-01'")[0].embed_text;
+  assert.ok(!annexEmbed.includes('1001'), 'نصّ تضمين الملحق المحرَّر يحمل رقمه الاصطلاحيّ: ' + annexEmbed);
+  assert.match(annexEmbed, /جدول المخالفات رقم \(6\)/);
+  await lib.reviewChunk(env, 'سادسة/annex-01', 'undo', 'مراجع');
+});
+
+await check('٢٤ · صحّة القاعدة: الفهرس يُقابَل بسجلاته، والمتجه بلا سجلٍّ يُعدّ (§6-7)', async () => {
+  await lib.embedPending(env, 500);
+  const clean = await lib.legalStats(env, { vectors: true });
+  assert.ok(clean.vectors, 'صحّة القاعدة بلا عدّ الفهرس');
+  assert.equal(clean.vectors.orphans, 0, 'متجهٌ بلا سجلٍّ في قاعدةٍ نظيفة: ' + JSON.stringify(clean.vectors));
+  vectorStore.set('legal:999999', { id: 'legal:999999', values: new Array(DIM).fill(0), metadata: {} });
+  try {
+    const dirty = await lib.legalStats(env, { vectors: true });
+    assert.equal(dirty.vectors.orphans, 1, 'متجهٌ بلا سجلّ لم يُعدّ');
+    const nightly = await lib.vectorCheck(env);
+    assert.equal(nightly.orphans, 1, 'والدورة الليلية لا تراه');
+  } finally {
+    vectorStore.delete('legal:999999');
+  }
+  // وجسُّ الشريط لا يسأل الفهرس: `vectors` بطلبٍ صريح.
+  assert.equal((await lib.legalStats(env)).vectors, undefined);
+  const cron = readFileSync(path.join(ROOT, 'src', 'cron.ts'), 'utf8');
+  assert.match(cron, /vectorCheck\(env\)/, 'الدورة الليلية لا تفحص المتجه بلا سجلّ');
+  assert.match(cron, /vectorHealth\(env\)/, 'الدورة الليلية تكتب شرط التضمين بيدها');
+});
+
+await check('٢٤ · ولا حذفَ لأيتام دفعةٍ تُخطّيت منها أسطر', () => {
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  const body = routes.slice(routes.indexOf("app.post('/finalize'"), routes.indexOf("app.get('/revertable'"));
+  assert.match(body, /SUM\(failed\)/, 'الختام لا ينظر فيما تُخطّي من الدفعة');
+  assert.match(body, /if \(skipped > 0\)/, 'الحذف يقع على دفعةٍ ناقصة');
+  const script = readFileSync(path.join(ROOT, 'scripts', 'import-legal.mjs'), 'utf8');
+  assert.match(script, /seen\.skipped/, 'السكربت يطلب الحذف على دفعةٍ ناقصة');
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');

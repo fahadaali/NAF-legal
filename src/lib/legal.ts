@@ -244,6 +244,10 @@ const HIT_COLUMNS = `c.seq, c.id, c.law_id, c.parent_law_id, c.doc_type, c.artic
     c.retrieval_status, c.retrieval_warning, c.has_defect, c.defect_kind,
     c.review_status, c.review_note, c.text_original_import IS NOT NULL AS was_edited,
     c.amendment_instrument, c.amended_on, c.amendments_count, c.amend_note,
+    c.law_status, c.law_status_source, c.law_repealed, c.law_pending, c.law_effective_from,
+    c.scheduled_repeal_from, c.kept_after_repeal,
+    c.is_attachment, c.attachment_of, c.has_attachment, c.text_from_attachment,
+    c.former_article_no, c.former_article_no_norm, c.is_annex, c.is_mukarrar,
     c.meta_json`;
 
 /** سقف طول مدخل التضمين. تجاوزُه يقصّ **مدخل المتجه وحده** ولا يقسم المقطع. */
@@ -347,6 +351,33 @@ export interface LegalHit {
   amendedOn: string | null;
   amendmentsCount: number | null;
   amendNote: string | null;
+  // ── بطاقة النظام — §3-10 ──
+  /** حالُ النظام كما وردت: ساري · ملغى · لم يبدأ العمل به · جاري العمل على النظام. */
+  lawStatus: string | null;
+  /** البوابة · قرار · افتراضي. */
+  lawStatusSource: string | null;
+  /** النظام كلُّه لاغٍ. */
+  lawRepealed: boolean;
+  /** نظامٌ صادر لم يبدأ العمل به — مُقيَّماً بتاريخ اليوم لا بتاريخ الرفع (§6-8). */
+  lawPending: boolean;
+  lawEffectiveFrom: string | null;
+  /** تاريخ إلغاءٍ مجدول لهذه المادة — وبعده تصير حالُها «ملغى». */
+  scheduledRepealFrom: string | null;
+  /** مادةٌ تبقى نافذة بعد إلغاء نظامها. */
+  keptAfterRepeal: boolean;
+  // ── المرفقات والرقم السابق — §3-11 ──
+  isAttachment: boolean;
+  /** المادة الأم للمرفق — يُعرض تحتها. */
+  attachmentOf: string | null;
+  hasAttachment: boolean;
+  textFromAttachment: boolean;
+  /** رقم المادة قبل نقلها — تُستدعى به كما تُستدعى بالحالي. */
+  formerArticleNo: string | null;
+  // ── الملاحق ومواد «مكرر» ──
+  /** ملحقٌ لا مادة: رقمُه اصطلاحيّ لا يُعرض ولا يُستشهد به. */
+  isAnnex: boolean;
+  /** مادة «مكرر» — مستقلّة برقم المادة الأصل. */
+  isMukarrar: boolean;
   meta: Record<string, unknown> | null;
   score: number;
   /** الإشارات التي رشّحت هذه النتيجة: دلالي، لفظي، مطابقة رقم مادة. */
@@ -2206,10 +2237,16 @@ export interface EmbedResult {
  * والملغاة لا تُفهرَس أصلاً — لا تُفهرَس ثم تُصفّى. فهرستُها تُنفق حصّة
  * التضمين على ما لا يُسترجَع، وتُبقي متجهاً يطابق نصّاً خرج من النظام.
  */
-const EMBEDDABLE_SQL = `retrieval_status <> '${RETRIEVAL_REPEALED}' AND is_repealed = 0`;
+const EMBEDDABLE_SQL = `retrieval_status <> '${RETRIEVAL_REPEALED}' AND is_repealed = 0
+  AND NOT (scheduled_repeal_from IS NOT NULL AND scheduled_repeal_from <= date('now'))`;
 
-/** الشرط نفسه مؤهَّلاً باسم الجدول — لاستعلامٍ يجمع أعمدةً من `c`. */
-const EMBEDDABLE_SQL_C = `c.retrieval_status <> '${RETRIEVAL_REPEALED}' AND c.is_repealed = 0`;
+/**
+ * الشرط نفسه مؤهَّلاً باسم الجدول — لاستعلامٍ يجمع أعمدةً من `c`.
+ *
+ * والإلغاء المجدول الذي حلّ يومه منه: مادةٌ صارت ملغاةً بتاريخها لا تستحقّ
+ * متجهاً، فيحذفه التنظيف في أوّل دورة بعد يومها ولا ينتظر دفعةً تقول ذلك.
+ */
+const EMBEDDABLE_SQL_C = `c.retrieval_status <> '${RETRIEVAL_REPEALED}' AND c.is_repealed = 0 AND NOT ${REPEAL_DUE_SQL}`;
 
 /**
  * يحوّل `embed_text` للمقاطع التي تنتظر، دفعةً بعد دفعة.
@@ -2385,11 +2422,93 @@ function buildFilters(f: LegalFilters): { sql: string; binds: unknown[] } {
     binds.push(normalizeArabic(f.book));
   }
   if (f.articleNo) {
-    clauses.push('c.article_no_norm = ?');
-    binds.push(normalizeArticleNo(f.articleNo));
+    const byNo = articleNoClause(articleRequest(f.articleNo));
+    clauses.push(byNo.sql);
+    binds.push(...byNo.binds);
   }
 
   return { sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', binds };
+}
+
+/** رقمُ مادةٍ مطلوب: الرقم مطبَّعاً، وهل طُلبت مادة «مكرر» بعينها. */
+interface ArticleRequest {
+  no: string;
+  mukarrar: boolean;
+}
+
+/** «مكرر» و«مكرراً» و«مكرّر» بعد التطبيع — والتشكيل والتنوين يسقطان به. */
+const MUKARRAR_WORD = /مكرر/;
+
+/** يقرأ رقمَ مادةٍ كما كُتب: «15» · «(٧٤)» · «15 مكرر». */
+function articleRequest(raw: string): ArticleRequest {
+  return { no: normalizeArticleNo(raw) ?? '', mukarrar: MUKARRAR_WORD.test(normalizeArabic(raw)) };
+}
+
+/**
+ * رقمُ المادة من استعلامٍ حرّ — ومعه «مكرر» إن تلته.
+ *
+ * «ما نصّ المادة (15) مكرر من النظام؟» تطلب مادة «مكرر» لا المادة 15.
+ */
+function articleFromQuery(query: string): ArticleRequest | null {
+  const no = extractArticleNo(query);
+  if (!no) return null;
+  const mukarrar = new RegExp(`${no}\\s*\\)?\\s*مكرر`).test(normalizeArabic(query));
+  return { no, mukarrar };
+}
+
+/**
+ * الاستدعاء برقم المادة — بالرقمين، وبلا ما لا يُستدعى برقمه.
+ *
+ * - **المنقولة** تُستدعى بالحالي والسابق (§3-11): «المادة 240» يُصيب ما صار 231.
+ * - **الملحق** لا يُستدعى برقمه (§3-12): رقمُه اصطلاحيّ، و«المادة 1001» لا وجود
+ *   لها في نظام.
+ * - **المرفق** يُضمّ إلى مادته بـ`attachment_of` لا برقمه (§5-6)، فمرفقٌ لم يُعرف
+ *   موضعه لا يلتصق بمادةٍ تحمل رقمه مصادفةً.
+ * - **مادة «مكرر»** مستقلّة: «المادة 15» لا تُرجعها، و«المادة 15 مكرر» تُرجعها
+ *   وحدها — ولا تُرجَع مع الأصل إلا بما يأتي به البحث.
+ */
+function articleNoClause(r: ArticleRequest): { sql: string; binds: unknown[] } {
+  return {
+    sql: `(c.article_no_norm = ? OR c.former_article_no_norm = ?)
+          AND c.is_annex = 0 AND c.is_attachment = 0 AND c.is_mukarrar = ${r.mukarrar ? 1 : 0}`,
+    binds: [r.no, r.no],
+  };
+}
+
+/** هل تقع النتيجة على الرقم المطلوب؟ بالشرط نفسه الذي يُستدعى به. */
+function matchesArticle(h: LegalHit, r: ArticleRequest): boolean {
+  if (h.isAnnex || h.isAttachment || h.isMukarrar !== r.mukarrar) return false;
+  return normalizeArticleNo(h.articleNo) === r.no || normalizeArticleNo(h.formerArticleNo) === r.no;
+}
+
+/**
+ * يضمّ إلى كل مادةٍ مرفقاتها — مرتّبةً بعدها (§5-6).
+ *
+ * المرفق قد يكون الجدول الذي تحيل إليه المادة: «تُفرض الرسوم المبيّنة في
+ * الجدول المرفق»، واستدعاءُ المادة بلا جدولها يُرجع حكماً بلا مقداره. والضمّ
+ * بـ`attachment_of` وحده، وبالتصفية نفسها: مرفقٌ ملغى لا يدخل من هذا الباب.
+ */
+async function withAttachments(env: Env, hits: LegalHit[], filters: LegalFilters): Promise<LegalHit[]> {
+  const parents = hits.filter((h) => !h.isAttachment).map((h) => h.id);
+  if (!parents.length) return hits;
+  const built = buildFilters({ ...filters, articleNo: null });
+  const marks = parents.map(() => '?').join(',');
+  const rows = await env.DB.prepare(
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE c.attachment_of IN (${marks})${built.sql} ORDER BY c.seq`
+  )
+    .bind(...parents, ...built.binds)
+    .all<HitRow>();
+
+  const present = new Set(hits.map((h) => h.id));
+  const byParent = new Map<string, LegalHit[]>();
+  for (const r of rows.results ?? []) {
+    if (present.has(r.id) || !r.attachment_of) continue;
+    const list = byParent.get(r.attachment_of) ?? [];
+    list.push(toHit(r));
+    byParent.set(r.attachment_of, list);
+  }
+  if (!byParent.size) return hits;
+  return hits.flatMap((h) => [h, ...(byParent.get(h.id) ?? [])]);
 }
 
 interface HitRow {
@@ -2410,6 +2529,10 @@ interface HitRow {
   review_status: string; review_note: string | null; was_edited: number;
   amendment_instrument: string | null; amended_on: string | null;
   amendments_count: number | null; amend_note: string | null;
+  law_status: string | null; law_status_source: string | null; law_repealed: number; law_pending: number;
+  law_effective_from: string | null; scheduled_repeal_from: string | null; kept_after_repeal: number;
+  is_attachment: number; attachment_of: string | null; has_attachment: number; text_from_attachment: number;
+  former_article_no: string | null; former_article_no_norm: string | null; is_annex: number; is_mukarrar: number;
   meta_json: string | null;
 }
 
@@ -2422,6 +2545,34 @@ function toHit(r: HitRow): LegalHit {
       meta = null;
     }
   }
+
+  /* ── تقييم التواريخ وقت الاستعلام (§6-8) ──
+   *
+   * حالُ النفاذ المؤجَّل والإلغاء المجدول تتبدّل حين تُرفع دفعةٌ بعد التاريخ،
+   * فإن تأخّر الرفع بقي النظام الجديد «لم يبدأ العمل به» والقديم «نافذ» بعد
+   * أن انعكس الأمر قانوناً. فيُقيَّم التاريخان هنا عند كل قراءة، ولا تتوقّف
+   * صحّة الإجابة على توقيت الرفع. والإلغاء الذي حلّ يومه يُسقطه البحث في SQL
+   * أصلاً (`REPEAL_DUE_SQL`)؛ وهذا لما يُقرأ من الأرشيف والاستدعاء المباشر.
+   *
+   * وتحذيرُ النفاذ يسقط وحده حين يحلّ يومه: مادةٌ عليها تعديلٌ لم يُدمج تبقى
+   * بتحذيرها المسجَّل. وقد يبقى تحذيرُ التعديل على مادةٍ اعتمدها مراجعٌ وهو
+   * ينتظر نفاذ نظامها — تحذيرٌ زائد في حالٍ نادرة، وهو الاتجاه الآمن. */
+  const today = gregorianToday();
+  const repealDue = !!r.scheduled_repeal_from && r.scheduled_repeal_from <= today;
+  const lawStarted = r.law_pending === 1 && !!r.law_effective_from && r.law_effective_from <= today;
+  let retrievalStatus = r.retrieval_status;
+  let retrievalWarning = r.retrieval_warning;
+  if (repealDue) {
+    retrievalStatus = RETRIEVAL_REPEALED;
+  } else if (lawStarted && retrievalStatus === RETRIEVAL_WARNING) {
+    if (r.has_amendments === 1 && r.amendment_applied === 0) {
+      retrievalWarning = AMENDMENT_NOTICE;
+    } else {
+      retrievalStatus = RETRIEVAL_EFFECTIVE;
+      retrievalWarning = null;
+    }
+  }
+
   return {
     seq: r.seq,
     id: r.id,
@@ -2457,8 +2608,8 @@ function toHit(r: HitRow): LegalHit {
     amendmentKind: r.amendment_kind,
     amendmentApplied: r.amendment_applied === 1,
     needsReview: r.needs_review === 1,
-    retrievalStatus: r.retrieval_status,
-    retrievalWarning: r.retrieval_warning,
+    retrievalStatus,
+    retrievalWarning,
     hasDefect: r.has_defect === 1,
     defectKind: r.defect_kind,
     reviewedAt: r.reviewed_at,
@@ -2469,6 +2620,20 @@ function toHit(r: HitRow): LegalHit {
     amendedOn: r.amended_on,
     amendmentsCount: r.amendments_count,
     amendNote: r.amend_note,
+    lawStatus: r.law_status,
+    lawStatusSource: r.law_status_source,
+    lawRepealed: r.law_repealed === 1,
+    lawPending: r.law_pending === 1 && !lawStarted,
+    lawEffectiveFrom: r.law_effective_from,
+    scheduledRepealFrom: r.scheduled_repeal_from,
+    keptAfterRepeal: r.kept_after_repeal === 1,
+    isAttachment: r.is_attachment === 1,
+    attachmentOf: r.attachment_of,
+    hasAttachment: r.has_attachment === 1,
+    textFromAttachment: r.text_from_attachment === 1,
+    formerArticleNo: r.former_article_no,
+    isAnnex: r.is_annex === 1,
+    isMukarrar: r.is_mukarrar === 1,
     meta,
     score: 0,
     signals: [],
@@ -2594,7 +2759,7 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     return (rows.results ?? []).map((r, i) => ({ ...toHit(r), score: 1 / (RRF_K + i), signals: ['metadata'] }));
   }
 
-  const articleInQuery = opts.articleNo ? normalizeArticleNo(opts.articleNo) : extractArticleNo(query);
+  const articleInQuery = opts.articleNo ? articleRequest(opts.articleNo) : articleFromQuery(query);
 
   // ── المسار اللفظي ──
   const match = ftsMatchExpression(query);
@@ -2650,18 +2815,23 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
   // ── استدعاء مادة بعينها ──
   // «المادة 74 من نظام العمل» مع حصر النظام: المطلوب معروف بلا ترجيح.
   if (articleInQuery && opts.lawId) {
+    // الاستدعاء بالرقم بشرطه نفسه في كل مسار: بالرقمين، وبلا ملحقٍ ولا مرفقٍ
+    // ولا «مكرر» لم يُطلب — انظر `articleNoClause`.
+    const scope = buildFilters({ ...opts, articleNo: null });
+    const byNo = articleNoClause(articleInQuery);
     const exact = await env.DB.prepare(
-      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE c.article_no_norm = ?${filters.sql} LIMIT 5`
+      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${byNo.sql}${scope.sql} LIMIT 5`
     )
-      .bind(articleInQuery, ...filters.binds)
+      .bind(...byNo.binds, ...scope.binds)
       .all<HitRow>();
     if (exact.results?.length) {
       // استدعاءُ رقمٍ يردّ كل من يحمله: أخواتُ المادة تُضمّ هنا لا في الواجهة،
       // وإلا اختفت المادة المضافة بمرسومٍ معدِّل من نتائج كل مسار آخر.
       //
       // والضمّ بنطاق النظام لا بنطاق الرقم: أختُ المادة قد تُكتب «233 مكرر»
-      // فلا تطابق الرقم، وإنما يجمعها `duplicate_of` وحده.
-      const hits = await expandDuplicates(env, exact.results.map(toHit), { ...opts, articleNo: null });
+      // فلا تطابق الرقم، وإنما يجمعها `duplicate_of` وحده. ومعها مرفقاتُها.
+      const siblings = await expandDuplicates(env, exact.results.map(toHit), { ...opts, articleNo: null });
+      const hits = await withAttachments(env, siblings, { ...opts, articleNo: null });
       lists.push({ name: 'article', hits });
     }
   }
@@ -2670,7 +2840,7 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
 }
 
 /** دمج القوائم المرتّبة بـRRF، مع ترجيح مطابقة رقم المادة. */
-function fuse(lists: { name: string; hits: LegalHit[] }[], articleNo: string | null, limit: number): LegalHit[] {
+function fuse(lists: { name: string; hits: LegalHit[] }[], article: ArticleRequest | null, limit: number): LegalHit[] {
   const merged = new Map<number, LegalHit>();
 
   for (const list of lists) {
@@ -2683,9 +2853,11 @@ function fuse(lists: { name: string; hits: LegalHit[] }[], articleNo: string | n
     });
   }
 
-  if (articleNo) {
+  if (article) {
+    // الترجيحُ بالشرط الذي يُستدعى به: الملحق لا يُرجَّح برقمه الاصطلاحيّ،
+    // والمرفق يرتفع مع مادته لا برقمها، ومادة «مكرر» لا ترتفع برقم أصلها.
     for (const hit of merged.values()) {
-      if (normalizeArticleNo(hit.articleNo) === articleNo) {
+      if (matchesArticle(hit, article)) {
         hit.score += ARTICLE_BOOST;
         if (!hit.signals.includes('article')) hit.signals.push('article');
       }
@@ -2730,8 +2902,9 @@ export async function getArticle(
     .bind(...filters.binds)
     .all<HitRow>();
   // الضمّ بنطاق النظام لا بنطاق الرقم: أخوات المادة قد تحمل أرقاماً مختلفة
-  // في `article_no` وتجمعها `duplicate_of` وحدها.
-  return expandDuplicates(env, (rows.results ?? []).map(toHit), scope);
+  // في `article_no` وتجمعها `duplicate_of` وحدها. ومرفقاتُها معها بعدها.
+  const siblings = await expandDuplicates(env, (rows.results ?? []).map(toHit), scope);
+  return withAttachments(env, siblings, scope);
 }
 
 /** مقطع بمعرّفه. التصفية سارية هنا أيضاً — الاستشهاد لا يستثنى من الشرط. */
@@ -2758,15 +2931,23 @@ export async function getChunkById(
  * تقريبية**: نظامان يتشابه عنوانهما ولا يتطابق مادتان مختلفتان، وفتحُ
  * الأقرب شكلاً استشهادٌ بغير ما استُند إليه — وهو أسوأ من ألّا يُفتح شيء.
  */
-export async function resolveLawIdByTitle(env: Env, title: string): Promise<string | null> {
+export async function resolveLawByTitle(
+  env: Env,
+  title: string
+): Promise<{ lawId: string | null; ambiguous: boolean }> {
   const clean = title.trim();
-  if (!clean) return null;
-  const row = await env.DB.prepare(
-    'SELECT law_id FROM legal_chunks WHERE law_title = ? AND law_id IS NOT NULL LIMIT 1'
+  if (!clean) return { lawId: null, ambiguous: false };
+  const rows = await env.DB.prepare(
+    'SELECT DISTINCT law_id FROM legal_chunks WHERE law_title = ? AND law_id IS NOT NULL LIMIT 2'
   )
     .bind(clean)
-    .first<{ law_id: string }>();
-  return row?.law_id ?? null;
+    .all<{ law_id: string }>();
+  const found = rows.results ?? [];
+  /* ونظامان باسمٍ واحد لا يُختار أحدهما (§7-2): النظام اللاغي وخلفُه قد
+     يجتمعان بالاسم نفسه، والفرق بينهما أداةُ الإصدار وتاريخه — ولا يحملهما
+     استشهادٌ حُفظ بالاسم وحده. فيُقال إن الاسم يطابق نظامين، ولا يُفتح أيٌّ. */
+  if (found.length > 1) return { lawId: null, ambiguous: true };
+  return { lawId: found[0]?.law_id ?? null, ambiguous: false };
 }
 
 /**
@@ -2875,12 +3056,19 @@ export type ReviewQueueKey = (typeof REVIEW_QUEUES)[number]['key'];
  * اجتهادٌ يُراجَع، وإدخالُ مئةٍ وخمسٍ وسبعين مادةً ملغاة يُغرق المراجع بما
  * لا فائدة في مراجعته — ويُخفي تحته ما يستحقّها.
  */
-const IN_QUEUE_SQL = `c.needs_review = 1 AND c.review_status = '${REVIEW_PENDING}'
-                      AND c.is_repealed = 0 AND c.status <> 'repealed'`;
+const IN_QUEUE_SQL = `c.needs_review = 1 AND c.review_status = '${REVIEW_PENDING}' AND (${EFFECTIVE_SQL})`;
 
 /** ما خرج من الطابور بقرار: منجَزُ العدّاد. */
-const QUEUE_DONE_SQL = `c.needs_review = 1 AND c.review_status <> '${REVIEW_PENDING}'
-                        AND c.is_repealed = 0 AND c.status <> 'repealed'`;
+const QUEUE_DONE_SQL = `c.needs_review = 1 AND c.review_status <> '${REVIEW_PENDING}' AND (${EFFECTIVE_SQL})`;
+
+/**
+ * المادة خارج الاسترجاع بإلغائها — نقيضُ `EFFECTIVE_SQL` بعينه.
+ *
+ * عدُّ الملغاة يقرأ الشرط نفسه الذي يُصفّى به، لا حقلاً واحداً من ثلاثة: مادةٌ
+ * من نظامٍ لاغٍ حالُها «ملغى» و`is_repealed` فيها صفر، وعدٌّ على الثاني وحده
+ * يقول «لا ملغاة» والبحث لا يجدها.
+ */
+const REPEALED_SQL = `NOT (${EFFECTIVE_SQL})`;
 
 export interface ReviewFilters {
   /** حصر المراجعة في نظامٍ واحد — أسرع وأدقّ، فالذهن يبقى في موضوع واحد. */
@@ -3036,14 +3224,20 @@ export async function listReviewQueueIds(
 export function buildEmbedText(a: {
   law_title: string | null; instrument: string | null; book: string | null;
   chapter: string | null; article_title: string | null; article_no: string | null; text: string;
+  article_label?: string | null; is_annex?: number; is_attachment?: number; is_mukarrar?: number;
 }): string {
+  // الملحق والمرفق ومادة «مكرر» بعناوينها لا بأرقامها: رقمُ الملحق اصطلاحيّ لا
+  // مادةَ به (§3-12)، ورقمُ المرفق و«مكرر» رقمُ مادةٍ أخرى — ومتجهٌ يحمل «المادة
+  // 1001» يقرّب الجدول ممّن يبحث عن مادةٍ لا وجود لها.
+  const byLabel = !!(a.is_annex || a.is_attachment || a.is_mukarrar);
+  const place = byLabel ? a.article_label : a.article_no ? `المادة ${a.article_no}` : '';
   const head = [
     a.law_title,
     a.instrument ? `(${a.instrument})` : '',
     a.book,
     a.chapter,
     a.article_title,
-    a.article_no ? `المادة ${a.article_no}` : '',
+    place,
   ]
     .filter(Boolean)
     .join(' — ');
@@ -3063,10 +3257,35 @@ const ACTION_STATUS: Record<Exclude<ReviewAction, 'note' | 'undo'>, string> = {
 interface ReviewRow {
   id: string; law_id: string | null; law_title: string | null; instrument: string | null;
   book: string | null; chapter: string | null; article_title: string | null; article_no: string | null;
+  article_label: string | null; is_annex: number; is_attachment: number; is_mukarrar: number;
   text: string; text_original_import: string | null; review_status: string; review_note: string | null;
   needs_review: number;
   retrieval_status: string; retrieval_warning: string | null;
   has_amendments: number; amendment_applied: number;
+  law_pending: number; law_effective_from: string | null;
+  text_versions: string | null;
+}
+
+/**
+ * الخطّ الزمني بعد تحرير النصّ — النسخة المعتمدة تحمل ما يُعرض.
+ *
+ * القيد الملزم (§3-6): نصُّ النسخة `current` مطابقٌ حرفياً لـ`text`. والتحرير
+ * يغيّر `text`، فلو بقي الخطّ الزمني كما ورد لقالت نافذته إن النافذ غير
+ * المعروض — وهي بعينها الحال التي يرفض الاستيراد لأجلها السطر. والنصّ الوارد
+ * من المصدر محفوظٌ في `text_original_import` لا يضيع.
+ */
+function withCurrentText(versionsJson: string | null, text: string): string {
+  let versions: TextVersion[] = [];
+  try {
+    const parsed = versionsJson ? JSON.parse(versionsJson) : [];
+    if (Array.isArray(parsed)) versions = parsed as TextVersion[];
+  } catch {
+    versions = [];
+  }
+  if (!versions.some((v) => v.current)) {
+    return JSON.stringify([{ seq: 0, text, label: null, from_instrument: null, from_date: null, current: true }]);
+  }
+  return JSON.stringify(versions.map((v) => (v.current ? { ...v, text } : v)));
 }
 
 export interface ReviewResult {
@@ -3096,8 +3315,10 @@ export async function reviewChunk(
 ): Promise<ReviewResult> {
   const row = await env.DB.prepare(
     `SELECT id, law_id, law_title, instrument, book, chapter, article_title, article_no,
+            article_label, is_annex, is_attachment, is_mukarrar,
             text, text_original_import, review_status, review_note, needs_review,
-            retrieval_status, retrieval_warning, has_amendments, amendment_applied
+            retrieval_status, retrieval_warning, has_amendments, amendment_applied,
+            law_pending, law_effective_from, text_versions
      FROM legal_chunks WHERE id = ?`
   )
     .bind(id)
@@ -3113,13 +3334,13 @@ export async function reviewChunk(
   const setText = (text: string) => {
     const embed = buildEmbedText({ ...row, text });
     sets.push(
-      'text = ?', 'text_norm = ?', 'embed_text = ?', 'embed_hash = ?',
+      'text = ?', 'text_norm = ?', 'embed_text = ?', 'embed_hash = ?', 'text_versions = ?',
       // `embedded_at = NULL` يعيد المقطع إلى طابور التضمين، ويصرّفه النداء
       // الذي يلي الحفظ أو الـCron. وتحديث `text_norm` يُشغّل محفّز الفهرس
       // اللفظي من تلقائه — فالمساران يتجدّدان معاً.
       'embedded_at = NULL'
     );
-    binds.push(text, normalizeArabic(text), embed, hashText(embed));
+    binds.push(text, normalizeArabic(text), embed, hashText(embed), withCurrentText(row.text_versions, text));
     audit.push({ field: 'text', from: row.text, to: text });
     reembedded = true;
   };
@@ -3172,8 +3393,14 @@ export async function reviewChunk(
      * ألواحه الثلاثة. والاعتماد جملةً يُخرج المادة من الطابور — وذاك قرارُ
      * ترتيبِ عمل — ولا يُسقط تحذيراً يقرؤه كلُّ محامٍ بعده. وضغطةٌ واحدة على
      * «تحديد الطابور كلَّه» كانت ستمحو مئتي تحذير بلا فتح مادة. */
+    /* **ولا يُسقط المراجعُ تحذيرَ نظامٍ لم يبدأ العمل به.** اعتمادُه يقول إن النصّ
+     * المعروض هو ما صدر، ولا يقول إن نظامه نافذ اليوم — ذاك يقوله تاريخُه، ويسقط
+     * التحذير به وحده حين يحلّ (§6-8). */
+    const lawPendingNow =
+      row.law_pending === 1 && (!row.law_effective_from || row.law_effective_from > gregorianToday());
     if (
       opts.via !== 'bulk' &&
+      !lawPendingNow &&
       (status === 'approved' || status === 'edited') &&
       row.retrieval_status === RETRIEVAL_WARNING
     ) {
@@ -3332,7 +3559,7 @@ export async function reviewDashboard(env: Env, filters: ReviewFilters = {}): Pr
             SUM(CASE WHEN c.review_status = 'edited' THEN 1 ELSE 0 END) AS edited,
             SUM(CASE WHEN c.review_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN c.review_status = 'deferred' THEN 1 ELSE 0 END) AS deferred,
-            SUM(CASE WHEN c.is_repealed = 1 OR c.status = 'repealed' THEN 1 ELSE 0 END) AS repealed
+            SUM(CASE WHEN ${REPEALED_SQL} THEN 1 ELSE 0 END) AS repealed
      FROM legal_chunks c`
   ).first<Omit<ReviewDashboard, 'last_activity' | 'queues'>>();
 
@@ -3367,6 +3594,13 @@ export interface LawSummary {
   law_title: string | null;
   parent_law_id: string | null;
   doc_type: string | null;
+  /** حالُ النظام من بطاقته كما وردت. */
+  law_status: string | null;
+  /** النظام كلُّه لاغٍ. */
+  law_repealed: number;
+  /** لم يبدأ العمل به — مُقيَّماً بتاريخ اليوم (§6-8). */
+  law_pending: number;
+  law_effective_from: string | null;
   /** نوع أداة الإصدار: مرسوم ملكي، قرار مجلس الوزراء… */
   instrument: string | null;
   instrument_no: string | null;
@@ -3392,6 +3626,14 @@ export async function listLaws(env: Env): Promise<LawSummary[]> {
             MAX(c.law_title) AS law_title,
             MAX(c.parent_law_id) AS parent_law_id,
             MAX(c.doc_type) AS doc_type,
+            MAX(c.law_status) AS law_status,
+            MAX(c.law_repealed) AS law_repealed,
+            -- التاريخ يُقيَّم هنا كما يُقيَّم في كل استعلام: نظامٌ حلّ يومُ نفاذه
+            -- لا يبقى «لم يبدأ العمل به» حتى تُرفع دفعةٌ تقول ذلك.
+            MAX(CASE WHEN c.law_pending = 1
+                      AND (c.law_effective_from IS NULL OR c.law_effective_from > date('now'))
+                     THEN 1 ELSE 0 END) AS law_pending,
+            MAX(c.law_effective_from) AS law_effective_from,
             MAX(c.instrument) AS instrument,
             MAX(c.instrument_no) AS instrument_no,
             MAX(c.authority) AS authority,
@@ -3400,7 +3642,7 @@ export async function listLaws(env: Env): Promise<LawSummary[]> {
             MAX(c.source_url) AS source_url,
             COUNT(*) AS chunks,
             SUM(CASE WHEN ${EFFECTIVE_SQL} THEN 1 ELSE 0 END) AS effective,
-            SUM(CASE WHEN c.is_repealed = 1 OR c.status = 'repealed' THEN 1 ELSE 0 END) AS repealed
+            SUM(CASE WHEN ${REPEALED_SQL} THEN 1 ELSE 0 END) AS repealed
      FROM legal_chunks c
      WHERE c.law_id IS NOT NULL
      GROUP BY c.law_id
@@ -3479,6 +3721,27 @@ export interface LegalStats {
   stale_vector: number;
   /** معطوبٌ محجوبٌ ينتظر البتّ. */
   defective: number;
+  /**
+   * الفهرس المتجهي نفسُه مقابَلاً بما يجب أن يكون فيه (§6-7) — يُحسب بطلبٍ
+   * صريح (`vectors`) لا مع كل جسّ: نداءٌ إلى الفهرس لا استعلامٌ في القاعدة.
+   */
+  vectors?: VectorCheck;
+}
+
+/**
+ * عدُّ الفهرس المتجهي مقابَلاً بسجلاته — فحصُ «المتجه بلا سجل».
+ *
+ * `expected` ما وُسم من سجلاتنا مضمَّناً: موادُّ الأنظمة ومقاطعُ الوثائق
+ * المرفوعة، فالفهرس واحدٌ للطابورين. و`orphans` ما زاد في الفهرس عليه —
+ * متجهٌ بقي بعد حذف سجلّه، يشغل خانةً من `topK` ولا يُرجع شيئاً. وعدُّ الفهرس
+ * يتأخّر عن آخر كتابةٍ ثوانيَ (`processedUpToMutation`)، فزيادةٌ عقب استيرادٍ
+ * أو حذفٍ للتوّ تُعاد قراءتها قبل أن يُبنى عليها.
+ */
+export interface VectorCheck {
+  /** ما في الفهرس فعلاً — `null` إن لم يُهيَّأ الفهرس أو تعذّر سؤاله. */
+  actual: number | null;
+  expected: number;
+  orphans: number | null;
 }
 
 /**
@@ -3488,11 +3751,11 @@ export interface LegalStats {
  * الحالات وما يُفهرَس. ورقمٌ مكتوبٌ في وثيقة يتقادم مع أوّل دفعة، فيُقارَن به
  * ويُظَنّ الاستيراد ناقصاً — ولذلك يُقرأ من القاعدة في كل فتحة.
  */
-export async function legalStats(env: Env): Promise<LegalStats> {
+export async function legalStats(env: Env, opts: { vectors?: boolean } = {}): Promise<LegalStats> {
   const row = await env.DB.prepare(
     `SELECT COUNT(*) AS chunks,
             SUM(CASE WHEN ${EFFECTIVE_SQL} THEN 1 ELSE 0 END) AS effective,
-            SUM(CASE WHEN c.is_repealed = 1 OR c.status = 'repealed' THEN 1 ELSE 0 END) AS repealed,
+            SUM(CASE WHEN ${REPEALED_SQL} THEN 1 ELSE 0 END) AS repealed,
             COUNT(DISTINCT c.law_id) AS laws,
             -- ما ينتظر التضمين فعلاً: بالشرط الذي يختار به embedPending لا
             -- بـ embedded_at IS NULL وحده. والفرق ليس تجميلاً:
@@ -3516,13 +3779,18 @@ export async function legalStats(env: Env): Promise<LegalStats> {
             -- يستحقّه. الثاني صفرٌ دائماً إن عمل التنظيف، وارتفاعُه إنذار.
             SUM(CASE WHEN ${EMBEDDABLE_SQL_C} AND c.embedded_at IS NULL THEN 1 ELSE 0 END) AS missing_vector,
             SUM(CASE WHEN NOT (${EMBEDDABLE_SQL_C}) AND c.embedded_at IS NOT NULL THEN 1 ELSE 0 END) AS stale_vector,
-            SUM(CASE WHEN c.has_defect = 1 AND c.review_status = 'pending' THEN 1 ELSE 0 END) AS defective
+            SUM(CASE WHEN c.has_defect = 1 AND c.review_status = 'pending' THEN 1 ELSE 0 END) AS defective,
+            -- ما يستحقّ متجهاً بالشرط الذي يُضمَّن به، لا «كلُّ ما ليس ملغى في
+            -- الملف»: إلغاءٌ مجدول حلّ يومه خرج من الفهرس ولو قال الملف «نافذ».
+            SUM(CASE WHEN ${EMBEDDABLE_SQL_C} THEN 1 ELSE 0 END) AS indexed,
+            SUM(CASE WHEN c.embedded_at IS NOT NULL THEN 1 ELSE 0 END) AS embedded
      FROM legal_chunks c`
   ).first<{
     chunks: number; effective: number; repealed: number; laws: number; pending: number;
     needs_review: number; amendment_pending: number;
     r_effective: number; r_warning: number; r_repealed: number;
     missing_vector: number; stale_vector: number; defective: number;
+    indexed: number; embedded: number;
   }>();
 
   return {
@@ -3539,9 +3807,57 @@ export async function legalStats(env: Env): Promise<LegalStats> {
       warning: row?.r_warning ?? 0,
       repealed: row?.r_repealed ?? 0,
     },
-    indexed: (row?.chunks ?? 0) - (row?.r_repealed ?? 0),
+    indexed: row?.indexed ?? 0,
     missing_vector: row?.missing_vector ?? 0,
     stale_vector: row?.stale_vector ?? 0,
     defective: row?.defective ?? 0,
+    ...(opts.vectors ? { vectors: await vectorCheck(env, row?.embedded ?? 0) } : {}),
   };
+}
+
+/**
+ * مقياسا المتجه بشرط التضمين نفسه: ما يستحقّه ولم يُضمَّن، وما ضُمِّن ولم يعد
+ * يستحقّه. للدورة الليلية — وكانت تكتب الشرط بيدها فتُغفل الإلغاء المجدول.
+ */
+export async function vectorHealth(env: Env): Promise<{ missing: number; stale: number }> {
+  const row = await env.DB.prepare(
+    `SELECT SUM(CASE WHEN ${EMBEDDABLE_SQL_C} AND c.embedded_at IS NULL THEN 1 ELSE 0 END) AS missing,
+            SUM(CASE WHEN NOT (${EMBEDDABLE_SQL_C}) AND c.embedded_at IS NOT NULL THEN 1 ELSE 0 END) AS stale
+     FROM legal_chunks c`
+  ).first<{ missing: number | null; stale: number | null }>();
+  return { missing: row?.missing ?? 0, stale: row?.stale ?? 0 };
+}
+
+/**
+ * الفهرس المتجهي مقابَلاً بسجلاته. يُنادى من صفحة صحّة القاعدة ومن الدورة
+ * الليلية — وكلاهما يقرأ الأرقام نفسها بالطريقة نفسها.
+ */
+export async function vectorCheck(env: Env, legalEmbedded?: number): Promise<VectorCheck> {
+  const legal =
+    legalEmbedded ??
+    (await env.DB.prepare('SELECT COUNT(*) AS n FROM legal_chunks WHERE embedded_at IS NOT NULL').first<{ n: number }>())
+      ?.n ??
+    0;
+  // مقاطعُ الوثائق المرفوعة في الفهرس نفسه: عددُها في `chunk_count` لكل وثيقةٍ ضُمِّنت.
+  let docs = 0;
+  try {
+    docs =
+      (
+        await env.DB.prepare(
+          "SELECT COALESCE(SUM(chunk_count), 0) AS n FROM kb_documents WHERE ingest_status = 'ready'"
+        ).first<{ n: number }>()
+      )?.n ?? 0;
+  } catch {
+    // جدول الوثائق من هجرةٍ أولى، وغيابُه لا يُسقط فحص الأنظمة.
+  }
+  const expected = legal + docs;
+  if (!env.VECTORIZE) return { actual: null, expected, orphans: null };
+  try {
+    // الربط الحاليّ يردّ `vectorCount`، والربط التجريبيّ القديم `vectorsCount`.
+    const info = (await env.VECTORIZE.describe()) as unknown as { vectorCount?: number; vectorsCount?: number };
+    const actual = info.vectorCount ?? info.vectorsCount ?? null;
+    return { actual, expected, orphans: actual === null ? null : Math.max(0, actual - expected) };
+  } catch {
+    return { actual: null, expected, orphans: null };
+  }
 }

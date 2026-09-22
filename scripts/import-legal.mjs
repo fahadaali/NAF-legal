@@ -230,11 +230,18 @@ try {
     }
     if (seen.orphans.length > 20) console.log(`  … و${seen.orphans.length - 20} غيرها`);
 
-    if (!prune) {
+    if (seen.skipped) {
+      // السطر المتخطّى لم يُكتب، فمعرّفُه غائبٌ عن الدفعة وحاضرٌ في القاعدة:
+      // حذفُ «الغائب» هنا يمحو مادةً أسقطها فحصُ خانة لا المصدر. والخادم يرفضه
+      // أيضاً — وهذا يقوله قبل أن يُطلب.
+      console.log(`لم تُحذف: تُخطّي من الدفعة ${seen.skipped} سطراً، والغائب قد يكون ما تُخطّي.`);
+      console.log('أصلِح الأسطر المرفوضة وأعِد رفع الملف كاملاً، ثم احذف.');
+    } else if (!prune) {
       console.log('لم تُحذف. لحذفها — السجلّ ومتجهه — أعِد التشغيل مع --prune');
     } else {
       const done = await finalize(true);
-      console.log(`حُذف ${done.deleted}. ونصُّ كلٍّ محفوظٌ في سجلّ التحديث قبل ذهابه.`);
+      if (!done.applied) console.log(`لم تُحذف: ${done.error ?? 'رفض الخادم الحذف'}`);
+      else console.log(`حُذف ${done.deleted}. ونصُّ كلٍّ محفوظٌ في سجلّ التحديث قبل ذهابه.`);
     }
   }
 } catch (e) {
