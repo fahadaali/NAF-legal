@@ -93,6 +93,8 @@ function base64(value: string): string {
  * تُقرأ فوق كتف.
  */
 function authorization(credential: string, scheme: ExternalSource['authScheme']): string {
+  /* و`oauth` حاملٌ في الشكل كـ`bearer` ويفترقان في المصدر لا في الترويسة:
+     ذاك قيمةٌ تُكتب في سرٍّ وتبقى، وهذا رمزٌ يُسَكّ وينتهي ويُعاد سكُّه. */
   return scheme === 'basic' ? `Basic ${base64(credential)}` : `Bearer ${credential}`;
 }
 
@@ -278,6 +280,11 @@ export async function callTool(
 ): Promise<McpOutcome> {
   if (!source.endpoint) return { ok: false, kind: 'config', message: 'لا عنوان للمصدر' };
   if (source.tokenKey && !token) return { ok: false, kind: 'config', message: 'اعتماد المصدر غير مضبوط' };
+  /* ومصدرٌ على التفويض بلا رمز: لم يُفوَّض بعد، أو انتهى اعتمادُه ولم يُسَكّ
+     بدلُه. وهي حالُ إعدادٍ لا عطلُ شبكة — فتُقال في الشاشة ولا تُقرأ فراغاً. */
+  if (source.authScheme === 'oauth' && !token) {
+    return { ok: false, kind: 'config', message: 'المصدر يطلب تفويضاً' };
+  }
 
   let session = await cachedSession(env, source.id);
   for (let attempt = 0; attempt < 2; attempt++) {

@@ -361,7 +361,7 @@ export interface AdminSource {
   maxResults: number;
   timeoutMs: number;
   tokenKey: string | null;
-  authScheme: 'bearer' | 'basic';
+  authScheme: 'bearer' | 'basic' | 'oauth';
   lastChecked?: number | null;
   lastStatus?: string | null;
   lastError?: string | null;
@@ -1045,6 +1045,13 @@ export const api = {
   adminSources: () => req<{ sources: AdminSource[] }>('/admin/sources'),
   saveSource: (id: string, payload: Record<string, unknown>) =>
     req<{ ok: boolean; source: AdminSource }>(`/admin/sources/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  authorizeSource: (id: string) =>
+    req<{ ok: boolean; steps: string[]; clientId?: string; authMethod?: string; expiresAt?: number | null; scope?: string | null; hits?: number; error?: string }>(
+      `/admin/sources/${encodeURIComponent(id)}/authorize`,
+      { method: 'POST' }
+    ),
+  revokeSource: (id: string) =>
+    req<{ ok: boolean }>(`/admin/sources/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
   testSource: (id: string) =>
     req<{ ok: boolean; status: string; error?: string; hits?: number; discovered?: DiscoveredAuth | null }>(
       `/admin/sources/${encodeURIComponent(id)}/test`,

@@ -16,6 +16,9 @@ import { uuid } from '../lib/crypto';
 import { listSources, getSource, recordCheck } from '../lib/sources';
 import { searchSource } from '../lib/external';
 import { discoverAuth } from '../lib/discover';
+import { authorizeMachine, forget } from '../lib/oauth';
+import { callTool } from '../lib/mcp';
+import type { ExternalSource } from '../lib/sources';
 import { notify } from '../lib/notify';
 import type { Env, Variables } from '../types';
 
@@ -397,7 +400,9 @@ app.put('/sources/:id', async (c) => {
       Math.min(Math.max(Number(b.max_results) || existing.maxResults, 1), 25),
       Math.min(Math.max(Number(b.timeout_ms) || existing.timeoutMs, 2000), 30000),
       typeof b.token_key === 'string' ? b.token_key.trim() || null : existing.tokenKey,
-      b.auth_scheme === 'basic' || b.auth_scheme === 'bearer' ? b.auth_scheme : existing.authScheme,
+      b.auth_scheme === 'basic' || b.auth_scheme === 'bearer' || b.auth_scheme === 'oauth'
+        ? b.auth_scheme
+        : existing.authScheme,
       Date.now(),
       id
     )
@@ -445,6 +450,64 @@ app.post('/sources/:id/test', async (c) => {
     hits: outcome.hits.length,
     discovered,
   });
+});
+
+/* بدءُ التفويض — بمنحة الآلة.
+ *
+ * ولا رحلةَ متصفّح هنا: الخادم يُعلن `client_credentials`، فتُسجَّل المنصةُ
+ * عميلاً وتأخذ رمزاً باسمها. وهي أقصرُ الطريقين وأسلمُهما — لا رمزَ مسحوبٌ
+ * من حساب إنسانٍ يخدم كلَّ مستخدمي المنصة.
+ *
+ * و`POST` لا `GET`: يُسجَّل عميلٌ عند خادمٍ أجنبيّ ويُكتب اعتمادٌ مختوم،
+ * ورابطٌ يفعل ذلك بمجرّد فتحه تكفي صورةٌ في صفحةٍ أجنبية لتشغيله — وهي
+ * عينُ علّة الخروج بـ`GET` الموصوفة في `web/src/lib/api.ts`.
+ */
+app.post('/sources/:id/authorize', async (c) => {
+  const id = c.req.param('id');
+  const source = await getSource(c.env, id);
+  if (!source) return c.json({ error: 'المصدر غير موجود' }, 404);
+  if (!source.endpoint) return c.json({ error: 'لا عنوان للمصدر' }, 400);
+
+  /* التحدّي يُستدرّ بمصدرٍ صوريّ نوعُه «رمز حامل»: الصفُّ على التفويض بلا
+     رمزٍ بعد، فحارسُ `callTool` كان يردّ قبل أن يُرسَل طلبٌ أصلاً. */
+  const bare: ExternalSource = { ...source, authScheme: 'bearer', tokenKey: null };
+  const challenge = await callTool(c.env, bare, null, source.searchTool, {
+    ...source.args,
+    [source.queryField]: 'الإجارة',
+    ...(source.limitField ? { [source.limitField]: 1 } : {}),
+  });
+  if (challenge.ok) {
+    return c.json({ error: 'الخادم يستجيب بلا اعتماد — لا تفويضَ يلزم' }, 400);
+  }
+  if (!challenge.resourceMetadata) {
+    return c.json({ error: `لا وثيقةَ موارد في ردّ الخادم · ${challenge.message}` }, 400);
+  }
+
+  const found = await discoverAuth(challenge.resourceMetadata, source.timeoutMs, source.endpoint);
+  if (!found) return c.json({ error: 'تعذّرت قراءة وثيقة الموارد' }, 400);
+
+  const result = await authorizeMachine(c.env, source, found);
+  await recordCheck(
+    c.env,
+    id,
+    result.ok ? 'ok' : 'unconfigured',
+    result.ok ? null : (result.error ?? 'تعذّر التفويض')
+  );
+  await audit(c, 'external_source.authorize', id, { ok: result.ok, issuer: found.issuer });
+  return c.json(result);
+});
+
+/* سحبُ التفويض — يُمحى المختوم ويعود المصدر «غير مربوط».
+   ولا إبطالَ عند الخادم: لا نقطةَ إبطالٍ في بياناته، ومحوُ ما عندنا يمنع
+   الاستعمال. والتسجيلُ يبقى عنده حتى يُزيله مشغّله — يُقال ولا يُدَّعى غيره. */
+app.post('/sources/:id/revoke', async (c) => {
+  const id = c.req.param('id');
+  const source = await getSource(c.env, id);
+  if (!source) return c.json({ error: 'المصدر غير موجود' }, 404);
+  await forget(c.env, id);
+  await recordCheck(c.env, id, 'unconfigured', 'سُحب التفويض');
+  await audit(c, 'external_source.revoke', id, {});
+  return c.json({ ok: true });
 });
 
 // ── خلاصة أخبار جريدة أم القرى (§5) ──

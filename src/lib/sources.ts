@@ -8,7 +8,7 @@
 import type { Env } from '../types';
 
 export type SourceRole = 'fiqh' | 'legal';
-export type AuthScheme = 'bearer' | 'basic';
+export type AuthScheme = 'bearer' | 'basic' | 'oauth';
 
 export interface ExternalSource {
   id: string;
@@ -28,7 +28,10 @@ export interface ExternalSource {
   timeoutMs: number;
   /** اسم المفتاح في `MCP_TOKENS` — لا قيمتُه. */
   tokenKey: string | null;
-  /** `bearer` القيمةُ رمزٌ يُرسَل كما هو · `basic` القيمةُ «مستخدم:كلمة مرور». */
+  /**
+   * `bearer` القيمةُ رمزٌ يُرسَل كما هو · `basic` القيمةُ «مستخدم:كلمة مرور»
+   * · `oauth` لا قيمةَ في سرٍّ أصلاً: الرمزُ يُسَكّ ويُجدَّد (`lib/oauth.ts`).
+   */
   authScheme: AuthScheme;
   lastChecked?: number | null;
   lastStatus?: string | null;
@@ -78,7 +81,8 @@ function toSource(r: Row): ExternalSource {
     maxResults: r.max_results,
     timeoutMs: r.timeout_ms,
     tokenKey: r.token_key,
-    authScheme: r.auth_scheme === 'basic' ? 'basic' : 'bearer',
+    authScheme:
+      r.auth_scheme === 'basic' ? 'basic' : r.auth_scheme === 'oauth' ? 'oauth' : 'bearer',
     lastChecked: r.last_checked,
     lastStatus: r.last_status,
     lastError: r.last_error,

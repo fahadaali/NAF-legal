@@ -8,7 +8,28 @@
  *
  *   node audit/oauth-check.mjs     (أو: npm run check:oauth)
  */
-import { discoverAuth } from '../src/lib/discover.ts';
+import { registerHooks } from 'node:module';
+import { existsSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+/* شفرةُ العامل تستورد بلا لاحقة (`./sealed`) — وهو الصواب فيها. ومحلّلُ Node
+   لا يعرف ذلك، فيُلحق هنا لا هناك: الفحصُ يتكيّف مع الشفرة، ولا تُغيَّر
+   الشفرة ليمرّ فحص. ونسخةٌ من الحلّال في `audit/external-adapters-check.mjs`. */
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith('.') && !/\.[a-z]+$/.test(specifier)) {
+      const base = fileURLToPath(new URL(specifier, context.parentURL));
+      if (existsSync(`${base}.ts`)) {
+        return { url: pathToFileURL(`${base}.ts`).href, shortCircuit: true };
+      }
+    }
+    return nextResolve(specifier, context);
+  },
+});
+
+const { discoverAuth } = await import('../src/lib/discover.ts');
+const { seal, unseal } = await import('../src/lib/sealed.ts');
+const { accessTokenFor, authorizeMachine, forget } = await import('../src/lib/oauth.ts');
 
 const asked = [];
 /** خريطةُ عنوانٍ → ردّ. وما ليس فيها يعود ٤٠٤. */
@@ -19,7 +40,7 @@ globalThis.fetch = async (url, init) => {
   asked.push(href);
   const hit = routes.get(href);
   if (!hit) return new Response('{}', { status: 404 });
-  if (typeof hit === 'function') return hit(init);
+  if (typeof hit === 'function') return hit(init, href);
   return new Response(typeof hit === 'string' ? hit : JSON.stringify(hit), {
     status: 200,
     headers: { 'content-type': 'application/json' },
@@ -189,6 +210,137 @@ check('★ وخادمُ التفويض على أصلٍ آخر يُقرأ — ا�
   d?.issuer === 'https://as.test', JSON.stringify(d?.notes));
 check('RFC 9207 و response_types يُقرآن',
   d?.authorizationResponseIssParameterSupported === true && d?.responseTypesSupported?.[0] === 'code');
+
+
+// ═══ الختم ═══
+console.log('\nختمُ الاعتمادات:');
+const store = new Map();
+const KV = {
+  async get(k) { return store.get(k) ?? null; },
+  async put(k, v) { store.set(k, v); },
+  async delete(k) { store.delete(k); },
+};
+const env = { KV, AUTH_CLIENT_SECRET: 'سرُّ-المنصة-لدى-المركز' };
+
+const sealed = await seal(env, 'mcpoauth:cli:shamela', { clientId: 'abc', clientSecret: 's3cr3t' });
+check('مختومٌ يُفكّ إلى ما خُتم', (await unseal(env, 'mcpoauth:cli:shamela', sealed))?.clientSecret === 's3cr3t');
+check('★ والمختومُ لا يحوي السرَّ نصّاً', !sealed.includes('s3cr3t') && !sealed.includes('abc'), sealed.slice(0, 60));
+check('★ ومختومٌ نُقل إلى مفتاحٍ آخر لا يُفكّ', (await unseal(env, 'mcpoauth:cli:turath', sealed)) === null);
+check('ومختومٌ تلف لا يرمي', (await unseal(env, 'mcpoauth:cli:shamela', sealed.replace(/.$/, 'X}'))) === null);
+check('★ وسرٌّ دُوّر يُبطل المفكّ ولا يرمي',
+  (await unseal({ ...env, AUTH_CLIENT_SECRET: 'سرٌّ-آخر' }, 'mcpoauth:cli:shamela', sealed)) === null);
+check('وبلا سرٍّ لا ختمَ ولا رمي', (await seal({ KV }, 'x', { a: 1 })) === null);
+check('ومختومان لنفس القيمة يختلفان (متّجهٌ جديد لكل ختم)',
+  (await seal(env, 'k', { a: 1 })) !== (await seal(env, 'k', { a: 1 })));
+
+// ═══ منحةُ الآلة ═══
+console.log('\nمنحةُ الآلة:');
+const AS = {
+  resourceMetadata: PRM,
+  resource: 'https://res.test/mcp',
+  authorizationServers: ['https://as.test'],
+  issuer: 'https://as.test',
+  tokenEndpoint: 'https://as.test/token',
+  registrationEndpoint: 'https://as.test/register',
+  grantTypesSupported: ['authorization_code', 'client_credentials', 'refresh_token'],
+  codeChallengeMethodsSupported: ['S256'],
+  tokenEndpointAuthMethodsSupported: ['none', 'client_secret_basic', 'client_secret_post'],
+  notes: [],
+};
+const src = {
+  id: 'shamela', label: 'الشاملة', kind: 'mcp', endpoint: 'https://res.test/mcp',
+  role: 'fiqh', enabled: true, searchTool: 'shamela_search_phrase', args: { mode: 'near' },
+  queryField: 'query', limitField: 'limit', maxResults: 8, timeoutMs: 3000,
+  tokenKey: null, authScheme: 'oauth',
+};
+
+let seenReg = null, seenTok = null, mcpAuth = [];
+const mcpServer = (init) => {
+  mcpAuth.push(init.headers?.authorization ?? null);
+  const msg = JSON.parse(init.body);
+  if (msg.method === 'initialize') {
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2025-11-25', capabilities: {} } }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  if (msg.method === 'notifications/initialized') return new Response('', { status: 202 });
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { structuredContent: { results: [{ book_name: 'المغني' }] }, content: [] } }),
+    { status: 200, headers: { 'content-type': 'application/json' } });
+};
+const asRoutes = (over = {}) => ({
+  'https://as.test/register': (init) => {
+    seenReg = JSON.parse(init.body);
+    return new Response(JSON.stringify({ client_id: 'cid-1', client_secret: 'csec-1', token_endpoint_auth_method: over.echo ?? 'client_secret_post' }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+  },
+  'https://as.test/token': (init) => {
+    seenTok = { body: init.body, headers: init.headers, type: init.headers?.['content-type'] };
+    return new Response(JSON.stringify({ access_token: over.token ?? 'AT-1', token_type: over.tokenType ?? 'Bearer', expires_in: over.expiresIn ?? 3600 }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+  },
+  'https://res.test/mcp': mcpServer,
+});
+
+setup(asRoutes()); store.clear();
+let r = await authorizeMachine(env, src, AS);
+check('★ التفويض لا يُقال «مربوط» إلا بعد نداءٍ حقيقيّ على الأداة', r.ok === true && r.hits === 1, JSON.stringify(r));
+check('طلبُ التسجيل يحمل منحة الآلة ولا عناوينَ تحويل',
+  seenReg?.grant_types?.[0] === 'client_credentials' && !seenReg.redirect_uris, JSON.stringify(seenReg));
+check('★ طلبُ الرمز مرمَّزٌ بـform لا JSON', seenTok?.type === 'application/x-www-form-urlencoded', String(seenTok?.type));
+const form = new URLSearchParams(seenTok.body);
+check('★ ويحمل resource (RFC 8707) ومنحةَ الآلة',
+  form.get('grant_type') === 'client_credentials' && form.get('resource') === 'https://res.test/mcp', seenTok.body);
+check('★ و«client_secret_post» تضع السرَّ في الجسم لا في ترويسة',
+  form.get('client_secret') === 'csec-1' && !seenTok.headers?.authorization);
+check('والرمز يصل إلى المورد حاملاً', mcpAuth.some((a) => a === 'Bearer AT-1'), JSON.stringify(mcpAuth));
+check('★ ولا يُخزَّن السرُّ ولا الرمزُ خاماً في المساحة',
+  ![...store.values()].some((v) => v.includes('csec-1') || v.includes('AT-1')), [...store.keys()].join(','));
+
+// الرمزُ المخزَّن يُستعمل ولا يُسَكّ ثانيةً
+seenTok = null;
+check('★ رمزٌ صالحٌ في المخزن يُستعمل بلا سكٍّ جديد',
+  (await accessTokenFor(env, src)) === 'AT-1' && seenTok === null);
+
+// رمزٌ منتهٍ → يُعاد سكُّه من العميل المخزَّن
+setup(asRoutes({ token: 'AT-2' }));
+const tokSlot = 'mcpoauth:tok:shamela';
+store.set(tokSlot, await seal(env, tokSlot, { accessToken: 'OLD', expiresAt: Date.now() - 1000, scope: null }));
+check('★ ورمزٌ منتهٍ يُسَكّ بدلُه من العميل المسجَّل', (await accessTokenFor(env, src)) === 'AT-2');
+
+// طريقةُ المصادقة تُؤخذ من ردّ الخادم لا من طلبنا
+setup(asRoutes({ echo: 'client_secret_basic' })); store.clear();
+r = await authorizeMachine(env, src, AS);
+check('★ وطريقةُ المصادقة تُؤخذ مما ردّه الخادم لا مما طلبناه',
+  r.authMethod === 'client_secret_basic' && !!seenTok.headers?.authorization, JSON.stringify(r.authMethod));
+check('و«basic» ترمّز المعرّف والسرّ بترميز النسبة قبل base64',
+  seenTok.headers.authorization === 'Basic ' + Buffer.from('cid-1:csec-1', 'utf8').toString('base64'),
+  seenTok.headers.authorization);
+
+// المورد يرفض الرمز → لا «مربوط»
+setup({ ...asRoutes(), 'https://res.test/mcp': () => new Response('{}', { status: 401 }) }); store.clear();
+r = await authorizeMachine(env, src, AS);
+check('★ ومورِدٌ يرفض رمزَ الآلة لا يُقال فيه «مربوط»', r.ok === false && r.error?.includes('المورد'), JSON.stringify(r.error));
+
+// نوعُ رمزٍ لا يُدعم
+setup(asRoutes({ tokenType: 'DPoP' })); store.clear();
+r = await authorizeMachine(env, src, AS);
+check('ونوعُ رمزٍ لا نعرف إرساله يُرفض صراحةً', r.ok === false && r.error?.includes('DPoP'), JSON.stringify(r.error));
+
+// لا تسجيلَ ديناميّاً
+setup(asRoutes()); store.clear();
+r = await authorizeMachine(env, src, { ...AS, registrationEndpoint: null });
+check('وبلا تسجيلٍ ديناميّ يُقال ما ينقص', r.ok === false && r.error?.includes('تسجيلاً'), JSON.stringify(r.error));
+
+// لا منحةَ آلة أصلاً
+r = await authorizeMachine(env, src, { ...AS, grantTypesSupported: ['authorization_code'] });
+check('★ وخادمٌ بلا منحة آلة يُرَدّ قبل أيّ طلب', r.ok === false && r.error?.includes('client_credentials'), JSON.stringify(r.error));
+
+// السحب
+setup(asRoutes()); store.clear();
+await authorizeMachine(env, src, AS);
+await forget(env, 'shamela');
+check('★ وسحبُ التفويض يمحو العميل والرمز معاً',
+  ![...store.keys()].some((k) => k.startsWith('mcpoauth:cli') || k.startsWith('mcpoauth:tok')), [...store.keys()].join(','));
+check('وبعد السحب لا رمزَ يُعطى', (await accessTokenFor(env, src)) === null);
 
 console.log(`\n${pass} نجحت · ${fail} أخفقت`);
 process.exit(fail ? 1 : 0);
