@@ -1416,7 +1416,9 @@ async function fetchExisting(env: Env, ids: string[]): Promise<Map<string, Exist
  * هذا ما يجعل إعادة رفع نظامٍ قراراً مقروءاً لا كتابةً عمياء: يُعرف كم مادة
  * ستُضاف، وكم ستتغيّر وبأيّ حقل، وكم لم تتغيّر — ثم يُعتمد أو يُترك.
  */
-export async function diffChunks(env: Env, rows: PreparedChunk[]): Promise<ImportDiff> {
+export async function diffChunks(env: Env, fromFile: PreparedChunk[]): Promise<ImportDiff> {
+  // المقارنة تُري ما سيقع لا ما في الملف: تحريرٌ يبقى لا يُعرض تغيّراً.
+  const rows = keepEdits(fromFile, await fetchReviewed(env, fromFile.map((r) => r.id)));
   const existing = await fetchExisting(env, rows.map((r) => r.id));
   const changes: ChunkChange[] = [];
   let added = 0;
@@ -1471,6 +1473,71 @@ export async function diffChunks(env: Env, rows: PreparedChunk[]): Promise<Impor
     changes_truncated: Math.max(0, changed - changes.length),
     law_ids: lawIds,
   };
+}
+
+/** ما يلزم من مادةٍ رُوجعت لمعرفة أثر الدفعة فيها — القرارُ والتحريرُ وما بُني عليهما. */
+interface ReviewedRow {
+  id: string;
+  text: string;
+  text_original_import: string | null;
+  amendments_raw: string | null;
+  review_status: string;
+  embed_text: string;
+  embed_hash: string | null;
+  text_versions: string | null;
+}
+
+/**
+ * الموادّ التي وقع عليها قرارُ مراجع — والمحرَّرة منها.
+ *
+ * لا تُجلب الموادّ كلُّها: نافذةُ التعديل الخام قد تبلغ آلاف الأحرف، ولا حاجة
+ * إليها إلا حيث يُسأل أبقي القرار أم سقط.
+ */
+async function fetchReviewed(env: Env, ids: string[]): Promise<Map<string, ReviewedRow>> {
+  const found = new Map<string, ReviewedRow>();
+  for (let i = 0; i < ids.length; i += DB_BATCH) {
+    const slice = ids.slice(i, i + DB_BATCH);
+    const marks = slice.map(() => '?').join(',');
+    const rows = await env.DB.prepare(
+      `SELECT id, text, text_original_import, amendments_raw, review_status, embed_text, embed_hash, text_versions
+       FROM legal_chunks
+       WHERE id IN (${marks}) AND (review_status <> '${REVIEW_PENDING}' OR text_original_import IS NOT NULL)`
+    )
+      .bind(...slice)
+      .all<ReviewedRow>();
+    for (const r of rows.results ?? []) found.set(r.id, r);
+  }
+  return found;
+}
+
+/**
+ * التحرير البشري لا تدهسه دفعةٌ لم يتغيّر مصدرُها (§6-6).
+ *
+ * المراجع حرّر نصّ المادة واعتمده، وأصلُ الاستيراد محفوظٌ في
+ * `text_original_import`. ثم تُرفع الدفعة التالية والمصدرُ هو هو — فكانت تكتب
+ * نصَّ المصدر فوق التحرير، وتُسقط الاعتماد، وتعيد المادة إلى الطابور لتُحرَّر
+ * من جديد: عملٌ يضيع مع كل دفعة ولا شيء تغيّر.
+ *
+ * فحين يطابق النصُّ الوارد أصلَ الاستيراد وتطابق نافذةُ التعديل ما كانت، يُكتب
+ * التحريرُ بنصّه وتضمينه وخطّه الزمني مكان الوارد — فيرى الاستبدالُ نصّاً لم
+ * يتغيّر ويُبقي القرار كما هو. وحين يتغيّر المصدر يُكتب الجديد، ويسقط القرار
+ * بأثره محفوظاً في `prior_*`.
+ */
+function keepEdits(rows: PreparedChunk[], reviewed: Map<string, ReviewedRow>): PreparedChunk[] {
+  if (!reviewed.size) return rows;
+  return rows.map((r) => {
+    const x = reviewed.get(r.id);
+    if (!x?.text_original_import) return r;
+    if (r.text !== x.text_original_import || (r.amendments_raw ?? null) !== (x.amendments_raw ?? null)) return r;
+    return {
+      ...r,
+      text: x.text,
+      text_norm: normalizeArabic(x.text),
+      embed_text: x.embed_text,
+      embed_hash: x.embed_hash ?? hashText(x.embed_text),
+      text_versions: withCurrentText(r.text_versions, x.text),
+    };
+  });
 }
 
 /** ما يُبقي اعتماد المراجع قائماً: النصّ نفسه ونافذةُ تعديله نفسها. */
@@ -1584,6 +1651,19 @@ const UPSERT_SQL = `
     -- أصلُ الاستيراد يسقط مع النصّ الذي كان أصلاً له: نصٌّ جديد وصل من
     -- المصدر، فالأصل هو هو لا ما حُرِّر قبله.
     text_original_import = CASE WHEN ${REVIEW_UNCHANGED} THEN legal_chunks.text_original_import ELSE NULL END,
+    -- والاعتمادُ الساقط لا يُمحى أثرُه (§6-6): يُنقل إلى أعمدته قبل أن تُصفَّر
+    -- أعمدةُ القرار أعلاه — والقيمُ هنا قيمُ الصفّ قبل التحديث كلُّها، فالنقلُ
+    -- يقرأ ما كان لا ما صار. وما لم يسقط يُبقي أثراً سابقاً إن كان.
+    prior_review_status = CASE WHEN NOT (${REVIEW_UNCHANGED}) AND legal_chunks.review_status IN ('approved','edited')
+                               THEN legal_chunks.review_status ELSE legal_chunks.prior_review_status END,
+    prior_reviewed_by = CASE WHEN NOT (${REVIEW_UNCHANGED}) AND legal_chunks.review_status IN ('approved','edited')
+                             THEN legal_chunks.reviewed_by ELSE legal_chunks.prior_reviewed_by END,
+    prior_reviewed_at = CASE WHEN NOT (${REVIEW_UNCHANGED}) AND legal_chunks.review_status IN ('approved','edited')
+                             THEN legal_chunks.reviewed_at ELSE legal_chunks.prior_reviewed_at END,
+    prior_review_text = CASE WHEN NOT (${REVIEW_UNCHANGED}) AND legal_chunks.review_status IN ('approved','edited')
+                             THEN legal_chunks.text ELSE legal_chunks.prior_review_text END,
+    prior_review_note = CASE WHEN NOT (${REVIEW_UNCHANGED}) AND legal_chunks.review_status IN ('approved','edited')
+                             THEN legal_chunks.review_note ELSE legal_chunks.prior_review_note END,
     updated_at = excluded.updated_at`;
 
 /** حجم دفعة الكتابة إلى D1 — دون سقف العبارات والمعاملات المربوطة بمراحل. */
@@ -1598,11 +1678,15 @@ const DB_BATCH = 25;
  */
 export async function upsertLegalChunks(
   env: Env,
-  rows: PreparedChunk[],
-  opts: { importId?: string; correction?: boolean; batchId?: string } = {}
+  incoming: PreparedChunk[],
+  opts: { importId?: string; correction?: boolean; batchId?: string; actorId?: string } = {}
 ): Promise<{ inserted: number; updated: number; archived: number; superseded: number }> {
-  if (!rows.length) return { inserted: 0, updated: 0, archived: 0, superseded: 0 };
+  if (!incoming.length) return { inserted: 0, updated: 0, archived: 0, superseded: 0 };
   const now = Date.now();
+
+  // ما حرّره المراجع ولم يتغيّر مصدرُه يبقى كما حُرِّر (§6-6) — انظر `keepEdits`.
+  const reviewed = await fetchReviewed(env, incoming.map((r) => r.id));
+  const rows = keepEdits(incoming, reviewed);
 
   // معرفة الجديد من المستبدَل قبل الكتابة — ليقول التقرير أيّهما وقع.
   // وفي الطريق نفسه تُؤرشَف المواد التي تغيّر نصُّها أو رقمها أو حالتها:
@@ -1721,6 +1805,26 @@ export async function upsertLegalChunks(
           r.former_article_no, r.former_article_no_norm, r.is_annex, r.is_mukarrar,
           r.embed_text, r.text_norm, r.book_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now
         )
+      )
+    );
+  }
+
+  // قرارُ مراجعةٍ أسقطته الدفعة يُقيَّد في سجلّ التدقيق كما يُقيَّد قرارُ المراجع:
+  // تغيّرت حالُ المراجعة، ووقع التغيير بدفعةٍ لا بيد إنسان — وسجلٌّ يرى قرارَ
+  // من اعتمد ولا يرى سقوطَه يقول إن المادة معتمدة وهي في الطابور.
+  const resets = rows.flatMap((r) => {
+    const x = reviewed.get(r.id);
+    if (!x || x.review_status === REVIEW_PENDING) return [];
+    if (x.text === r.text && (x.amendments_raw ?? null) === (r.amendments_raw ?? null)) return [];
+    return [{ id: r.id, law_id: r.law_id, from: x.review_status }];
+  });
+  for (let i = 0; i < resets.length; i += DB_BATCH) {
+    await env.DB.batch(
+      resets.slice(i, i + DB_BATCH).map((x) =>
+        env.DB.prepare(
+          `INSERT INTO legal_review_audit (id, chunk_id, law_id, field, old_value, new_value, actor_id, at, via)
+           VALUES (?, ?, ?, 'review_status', ?, ?, ?, ?, 'import')`
+        ).bind(uuid(), x.id, x.law_id, x.from, REVIEW_PENDING, opts.actorId ?? null, now)
       )
     );
   }
@@ -2972,20 +3076,42 @@ export interface ChunkAmendment {
   versions: TextVersion[];
   /** سجلّ التعديلات مفكَّكاً: عمليةٌ لكل حدث بما طُبِّق وما تُخطّي وسببه. */
   events: AmendmentEvent[];
+  /** كيف رُبطت نوافذ التعديل: رقم · عنوان · ترتيب — للتدقيق لا للعرض (§3-11). */
+  amend_link: string | null;
+  /** أدوات إصدار النظام كلُّها: مرسومٌ وقرارُ مجلس وزراء معاً (§3-10). */
+  instruments: { type: string | null; no: string | null; date_hijri: string | null; raw: string | null }[];
+  /**
+   * الاعتماد الذي أسقطته دفعةٌ غيّرت النصّ (§6-6) — ومعه النصُّ الذي اعتُمد.
+   * `null` إن لم يسقط اعتمادٌ عن هذه المادة.
+   */
+  prior_review: {
+    status: string;
+    by: string | null;
+    at: number | null;
+    text: string | null;
+    note: string | null;
+  } | null;
 }
 
 export async function getChunkAmendment(env: Env, id: string): Promise<ChunkAmendment | null> {
   const row = await env.DB.prepare(
     `SELECT id, amendment_kind, amendment_applied, amendment_instrument, amended_on,
             amendments_count, amendments_raw, amend_note, text_superseded, source_url,
-            text_versions, amendment_events
+            text_versions, amendment_events, amend_link, instruments,
+            prior_review_status, prior_reviewed_by, prior_reviewed_at, prior_review_text, prior_review_note
      FROM legal_chunks WHERE id = ? LIMIT 1`
   )
     .bind(id)
     .first<
-      Omit<ChunkAmendment, 'versions' | 'events'> & {
+      Omit<ChunkAmendment, 'versions' | 'events' | 'instruments' | 'prior_review'> & {
         text_versions: string | null;
         amendment_events: string | null;
+        instruments: string | null;
+        prior_review_status: string | null;
+        prior_reviewed_by: string | null;
+        prior_reviewed_at: number | null;
+        prior_review_text: string | null;
+        prior_review_note: string | null;
       }
     >();
   if (!row) return null;
@@ -3003,11 +3129,25 @@ export async function getChunkAmendment(env: Env, id: string): Promise<ChunkAmen
     }
   };
 
-  const { text_versions, amendment_events, ...rest } = row;
+  const {
+    text_versions, amendment_events, instruments,
+    prior_review_status, prior_reviewed_by, prior_reviewed_at, prior_review_text, prior_review_note,
+    ...rest
+  } = row;
   return {
     ...rest,
     versions: parse<TextVersion>(text_versions),
     events: parse<AmendmentEvent>(amendment_events),
+    instruments: parse<ChunkAmendment['instruments'][number]>(instruments),
+    prior_review: prior_review_status
+      ? {
+          status: prior_review_status,
+          by: prior_reviewed_by,
+          at: prior_reviewed_at,
+          text: prior_review_text,
+          note: prior_review_note,
+        }
+      : null,
   };
 }
 
@@ -3076,6 +3216,14 @@ export interface ReviewFilters {
   /** دفعة الاستيراد: مراجعة ما استُورد حديثاً وحده. */
   capturedAt?: string | null;
   docType?: string | null;
+  /**
+   * نوع التعديل كما ورد في الملف (§6-3) — مرشّحٌ تشغيليّ فوق الطوابير.
+   *
+   * مفرداتُ الأنواع تتغيّر بين إصدارات الوثيقة («تعديل فقرة» و«إضافة مادة» في
+   * السادس لم تكن)، والطوابير مسمّاةٌ بأنواعٍ بعينها. فالمرشّح يقرأ الأنواع من
+   * القاعدة، فلا يبقى نوعٌ جديد بلا طريقٍ إليه.
+   */
+  amendmentKind?: string | null;
 }
 
 function reviewFilterSql(f: ReviewFilters): { sql: string; binds: unknown[] } {
@@ -3093,7 +3241,34 @@ function reviewFilterSql(f: ReviewFilters): { sql: string; binds: unknown[] } {
     clauses.push('c.doc_type = ?');
     binds.push(f.docType);
   }
+  if (f.amendmentKind) {
+    // مطبَّعاً كالطوابير: «غير مصنَّف» تُكتب بالشدّة وبدونها.
+    clauses.push('c.amendment_kind_norm = ?');
+    binds.push(normalizeArabic(f.amendmentKind));
+  }
   return { sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', binds };
+}
+
+/**
+ * أنواعُ التعديل في الطابور — حيّةً من القاعدة، لقائمة المرشّح.
+ *
+ * بعددِ ما ينتظر من كلٍّ، وباللفظ كما ورد: التصنيف تصنيفُ المصدر لا تصنيفُنا.
+ */
+export async function listReviewKinds(
+  env: Env,
+  filters: ReviewFilters = {}
+): Promise<{ kind: string; pending: number }[]> {
+  const f = reviewFilterSql({ ...filters, amendmentKind: null });
+  const rows = await env.DB.prepare(
+    `SELECT MAX(c.amendment_kind) AS kind, COUNT(*) AS pending
+     FROM legal_chunks c
+     WHERE ${IN_QUEUE_SQL} AND c.amendment_kind_norm IS NOT NULL AND c.amendment_kind_norm <> ''${f.sql}
+     GROUP BY c.amendment_kind_norm
+     ORDER BY pending DESC, kind`
+  )
+    .bind(...f.binds)
+    .all<{ kind: string; pending: number }>();
+  return rows.results ?? [];
 }
 
 function queueClause(key: ReviewQueueKey): { sql: string; binds: unknown[] } {

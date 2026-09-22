@@ -1362,7 +1362,9 @@ await check('١٩ · وقيدُ الاعتماد جملةً يُميَّز في 
   const single = entries.filter((e) => e.via === 'single');
   assert.ok(bulk.length > 0, 'لا أثر للاعتماد جملةً في السجلّ');
   assert.ok(single.length > 0, 'ضاع تمييزُ القرار المفرد');
-  assert.ok(entries.every((e) => e.via === 'bulk' || e.via === 'single'), 'قيدٌ بلا وسمٍ لكيفيّته');
+  // وثالثُها `import`: قرارٌ أسقطته دفعةٌ غيّرت النصّ (§6-6) — تغييرٌ في حال
+  // المراجعة لم يقع بيد مراجع، وكلُّ تغييرٍ يُقيَّد بكيفيّته.
+  assert.ok(entries.every((e) => ['bulk', 'single', 'import'].includes(e.via)), 'قيدٌ بلا وسمٍ لكيفيّته');
 });
 
 await check('١٩ · ولا اعتماد بمرور الوقت: لا مهمّة خلفية تمسّ حال المراجعة', () => {
@@ -2286,6 +2288,90 @@ await check('٢٤ · ولا حذفَ لأيتام دفعةٍ تُخطّيت من
   assert.match(body, /if \(skipped > 0\)/, 'الحذف يقع على دفعةٍ ناقصة');
   const script = readFileSync(path.join(ROOT, 'scripts', 'import-legal.mjs'), 'utf8');
   assert.match(script, /seen\.skipped/, 'السكربت يطلب الحذف على دفعةٍ ناقصة');
+});
+
+// ═══ ٢٥) بقاءُ التحرير البشري عبر الدفعات (§6-6)، ومرشّحُ نوع التعديل (§6-3) ═══
+//
+// إعادةُ رفع نظامٍ رُوجعت موادُّه كانت تدهس التحرير وتُسقط الاعتماد بلا أثر —
+// ولو لم يتغيّر في المصدر حرف.
+
+const R6 = (o) => v6line({ law_id: 'seventh', law_name: 'نظام السابعة', needs_review: true,
+  has_amendments: true, amendment_applied: false, retrieval_status: 'نافذ_بتحذير', ...o });
+const SEVENTH = [
+  R6({ id: 'سابعة/1', article_no: 1, text: 'نصُّ المصدر للمادة الأولى قبل تحرير المراجع.',
+    amendment_kind: 'تعديل فقرة', amendments_raw: 'تُعدَّل الفقرة (أ).' }),
+  R6({ id: 'سابعة/2', article_no: 2, text: 'نصُّ المادة الثانية.', amendment_kind: 'إضافة مادة',
+    amendments_raw: 'تُضاف مادةٌ جديدة.' }),
+  R6({ id: 'سابعة/3', article_no: 3, text: 'نصُّ المادة الثالثة.', amendment_kind: 'تعديل فقرة',
+    amendments_raw: 'تُعدَّل الفقرة (ب).' }),
+];
+await lib.upsertLegalChunks(env, lib.parseJsonl(SEVENTH.join('\n')).rows, { importId: 'imp-7a', actorId: 'مسؤول' });
+await lib.reviewChunk(env, 'سابعة/1', 'edit', 'مراجعٌ أوّل', {
+  text: 'نصُّ المادة الأولى بعد أن حرّره المراجع ودمج تعديلها.', note: 'دُمجت الفقرة (أ) يدوياً.',
+});
+
+await check('٢٥ · تحريرُ المراجع يبقى بإعادة رفع مصدرٍ لم يتغيّر، وقرارُه معه', async () => {
+  const preview = await lib.diffChunks(env, lib.parseJsonl(SEVENTH.join('\n')).rows);
+  assert.equal(preview.changed, 0, 'المقارنة تعدّ التحرير الباقي تغيّراً: ' + JSON.stringify(preview.changes.map((c) => c.id)));
+  const before = q("SELECT embed_hash FROM legal_chunks WHERE id = 'سابعة/1'")[0].embed_hash;
+  const res = await lib.upsertLegalChunks(env, lib.parseJsonl(SEVENTH.join('\n')).rows, { importId: 'imp-7b', actorId: 'مسؤول' });
+  assert.equal(res.archived, 0, 'أُرشف التحرير كأنه أُزيح');
+  const row = q("SELECT text, text_original_import, review_status, reviewed_by, review_note, embed_hash, text_versions FROM legal_chunks WHERE id = 'سابعة/1'")[0];
+  assert.match(row.text, /بعد أن حرّره المراجع/, 'دفعةٌ لم يتغيّر مصدرُها دهست التحرير');
+  assert.equal(row.text_original_import, 'نصُّ المصدر للمادة الأولى قبل تحرير المراجع.');
+  assert.equal(row.review_status, 'edited');
+  assert.equal(row.reviewed_by, 'مراجعٌ أوّل');
+  assert.equal(row.review_note, 'دُمجت الفقرة (أ) يدوياً.');
+  assert.equal(row.embed_hash, before, 'أُعيد تضمينُ ما لم يتغيّر');
+  assert.equal(JSON.parse(row.text_versions).find((v) => v.current).text, row.text, 'الخطّ الزمني يكذّب النصّ الباقي');
+});
+
+await check('٢٥ · ومصدرٌ تغيّر يُعيدها إلى الطابور بأثر اعتمادها — لا مصفَّرة', async () => {
+  const changed = SEVENTH.map((l, i) => (i === 0
+    ? R6({ id: 'سابعة/1', article_no: 1, text: 'نصُّ المصدر للمادة الأولى بعد تعديلٍ ثانٍ صدر لاحقاً.',
+        amendment_kind: 'تعديل فقرة', amendments_raw: 'تُعدَّل الفقرة (أ) ثم الفقرة (ج).' })
+    : l));
+  await lib.upsertLegalChunks(env, lib.parseJsonl(changed.join('\n')).rows, { importId: 'imp-7c', actorId: 'مسؤول الاستيراد' });
+  const row = q("SELECT text, review_status, reviewed_by, prior_review_status, prior_reviewed_by, prior_review_text, prior_review_note FROM legal_chunks WHERE id = 'سابعة/1'")[0];
+  assert.match(row.text, /تعديلٍ ثانٍ/);
+  assert.equal(row.review_status, 'pending', 'نصٌّ جديد بقي معتمداً بقرارٍ على غيره');
+  assert.equal(row.reviewed_by, null);
+  assert.equal(row.prior_review_status, 'edited', 'سقط الاعتماد بلا أثر');
+  assert.equal(row.prior_reviewed_by, 'مراجعٌ أوّل');
+  assert.match(row.prior_review_text, /بعد أن حرّره المراجع/, 'النصّ الذي اعتُمد لم يُحفظ');
+  assert.equal(row.prior_review_note, 'دُمجت الفقرة (أ) يدوياً.');
+  const amendment = await lib.getChunkAmendment(env, 'سابعة/1');
+  assert.equal(amendment.prior_review?.status, 'edited', 'نافذة المراجعة لا ترى الاعتماد السابق');
+  assert.match(amendment.prior_review.text, /بعد أن حرّره المراجع/);
+  // والمادة في الطابور ليراها المراجع — لم تُحجب ولم تُعتمد تلقائياً.
+  const queue = await lib.listReviewQueue(env, { lawId: 'seventh', limit: 50 });
+  assert.ok(ids(queue.articles).includes('سابعة/1'));
+});
+
+await check('٢٥ · وسقوطُ القرار يُقيَّد في سجلّ التدقيق بصاحب الدفعة', async () => {
+  const trail = await lib.listReviewAudit(env, { chunkId: 'سابعة/1' });
+  const reset = trail.find((e) => e.via === 'import');
+  assert.ok(reset, 'سقوطُ الاعتماد بدفعةٍ لم يُقيَّد: ' + JSON.stringify(trail.map((e) => [e.field, e.via])));
+  assert.equal(reset.field, 'review_status');
+  assert.equal(reset.old_value, 'edited');
+  assert.equal(reset.new_value, 'pending');
+  assert.equal(reset.actor_id, 'مسؤول الاستيراد');
+  // ودفعةٌ لم تُسقط قراراً لا تُقيِّد شيئاً.
+  assert.equal(trail.filter((e) => e.via === 'import').length, 1, 'قُيِّد سقوطٌ لم يقع');
+});
+
+await check('٢٥ · مرشّحُ نوع التعديل حيٌّ من القاعدة، ويحصر الطابور', async () => {
+  const kinds = await lib.listReviewKinds(env, { lawId: 'seventh' });
+  const byKind = Object.fromEntries(kinds.map((k) => [k.kind, k.pending]));
+  assert.equal(byKind['تعديل فقرة'], 2, JSON.stringify(kinds));
+  assert.equal(byKind['إضافة مادة'], 1);
+  const one = await lib.listReviewQueue(env, { lawId: 'seventh', amendmentKind: 'إضافة مادة', limit: 50 });
+  assert.deepEqual(ids(one.articles), ['سابعة/2']);
+  assert.equal(one.total, 1);
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /app\.get\('\/review\/kinds', requireAdmin/, 'لا مسار لأنواع التعديل');
+  assert.equal((routes.match(/amendmentKind: c\.req\.query\('amendment_kind'\)/g) ?? []).length, 3,
+    'مرشّح النوع لا يصل الطابور واللوحة والتحديد الشامل معاً');
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');

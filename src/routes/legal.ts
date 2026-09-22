@@ -21,6 +21,7 @@ import {
   listLawArticles,
   listReviewQueue,
   listReviewQueueIds,
+  listReviewKinds,
   listBatchOrphans,
   deleteOrphans,
   listRevertableBatches,
@@ -151,6 +152,8 @@ app.post('/import', requireAdmin, async (c) => {
     importId,
     correction,
     batchId: batchId ?? undefined,
+    // صاحبُ الدفعة يُقيَّد على قرارات المراجعة التي أسقطتها — كلُّ تغييرٍ بصاحبه.
+    actorId: c.get('user').id,
   });
 
   const full = {
@@ -343,6 +346,7 @@ app.get('/review', requireAdmin, async (c) => {
     lawId: c.req.query('law_id') ?? null,
     capturedAt: c.req.query('captured_at') ?? null,
     docType: c.req.query('doc_type') ?? null,
+    amendmentKind: c.req.query('amendment_kind') ?? null,
     offset: Number(c.req.query('offset') ?? 0),
     limit: Number(c.req.query('limit') ?? 25),
   });
@@ -356,6 +360,7 @@ app.get('/review/dashboard', requireAdmin, async (c) =>
       lawId: c.req.query('law_id') ?? null,
       capturedAt: c.req.query('captured_at') ?? null,
       docType: c.req.query('doc_type') ?? null,
+      amendmentKind: c.req.query('amendment_kind') ?? null,
     })
   )
 );
@@ -374,12 +379,27 @@ app.get('/review/ids', requireAdmin, async (c) =>
       lawId: c.req.query('law_id') ?? null,
       capturedAt: c.req.query('captured_at') ?? null,
       docType: c.req.query('doc_type') ?? null,
+      amendmentKind: c.req.query('amendment_kind') ?? null,
     })
   )
 );
 
 /** دفعات الاستيراد المتاحة للترشيح. */
 app.get('/review/batches', requireAdmin, async (c) => c.json({ batches: await listCaptureBatches(c.env) }));
+
+/**
+ * أنواع التعديل في الطابور — لقائمة المرشّح (§6-3)، حيّةً من القاعدة بعدد ما
+ * ينتظر من كلٍّ. ومرشّحات الطابور الأخرى تحصرها، فلا يُعرض نوعٌ لا مادة له.
+ */
+app.get('/review/kinds', requireAdmin, async (c) =>
+  c.json({
+    kinds: await listReviewKinds(c.env, {
+      lawId: c.req.query('law_id') ?? null,
+      capturedAt: c.req.query('captured_at') ?? null,
+      docType: c.req.query('doc_type') ?? null,
+    }),
+  })
+);
 
 /** سجلّ التدقيق: لمادةٍ بعينها بـ`?chunk_id=`، أو آخر ما وقع في المنصة. */
 app.get('/review/audit', requireAdmin, async (c) =>
