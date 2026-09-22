@@ -2246,6 +2246,39 @@ await check('٢٤ · صحّة القاعدة: الفهرس يُقابَل بسج
   assert.match(cron, /vectorHealth\(env\)/, 'الدورة الليلية تكتب شرط التضمين بيدها');
 });
 
+await check('٢٤ · فحصُ الملف قبل رفعه يقبل مادةَ النظام اللاغي، ويرفض ما فاته الختم وما تناقض', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = path.join(ROOT, 'node_modules', '.cache');
+  const withVersions = (o) => ({ ...o, text_versions: [{ seq: 0, text: o.text, current: true }] });
+  const run = async (name, rows) => {
+    const file = path.join(dir, name);
+    await writeFile(file, rows.map((o) => JSON.stringify(withVersions(o))).join('\n') + '\n');
+    return spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'verify-legal.mjs'), '--file', file], { encoding: 'utf8' });
+  };
+  const base = { ...V6_BASE, article_label: 'المادة', embed_text: 'نصّ', retrieval_status: 'نافذ' };
+  // مادةٌ من نظامٍ لاغٍ حالُها «ملغى» و`is_repealed` فيها `false` — ليس تناقضاً.
+  const good = await run('verify-v6-good.jsonl', [
+    { ...base, id: 'فحص/1', article_no: 1, text: 'نصّ نافذ.' },
+    { ...base, id: 'فحص-قديم/1', law_id: 'v-old', status: 'ملغى', law_repealed: true, article_no: 1,
+      text: 'نصّ من نظامٍ لاغٍ.', retrieval_status: 'ملغى' },
+    { ...base, id: 'فحص-قديم/2', law_id: 'v-old', status: 'ملغى', law_repealed: true, kept_after_repeal: true,
+      article_no: 2, text: 'نصّ مستبقى.' },
+  ]);
+  assert.equal(good.status, 0, 'الفحص رفض ملفاً سليماً من الإصدار السادس:\n' + good.stdout.slice(-1200));
+  assert.match(good.stdout, /مستبقاة بعد إلغاء نظامها/, 'البيان بلا أصناف الإصدار السادس');
+
+  const bad = await run('verify-v6-bad.jsonl', [
+    { ...base, id: 'فحص/2', article_no: 2, text: 'مستبقاةٌ قيل إنها ملغاة.', kept_after_repeal: true,
+      law_repealed: true, status: 'ملغى', retrieval_status: 'ملغى' },
+    { id: 'فحص/3', law_id: 'sixth', law_name: 'نظام السادسة', doc_type: 'نظام', article_no: 3,
+      article_label: 'المادة', text: 'سجلٌّ فاته الختم.', embed_text: 'نصّ', retrieval_status: 'نافذ',
+      amendment_events: [], has_amendments: false, is_repealed: false, needs_review: false },
+  ]);
+  assert.equal(bad.status, 1, 'الفحص قبل ملفاً متناقضاً فاته الختم');
+  assert.match(bad.stdout, /✗ الحالة والإلغاء لا يتناقضان/);
+  assert.match(bad.stdout, /✗ كل سجلٍّ يحمل ختم الحالة/);
+});
+
 await check('٢٤ · ولا حذفَ لأيتام دفعةٍ تُخطّيت منها أسطر', () => {
   const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
   const body = routes.slice(routes.indexOf("app.post('/finalize'"), routes.indexOf("app.get('/revertable'"));
