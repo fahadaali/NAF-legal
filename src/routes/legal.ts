@@ -17,8 +17,10 @@ import {
   getArticle,
   getChunkAmendment,
   getChunkById,
+  withAttachments,
   listLaws,
   listLawArticles,
+  listLawBooks,
   listReviewQueue,
   listReviewQueueIds,
   listReviewKinds,
@@ -508,7 +510,16 @@ app.get('/article', async (c) => {
   const id = c.req.query('id');
   if (id) {
     const hit = await getChunkById(c.env, id, includeRepealed);
-    if (hit) return c.json({ results: [hit], count: 1 });
+    if (hit) {
+      // ومرفقاتُها معها بعدها (§5-6): الاستشهاد يفتح المادة، والجدول الذي تحيل
+      // إليه في مرفقها — والتصفية نفسها تسري على المرفق.
+      const results = await withAttachments(c.env, [hit], {
+        lawId: hit.lawId,
+        withRegulations: false,
+        includeRepealed,
+      });
+      return c.json({ results, count: results.length });
+    }
     // موجودةٌ لكنها محجوبة: يُقال لماذا غابت بدل «غير موجودة» المضلّلة —
     // والسببان مختلفان، فمنسوخةٌ خرجت من النظام ومحجوبةٌ لم تُراجَع بعد.
     const exists = await c.env.DB
@@ -558,6 +569,9 @@ app.get('/laws/:lawId/articles', async (c) => {
   });
   return c.json({ articles, total });
 });
+
+/** أبوابُ نظامٍ بترتيب ورودها — لمرشّح الباب في البحث (§6-1). */
+app.get('/laws/:lawId/books', async (c) => c.json({ books: await listLawBooks(c.env, c.req.param('lawId')) }));
 
 /** سجلّ تحديث نظام: ما أُزيح من مواده ومتى وبأيّ حقل. */
 app.get('/laws/:lawId/changes', async (c) => {

@@ -11,7 +11,7 @@
 // النافذ اليوم لا ما كان يومها.
 import { useEffect, useState } from 'react';
 import { api, type Citation, type LegalArticle } from '../lib/api';
-import { ArticleCard, groupArticleParts } from './LegalArticleView';
+import { ArticleCard, LawTags, groupWithAttachments } from './LegalArticleView';
 import { Icon, ICON_SM } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
 
@@ -125,6 +125,8 @@ export default function SourceModal({ citation, onClose }: { citation: Citation;
           <div className="law-head">
             <h3>
               <bdi>{lawTitle}</bdi>
+              {/* حالُ النظام بجانب اسمه (§7-2) — من المادة كما تُقرأ اليوم. */}
+              {first ? <LawTags repealed={first.lawRepealed} pending={first.lawPending} from={first.lawEffectiveFrom} /> : null}
             </h3>
             {citation.source === 'external' ? (
               <LawMeta parts={[citation.ref, citation.sourceLabel]} />
@@ -156,7 +158,11 @@ export default function SourceModal({ citation, onClose }: { citation: Citation;
           ) : !articles ? (
             <p className="legal-notice-meta">جارٍ التحميل</p>
           ) : (
-            groupArticleParts(articles).map((group) => <ArticleCard key={group[0].id} group={group} />)
+            /* المادة ومرفقاتها تحتها — استدعاؤها برقمها يُرجعها معها (§5-6).
+               ورابطُ المصدر في ذيل النافذة، فلا يتكرّر في ذيل البطاقة. */
+            groupWithAttachments(articles).map(({ group, attachments }) => (
+              <ArticleCard key={group[0].id} group={group} attachments={attachments} showSource={false} />
+            ))
           )}
         </div>
 

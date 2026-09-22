@@ -2634,7 +2634,7 @@ function matchesArticle(h: LegalHit, r: ArticleRequest): boolean {
  * الجدول المرفق»، واستدعاءُ المادة بلا جدولها يُرجع حكماً بلا مقداره. والضمّ
  * بـ`attachment_of` وحده، وبالتصفية نفسها: مرفقٌ ملغى لا يدخل من هذا الباب.
  */
-async function withAttachments(env: Env, hits: LegalHit[], filters: LegalFilters): Promise<LegalHit[]> {
+export async function withAttachments(env: Env, hits: LegalHit[], filters: LegalFilters): Promise<LegalHit[]> {
   const parents = hits.filter((h) => !h.isAttachment).map((h) => h.id);
   if (!parents.length) return hits;
   const built = buildFilters({ ...filters, articleNo: null });
@@ -3903,6 +3903,22 @@ export async function listLawArticles(
     .all<HitRow>();
 
   return { articles: (rows.results ?? []).map(toHit), total: total?.n ?? 0 };
+}
+
+/**
+ * أبوابُ نظامٍ بترتيب ورودها في ملفه — لمرشّح الباب (§6-1).
+ *
+ * بلفظها كما ورد: الترشيح يُطابقها مطبَّعةً، والعرضُ يعرضها كما كُتبت.
+ */
+export async function listLawBooks(env: Env, lawId: string): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    `SELECT book, MIN(seq) AS first FROM legal_chunks
+     WHERE law_id = ? AND book IS NOT NULL AND book <> ''
+     GROUP BY book_norm ORDER BY first`
+  )
+    .bind(lawId)
+    .all<{ book: string }>();
+  return (rows.results ?? []).map((r) => r.book);
 }
 
 /** نظامٌ مع لوائحه — العلاقة عبر `parent_law_id`. */
