@@ -1911,6 +1911,48 @@ async function pruneSnapshots(env: Env, keep = SNAPSHOT_KEEP): Promise<void> {
     .run();
 }
 
+/** ملفٌّ في سجلّ الاستيراد — أجزاؤه مجموعةٌ بمعرّف دفعته. */
+export interface ImportRecord {
+  id: string;
+  actor_id: string | null;
+  filename: string | null;
+  lines: number;
+  inserted: number;
+  updated: number;
+  failed: number;
+  deleted: number;
+  file_sha256: string | null;
+  batch_id: string | null;
+  created_at: number;
+  kind: string | null;
+  /** كم نداءً حمل الملف. */
+  parts: number;
+}
+
+/**
+ * سجلّ الدفعات — الملفُّ الواحد سطرٌ واحد.
+ *
+ * الملف يُرفع مقسَّماً، وكلُّ جزءٍ يُقيَّد وحده. فتُجمع الأجزاء بمعرّف الدفعة:
+ * خمسةُ أسطر لملفٍ قُسِّم خمساً تُقرأ خمسةَ ملفات. **و`deleted` يؤخذ مرّةً ولا
+ * يُجمع** — ختام الدفعة يقيّد عددَه على كل جزءٍ منها، وجمعُه يضاعف المحذوف بعدد
+ * الأجزاء. وما قُيِّد قبل معرّف الدفعة يبقى سطراً لكلّ نداء كما كان.
+ */
+export async function listImports(env: Env, limit = 50): Promise<ImportRecord[]> {
+  const rows = await env.DB.prepare(
+    `SELECT MIN(id) AS id, MIN(actor_id) AS actor_id, MIN(filename) AS filename,
+            SUM(lines) AS lines, SUM(inserted) AS inserted, SUM(updated) AS updated, SUM(failed) AS failed,
+            MAX(deleted) AS deleted, MAX(file_sha256) AS file_sha256, batch_id,
+            MIN(created_at) AS created_at, MAX(kind) AS kind, COUNT(*) AS parts
+     FROM legal_imports
+     GROUP BY COALESCE(batch_id, id)
+     ORDER BY MAX(created_at) DESC
+     LIMIT ?`
+  )
+    .bind(limit)
+    .all<ImportRecord>();
+  return rows.results ?? [];
+}
+
 /** دفعةٌ يمكن التراجع عنها، وما تمسّه من أنظمة. */
 export interface RevertableBatch {
   batch_id: string;

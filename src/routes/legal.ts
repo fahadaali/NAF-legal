@@ -24,6 +24,7 @@ import {
   listReviewKinds,
   listBatchOrphans,
   deleteOrphans,
+  listImports,
   listRevertableBatches,
   planRevert,
   revertLaw,
@@ -324,14 +325,7 @@ app.get('/stats', requireAdmin, async (c) =>
  * المُرسِل. ومعرّفُ الدفعة يجمع أجزاء الملف الواحد، فيُقرأ سجلُّها سطراً
  * واحداً لا خمسةَ أسطر لملفٍ قُسِّم خمساً.
  */
-app.get('/imports', requireAdmin, async (c) => {
-  const rows = await c.env.DB.prepare(
-    `SELECT id, actor_id, filename, lines, inserted, updated, failed, deleted,
-            file_sha256, batch_id, created_at, kind
-     FROM legal_imports ORDER BY created_at DESC LIMIT 50`
-  ).all();
-  return c.json({ imports: rows.results });
-});
+app.get('/imports', requireAdmin, async (c) => c.json({ imports: await listImports(c.env) }));
 
 /**
  * ما ينتظر المراجعة البشرية.

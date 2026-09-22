@@ -1683,12 +1683,28 @@ await check('٢١ · والعدد المعروض هو ما يصرّفه الزر
   assert.ok(repealedUnembedded > 0, 'لا ملغاةَ بلا متجه في البيانات — الفحص أعلاه لا يفحص شيئاً');
 });
 
-await check('٢١ · وسجلّ الدفعات يقول أثرها وبصمتَها', () => {
-  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
-  const q0 = routes.slice(routes.indexOf("app.get('/imports'"), routes.indexOf("app.get('/imports'") + 700);
-  for (const col of ['inserted', 'updated', 'failed', 'deleted', 'file_sha256', 'batch_id']) {
-    assert.ok(q0.includes(col), `سجلّ الدفعات بلا \`${col}\``);
+await check('٢١ · وسجلّ الدفعات يقول أثرها وبصمتَها — والملفُّ فيه سطرٌ واحد', async () => {
+  // ملفٌّ رُفع في جزأين ثم خُتم بحذف ثلاث: الختام يقيّد العدد على كلّ جزء،
+  // فجمعُه في السجلّ يجعلها ستّاً.
+  for (const [id, inserted] of [['imp-list-1', 4], ['imp-list-2', 6]]) {
+    await env.DB.prepare(
+      `INSERT INTO legal_imports (id, actor_id, filename, lines, inserted, updated, failed, created_at,
+                                  batch_id, file_sha256, deleted)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(id, 'مسؤول', 'قائمة.jsonl', 10, inserted, 1, 0, Date.now(), 'batch-list', 'ab'.repeat(32), 3).run();
   }
+  const rows = (await lib.listImports(env)).filter((r) => r.batch_id === 'batch-list');
+  assert.equal(rows.length, 1, 'ملفٌّ رُفع في جزأين ظهر في السجلّ مرّتين');
+  const [row] = rows;
+  for (const col of ['inserted', 'updated', 'failed', 'deleted', 'file_sha256', 'batch_id']) {
+    assert.ok(col in row, `سجلّ الدفعات بلا \`${col}\``);
+  }
+  assert.equal(row.lines, 20);
+  assert.equal(row.inserted, 10);
+  assert.equal(row.updated, 2);
+  assert.equal(row.deleted, 3, 'المحذوف جُمع على أجزاء الملف فتضاعف');
+  assert.equal(row.file_sha256, 'ab'.repeat(32));
+  assert.equal(row.parts, 2);
 });
 
 await check('٢١ · والاستشهاد يحمل نسخة النصّ لا رقم المادة وحده', async () => {
