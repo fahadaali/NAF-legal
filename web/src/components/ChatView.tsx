@@ -38,6 +38,8 @@ interface Props {
 
 interface UiMessage extends Message {
   citations?: Citation[];
+  /** التأصيل الفقهي — صفٌّ ثانٍ تحت المصادر لا داخلها. */
+  fiqhCitations?: Citation[];
   clarifying?: boolean;
   streaming?: boolean;
   verification?: { verified: boolean; unsupported: string[]; note: string } | null;
@@ -181,15 +183,16 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       setConvFolder((r.conversation as any).folder_id ?? '');
       setGenerating(!!r.generating);
       const msgs = r.messages.map((m) => {
-        let citations, clarifying, verification, missingRegulations;
+        let citations, fiqhCitations, clarifying, verification, missingRegulations;
         try {
           const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
           citations = meta.citations;
+          fiqhCitations = meta.fiqh_citations;
           clarifying = meta.clarifying;
           verification = meta.verification;
           missingRegulations = meta.missing_regulations;
         } catch {}
-        return { ...m, citations, clarifying, verification, missingRegulations };
+        return { ...m, citations, fiqhCitations, clarifying, verification, missingRegulations };
       });
       setMessages(msgs);
       setAttachments(r.attachments);
@@ -307,6 +310,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       content: stream.error ? (stream.text ? `${stream.text}\n\n${stream.error}` : stream.error) : stream.text,
       created_at: stream.startedAt,
       citations: stream.citations,
+      fiqhCitations: stream.fiqhCitations,
       clarifying: stream.clarifying,
       verification: stream.verification,
       missingRegulations: stream.missingRegulations,
@@ -917,6 +921,24 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                           </span>
                         )
                       )}
+                    </div>
+                  )}
+                  {/* صفٌّ ثانٍ لا اختلاطٌ بالأول: المادة سندٌ يُلزم، وقولُ
+                      الفقيه تأصيلٌ يقوّي. وخلطُهما في سطرٍ واحد يُلغي في
+                      الشاشة الفرقَ الذي حُفظ في البرومبت. */}
+                  {m.fiqhCitations && m.fiqhCitations.length > 0 && (
+                    <div className="citations fiqh">
+                      <span>التأصيل الفقهي:</span>
+                      {m.fiqhCitations.map((c: Citation, i: number) => (
+                        <button key={i} className="citation-chip is-open" onClick={() => setSource(c)}>
+                          <Icon.fiqhGrounding size={ICON_SM} aria-hidden />
+                          <bdi>
+                            {c.title}
+                            {c.ref ? ` — ${c.ref}` : ''}
+                          </bdi>
+                          {c.section === 'حاشية' && <span className="chip-note">حاشية</span>}
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>

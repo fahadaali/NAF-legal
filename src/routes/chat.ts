@@ -5,6 +5,9 @@ import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
 import { retrieve, formatRagContext, type RagResult } from '../lib/rag';
 import { extractAnchors, buildAnchorsBlock, BASIS_PER_ANCHOR, type BasisAnchor } from '../lib/basis';
+import { enabledSources } from '../lib/sources';
+import { searchSources, formatFiqhContext, type ExternalHit } from '../lib/external';
+import { rerankByMeaning } from '../lib/rerank';
 import {
   streamClaude,
   webSearchTool,
@@ -182,6 +185,44 @@ app.post('/:conversationId', async (c) => {
     }
   }
 
+  /* ══ التدعيم الفقهي — خارج السياق النظامي لا داخله ══
+   *
+   * منزلتان لا واحدة: المادة سندٌ يُلزم، وقولُ الفقيه تأصيلٌ يقوّي. ولذلك
+   * تُجمع هنا على حدة وتُدرَج في وسمٍ آخر — ولو جاءا في وسمٍ واحد لَما بقي
+   * في السياق ما يفرّقهما.
+   *
+   * وكلُّه محروسٌ بثلاثة: أن يطلبه المُخطِّط، وأن يكون له استعلام، وأن يوجد
+   * مصدرٌ مفعَّل بدور `fiqh`. فمنصّةٌ بلا مصادر مربوطة — وهي الحال اليوم —
+   * لا تدفع نداءً واحداً.
+   */
+  let fiqhHits: ExternalHit[] = [];
+  if (plan.needs_fiqh_sources && plan.fiqh_queries.length) {
+    try {
+      const sources = await enabledSources(c.env, 'fiqh');
+      if (sources.length) {
+        const rounds = await Promise.all(
+          plan.fiqh_queries.map((q) => searchSources(c.env, sources, q))
+        );
+        const merged = new Map<string, ExternalHit>();
+        for (const outcomes of rounds) {
+          for (const o of outcomes) {
+            for (const h of o.hits) {
+              // مقطعٌ واحد قد يرجع لاستعلامين: يُحفظ مرّةً بمفتاحه.
+              const key = `${h.sourceId}:${h.title}:${h.ref ?? ''}:${h.text.slice(0, 60)}`;
+              if (!merged.has(key)) merged.set(key, h);
+            }
+          }
+        }
+        // الترتيب على أوّل استعلامٍ فقهيّ — وهو أقربُ الثلاثة إلى صلب المسألة.
+        fiqhHits = (await rerankByMeaning(c.env, plan.fiqh_queries[0], [...merged.values()])).slice(0, 8);
+      }
+    } catch (e: any) {
+      // كالاسترجاع سواء: ردٌّ بلا تدعيم يبدو في الشاشة ردّاً عادياً، والفرق
+      // يظهر هنا وحده.
+      console.error('fiqh support failed:', e?.message ?? e);
+    }
+  }
+
   // الأنظمة التي رشّحها المُخطِّط ولا وجود لها في قاعدة المعرفة: تُبلَّغ للواجهة
   // ليعرضها على المستخدم ويعرض عليه طلب إضافتها (§6 — لا إسناد بلا مصدر).
   const missingRegulations = plan.needs_knowledge_base
@@ -215,7 +256,20 @@ app.post('/:conversationId', async (c) => {
      استُرجعت لها المواد. */
   const anchorsBlock = anchors.length ? buildAnchorsBlock(anchors) : '';
 
-  const userContent = `${ragContext}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
+  const fiqhBlock = formatFiqhContext(fiqhHits);
+  const fiqhCitations = fiqhHits.map((h) => ({
+    title: h.title,
+    ref: [h.author, h.ref ? `ص. ${h.ref}` : ''].filter(Boolean).join(' — ') || undefined,
+    source: 'external' as const,
+    sourceId: h.sourceId,
+    sourceLabel: h.sourceLabel,
+    section: h.section,
+    sourceUrl: h.url,
+    text: h.text,
+    score: h.score,
+  }));
+
+  const userContent = `${ragContext}${fiqhBlock}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
 
   const messages = [
     ...(history.results ?? [])
@@ -302,7 +356,9 @@ app.post('/:conversationId', async (c) => {
         push(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 
       // أرسل بيانات وصفية أولية
-      await send('meta', { messageId: asstId, plan, citations });
+      /* صفّان لا صفّ: خلطُ كتب الفقه بمواد الأنظمة في سطر «المصادر» يُلغي
+         في الشاشة الفرقَ الذي حُفظ في البرومبت. */
+      await send('meta', { messageId: asstId, plan, citations, fiqhCitations });
 
       /** يمرّر أحداث محاولةٍ كما هي إلى الواجهة، ويجمع نصّها وعدّاداتها. */
       const pump = async (attempt: ClaudeStream): Promise<StreamOutcome> => {
@@ -366,6 +422,7 @@ app.post('/:conversationId', async (c) => {
         const metadata: Record<string, unknown> = {
           plan,
           citations,
+          fiqh_citations: fiqhCitations,
           output_format: plan.output_format,
           missing_regulations: relevantMissing,
         };

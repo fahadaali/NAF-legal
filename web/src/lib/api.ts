@@ -129,8 +129,9 @@ export interface Citation {
   title: string;
   ref?: string;
   score?: number;
-  /** `legal` مقطعٌ مستورد له مادةٌ تُفتح · `document` وثيقةٌ مرفوعة. */
-  source?: 'legal' | 'document';
+  /** `legal` مقطعٌ مستورد له مادةٌ تُفتح · `document` وثيقةٌ مرفوعة ·
+      `external` مقطعٌ من مصدرٍ خارجيّ (كتب الفقه). */
+  source?: 'legal' | 'document' | 'external';
   /** معرّف المقطع في `legal_chunks` — أدقّ ما يُفتح به. */
   id?: string;
   lawId?: string;
@@ -142,6 +143,14 @@ export interface Citation {
   issueDate?: string;
   issueDateHijri?: string;
   sourceUrl?: string;
+  // ── ما يزيد في المقطع الخارجي ──
+  /** معرّف المصدر واسمُه — «تراث»، «المكتبة الشاملة». */
+  sourceId?: string;
+  sourceLabel?: string;
+  /** من المتن أم من الحاشية. والحاشية كلام المحقِّق لا المصنِّف. */
+  section?: 'متن' | 'حاشية';
+  /** نصُّ المقطع كما وصل — المصدر الخارجي لا يُجلب ثانيةً من قاعدتنا. */
+  text?: string;
 }
 
 /** تظليلٌ محفوظ على رسالة — بإزاحتيه ومقتطعه الشاهد. */

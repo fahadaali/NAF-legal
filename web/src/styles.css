@@ -299,6 +299,27 @@ a { color: var(--primary); }
 }
 .citation-chip.is-open:hover { border-color: var(--primary); color: var(--primary); }
 
+/* ══ التأصيل الفقهي — صفٌّ ثانٍ تحت المصادر ══
+ *
+ * صفّان لا صفّ: المادة سندٌ يُلزم، وقولُ الفقيه تأصيلٌ يقوّي. وخلطُهما في
+ * سطرٍ واحد يُلغي في الشاشة الفرقَ الذي حُفظ في البرومبت.
+ *
+ * والتمييز بالمسافة والعنوان لا بلونٍ ثانٍ: §6 تمنع أن يحمل اللونُ وحده
+ * معنًى، والعنوان «التأصيل الفقهي» يقوله صراحةً. */
+.citations.fiqh { margin-top: var(--space-2); }
+/* «حاشية» تُقرأ ولا تُزاحم: كلام المحقِّق لا المصنِّف، والقارئ يحتاج أن يعرفه
+   قبل أن ينسب. */
+.chip-note {
+  font-size: var(--text-xs); line-height: var(--text-xs--line-height);
+  padding-inline: var(--space-2); border-radius: var(--radius-md);
+  background: var(--warning-soft); color: var(--warning-strong);
+}
+/* مقتطفُ المصدر الخارجي في النافذة — نصٌّ يُقرأ، بمقاسِ المتن لا بمقاس شارة. */
+.source-excerpt {
+  margin: 0; white-space: pre-wrap;
+  line-height: var(--leading-relaxed, 1.9); color: var(--foreground);
+}
+
 /* ══ إشارةُ مادةٍ داخل نصّ الردّ ══
  *
  * زرٌّ لا يبدو زرّاً: هو العبارة نفسها في مجرى الجملة — «وفقاً للمادة ٧٧ من

@@ -81,6 +81,9 @@ export interface PlannerOutput {
   internet_queries: string[];
   needs_uploaded_files: boolean;
   target_regulations: string[];
+  /** تدعيمٌ فقهيّ من المصادر الخارجية — تأصيلٌ لا إسناد. */
+  needs_fiqh_sources: boolean;
+  fiqh_queries: string[];
   clarifying_questions: string[];
   output_format: 'text' | 'docx';
 }
