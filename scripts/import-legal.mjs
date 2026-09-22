@@ -6,6 +6,12 @@
 // والدفعات لا تُنفَّذ معاً: كل دفعة تنتظر تقريرها قبل التي تليها، ليتوقّف
 // الاستيراد عند أول دفعة تُرفَض بدل أن تمضي بقيتها على خطأ متكرّر.
 //
+// **والملف يُكتب كاملاً أو لا يُكتب (§4-٦، §8).** الأجزاء تُجمع في المنصة جانباً
+// (`stage=1`) ولا يمسّ القاعدةَ منها شيء حتى يكتمل الملف، ثم يُكتب بـ`/commit`
+// نظاماً نظاماً — وكلُّ نظامٍ يغيب عن البحث وهو يُكتب ويعود كاملاً. وما تعذّر
+// في أثناء الكتابة يردّه الخادم كلَّه. فانقطاعٌ في أيّ موضع لا يترك نظاماً نصفُه
+// جديد ونصفُه قديم.
+//
 // التشغيل:
 //   npm run import:legal -- --file laws.jsonl --url https://advisor.naflaw.sa --cookie "naf_session=…"
 //
@@ -21,14 +27,15 @@
 //                       عُدِّل اليوم وهو عُدِّل بمرسومه قبل سنوات
 //   --check-only        مقارنةٌ بلا كتابة: يُقال ما سيتغيّر ثم يقف
 //   --no-preview        تخطّي المقارنة قبل الكتابة (لأتمتةٍ راجعت ملفَّها)
-//   --prune             حذفُ اليتيم بعد آخر جزء: ما بقي في القاعدة من أنظمة
-//                       هذه الدفعة ولم يرد فيها. ولا يقع بغيرها — الملف
-//                       يُرفع مقسَّماً، وقياسُ الزائد على جزءٍ منه محوُ نظام
-//                       لا تنظيفُ أثر. وبلا `--prune` تُعرض الأيتام ولا تُحذف
+//   --prune             حذفُ اليتيم مع الكتابة: ما في القاعدة من أنظمة هذا
+//                       الملف ولم يرد فيه، يُحذف مع كل نظامٍ وهو مجمَّد. ويُقاس
+//                       على الملف كلِّه بعد جمعه — قياسُ الزائد على جزءٍ منه
+//                       محوُ نظامٍ لا تنظيفُ أثر. وبلا `--prune` يُعدّ ولا يُحذف
 //
-// وهاتان مطفأتان هنا وإن كانتا مفعَّلتين في شاشة الإدارة: أمرٌ في طرفية
-// يُكتب مرّة ويُعاد ألف مرّة في أتمتة، فتغييرُ افتراضه يغيّر ما لا يُراجَع.
-// و«تصحيح بيانات» مطفأةٌ في الموضعين: هي إقرارٌ على ما وقع لا تسهيل.
+// و«قبول الصالح» مطفأٌ هنا وفي شاشة الإدارة: الدفعة تنجح كاملة أو تُلغى كاملة.
+// و«بناء نصّ التضمين» مطفأٌ هنا ومفعَّلٌ في الشاشة: أمرٌ في طرفية يُكتب مرّة
+// ويُعاد ألف مرّة في أتمتة، فتغييرُ افتراضه يغيّر ما لا يُراجَع. و«تصحيح بيانات»
+// مطفأةٌ في الموضعين: هي إقرارٌ على ما وقع لا تسهيل.
 
 import { readFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -88,6 +95,7 @@ const endpoint = `${origin}/api/legal/import?${new URLSearchParams({
   filename: path.basename(file),
   batch: batchId,
   sha256,
+  stage: '1',
   ...(partial ? { partial: '1' } : {}),
   ...(buildEmbedText ? { build_embed_text: '1' } : {}),
   ...(correction ? { correction: '1' } : {}),
@@ -146,7 +154,8 @@ async function comparefirst() {
   return d;
 }
 
-const totals = { inserted: 0, updated: 0, failed: 0, pending: 0, withheld: 0, amendmentPending: 0, superseded: 0 };
+// ما يُعرف من الجمع؛ والجديد والمستبدَل والمحذوف من الكتابة نفسها.
+const totals = { failed: 0, withheld: 0, amendmentPending: 0 };
 
 if (preview || checkOnly) {
   await comparefirst();
@@ -156,27 +165,37 @@ if (preview || checkOnly) {
   }
 }
 
+const post = (url) =>
+  fetch(url, { method: 'POST', headers: { cookie } }).then(async (r) => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) }));
+const commitUrl = (extra = {}) => `${origin}/api/legal/commit?${new URLSearchParams({ batch: batchId, ...extra })}`;
+// إلغاءُ الدفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ. ويُحاوَل ولا يُعوَّل عليه —
+// ما لم يبلغ الخادمَ يردّه مؤقّتُه بعد دقائق.
+const abort = () => post(`${origin}/api/legal/abort?${new URLSearchParams({ batch: batchId })}`).catch(() => {});
+
+// ── ١) الأجزاء تُجمع جانباً — لا يمسّ القاعدةَ منها شيء ──
 for (let start = 0; start < lines.length; start += batchSize) {
   const slice = lines.slice(start, start + batchSize);
   const no = Math.floor(start / batchSize) + 1;
   const of = Math.ceil(lines.length / batchSize);
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-ndjson', cookie },
-    body: slice.join('\n'),
-  });
-
+  let res;
   let report;
   try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-ndjson', cookie },
+      body: slice.join('\n'),
+    });
     report = await res.json();
-  } catch {
-    console.error(`الدفعة ${no}/${of}: ردٌّ غير مفهوم (${res.status})`);
+  } catch (e) {
+    await abort();
+    console.error(`\nالجزء ${no}/${of}: انقطع الرفع (${String(e?.message ?? e)}) — لم يُكتب من الملف شيء.`);
     process.exit(1);
   }
 
   if (!res.ok) {
-    console.error(`\nالدفعة ${no}/${of} رُفضت (${res.status}): ${report.error ?? ''}`);
+    await abort();
+    console.error(`\nالجزء ${no}/${of} رُفض (${res.status}): ${report.error ?? ''} — لم يُكتب من الملف شيء.`);
     // الأسباب مجموعةً أولاً: ملفٌّ مولَّد بقالب واحد تفشل أسطره بالسبب نفسه،
     // وطباعةُ خمسين رسالة متطابقة تُخفي ما تقوله واحدة.
     for (const g of report.error_summary ?? []) {
@@ -187,22 +206,60 @@ for (let start = 0; start < lines.length; start += batchSize) {
     process.exit(1);
   }
 
-  totals.inserted += report.inserted ?? 0;
-  totals.updated += report.updated ?? 0;
   totals.failed += report.failed ?? 0;
-  totals.pending = report.pending_embeddings ?? totals.pending;
   totals.withheld += report.needs_review ?? 0;
   totals.amendmentPending += report.amendment_pending ?? 0;
-  totals.superseded += report.superseded ?? 0;
   for (const w of report.warnings ?? []) console.log(`  تنبيه: ${w}`);
   if (report.embed_text_truncated) {
     console.log(`  ${report.embed_text_truncated} مقطعاً قُصَّ مدخل متجهه (النصّ المعروض كامل)`);
   }
-  console.log(`الدفعة ${no}/${of}: جديد ${report.inserted} · مستبدَل ${report.updated} · مرفوض ${report.failed}`);
+  console.log(`الجزء ${no}/${of}: جُمع ${report.staged} · مرفوض ${report.failed}`);
+}
+
+// ── ٢) ما سيقع، ومنه الغائب عن الملف ──
+// `upsert` تُحدّث وتُضيف ولا تحذف ما اختفى، فمادةٌ أُسقطت من المصدر تبقى في
+// النتائج إلى الأبد. والقياس على الملف كلِّه بعد جمعه، وعلى أنظمته وحدها.
+const plan = await post(commitUrl()).catch((e) => ({ ok: false, body: { error: String(e?.message ?? e) } }));
+if (!plan.ok) {
+  await abort();
+  console.error(`\nتعذّر إتمام الدفعة: ${plan.body.error ?? ''} — لم يُكتب من الملف شيء.`);
+  process.exit(1);
+}
+let pruning = false;
+if (!plan.body.orphans) {
+  console.log('\nلا غائب: كلُّ ما في القاعدة من أنظمة هذا الملف ورد فيه.');
+} else if (plan.body.failed) {
+  // السطر المتخطّى لم يُجمع، فمعرّفُه غائبٌ عن الملف وحاضرٌ في القاعدة: حذفُ
+  // «الغائب» هنا يمحو مادةً أسقطها فحصُ خانة لا المصدر. والخادم يرفضه أيضاً.
+  console.log(`\n${plan.body.orphans} مادةً في القاعدة لم ترد في الملف — لم تُحذف: تُخطّي منه ${plan.body.failed} سطراً، والغائب قد يكون ما تُخطّي.`);
+} else if (!prune) {
+  console.log(`\n${plan.body.orphans} مادةً في القاعدة لم ترد في الملف — لم تُحذف. لحذفها مع الكتابة أعِد التشغيل مع --prune`);
+} else {
+  pruning = true;
+  console.log(`\n${plan.body.orphans} مادةً في القاعدة لم ترد في الملف — تُحذف مع نظامها، ونصُّ كلٍّ في سجلّ التحديث.`);
+}
+
+// ── ٣) الكتابة خطوةً خطوة حتى تتمّ ──
+let progress;
+for (;;) {
+  const step = await post(commitUrl({ apply: '1', ...(pruning ? { prune: '1' } : {}) })).catch((e) => ({
+    ok: false,
+    network: true,
+    body: { error: String(e?.message ?? e) },
+  }));
+  if (!step.ok) {
+    if (step.network) await abort();
+    // الخادم ردّ ما كتب وقال جملته؛ وانقطاعٌ لم يبلغه يردّه الإلغاء أو المؤقّت.
+    console.error(`\n${step.body.error ?? 'تعذّر إتمام الاستيراد'}`);
+    process.exit(1);
+  }
+  progress = step.body;
+  if (progress.done) break;
+  console.log(`كُتب ${plan.body.staged - progress.remaining}/${plan.body.staged}`);
 }
 
 console.log(
-  `\nاكتمل: جديد ${totals.inserted} · مستبدَل ${totals.updated} · مرفوض ${totals.failed} · ينتظر التضمين ${totals.pending}`
+  `\nاكتمل: جديد ${progress.inserted} · مستبدَل ${progress.updated} · محذوف ${progress.deleted} · مرفوض ${totals.failed}`
 );
 // ما حُجب وما سيُعرض بتنبيه يُقالان: ملفٌّ نصفُ مواده محجوب يبدو مستورَداً
 // تامّاً في السطر الأخير، ثم لا يجد المحامي أثره في البحث ولا يعرف لماذا.
@@ -212,49 +269,7 @@ if (totals.withheld) {
 if (totals.amendmentPending) {
   console.log(`${totals.amendmentPending} مادةً عُدِّلت ونصُّها المعروض أصليّ — تُعرض مع تنبيهها`);
 }
-if (totals.superseded) {
-  console.log(`${totals.superseded} نصّاً سابقاً دخل سجلّ التحديث بتاريخ تعديله`);
+if (progress.superseded) {
+  console.log(`${progress.superseded} نصّاً سابقاً دخل سجلّ التحديث بتاريخ تعديله`);
 }
-if (totals.pending) {
-  console.log('التضمين المتبقّي يصرّفه الـCron الليلي، أو: POST /api/legal/embed-pending');
-}
-
-// ── ختام الدفعة: اليتيم ──
-// `upsert` تُحدّث وتُضيف ولا تحذف ما اختفى، فمادةٌ أُسقطت من المصدر تبقى في
-// النتائج إلى الأبد. والقياس هنا على الدفعة تامّةً — بعد آخر جزء — وعلى
-// أنظمتها وحدها.
-const finalize = async (apply) =>
-  fetch(`${origin}/api/legal/finalize?${new URLSearchParams({ batch: batchId, ...(apply ? { apply: '1' } : {}) })}`, {
-    method: 'POST',
-    headers: { cookie },
-  }).then((r) => r.json());
-
-try {
-  const seen = await finalize(false);
-  if (!seen.orphans?.length) {
-    console.log('\nلا يتيم: كلُّ ما في القاعدة من أنظمة هذه الدفعة ورد فيها.');
-  } else {
-    console.log(`\n${seen.count} مادةً في القاعدة لم ترد في هذه الدفعة:`);
-    for (const o of seen.orphans.slice(0, 20)) {
-      console.log(`  ${o.id}${o.was_edited ? '  (حُرِّرت بشرياً)' : ''}${o.review_status !== 'pending' ? `  (${o.review_status})` : ''}`);
-    }
-    if (seen.orphans.length > 20) console.log(`  … و${seen.orphans.length - 20} غيرها`);
-
-    if (seen.skipped) {
-      // السطر المتخطّى لم يُكتب، فمعرّفُه غائبٌ عن الدفعة وحاضرٌ في القاعدة:
-      // حذفُ «الغائب» هنا يمحو مادةً أسقطها فحصُ خانة لا المصدر. والخادم يرفضه
-      // أيضاً — وهذا يقوله قبل أن يُطلب.
-      console.log(`لم تُحذف: تُخطّي من الدفعة ${seen.skipped} سطراً، والغائب قد يكون ما تُخطّي.`);
-      console.log('أصلِح الأسطر المرفوضة وأعِد رفع الملف كاملاً، ثم احذف.');
-    } else if (!prune) {
-      console.log('لم تُحذف. لحذفها — السجلّ ومتجهه — أعِد التشغيل مع --prune');
-    } else {
-      const done = await finalize(true);
-      if (!done.applied) console.log(`لم تُحذف: ${done.error ?? 'رفض الخادم الحذف'}`);
-      else console.log(`حُذف ${done.deleted}. ونصُّ كلٍّ محفوظٌ في سجلّ التحديث قبل ذهابه.`);
-    }
-  }
-} catch (e) {
-  console.error(`\nتعذّر ختام الدفعة: ${String(e?.message ?? e)}`);
-  console.error('الاستيراد وقع، ولم يُقَس اليتيم. أعِد المحاولة بـ: POST /api/legal/finalize?batch=' + batchId);
-}
+console.log('والتضمين يلحق بالكتابة، وما لم يلحق يصرّفه الـCron الليلي، أو: POST /api/legal/embed-pending');

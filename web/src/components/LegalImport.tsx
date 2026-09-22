@@ -48,10 +48,14 @@ interface FileResult {
   deleted?: number;
   /** غابت عن الملف ولم يُعرض حذفها: تُخطّيت منه أسطر. */
   orphansKept?: number;
-  /** الاستيراد وقع وتعذّر ختامُه — والغائب لم يُقَس. */
-  finalizeError?: string;
   report?: LegalImportReport;
 }
+
+/**
+ * انقطع الرفع قبل اكتمال الملف — الجملة مسجَّلة في `naf-terms.md` تحت «ختامُ دفعة
+ * المواد». والملف يُجمع جانباً حتى يكتمل، فانقطاعُه لا يترك في القاعدة أثراً.
+ */
+const STAGE_INTERRUPTED = 'انقطع رفع الملف قبل اكتماله، ولم يُكتب منه شيء — أعد رفعه';
 
 /**
  * بصمة الملف كما يحسبها مُرسِله — على بايتاته كما هي، لا على أسطره بعد
@@ -192,83 +196,94 @@ export function LegalImport() {
       }
     }
 
-    /* معرّفٌ واحد لأجزاء الملف كلّها، وبصمتُه معها. بهما يُقرأ الملف في السجلّ
-       سطراً واحداً، وتُؤخذ صورُ ما يُكتب فوقه، ويُقاس ما غاب عنه في ختامه. */
+    /* معرّفٌ واحد لأجزاء الملف كلّها، وبصمتُه معها. بهما يُجمع الملف جانباً، ويُقرأ
+       في السجلّ سطراً واحداً، وتُؤخذ صورُ ما يُكتب فوقه. */
     const batchId = newBatchId();
     const sha256 = await fileSha256(file);
-    const batches = Math.ceil(lines.length / BATCH_LINES);
-    let inserted = 0;
-    let updated = 0;
+    const parts = Math.ceil(lines.length / BATCH_LINES);
     let built = 0;
     let skipped = 0;
-    let archived = 0;
     let withheld = 0;
     let amendmentPending = 0;
     let unstamped = 0;
     const summary: NonNullable<LegalImportReport['error_summary']> = [];
 
-    for (let start = 0; start < lines.length; start += BATCH_LINES) {
-      setNow({ name: file.name, file: index + 1, files: count, batch: Math.floor(start / BATCH_LINES) + 1, batches });
-      const batch = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name, {
-        buildEmbed, partial, correction, batch: batchId, sha256,
-      });
-      if (!batch.ok) {
-        // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل دفعة
-        // لا يدلّ صاحبَ الملف على شيء.
-        return {
-          name: file.name,
-          ok: false,
-          inserted,
-          updated,
-          report: {
-            ...batch,
-            errors: (batch.errors ?? []).map((e) => ({ ...e, line: start + e.line })),
-            error_summary: (batch.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })),
-          },
-        };
-      }
-      inserted += batch.inserted ?? 0;
-      updated += batch.updated ?? 0;
-      built += batch.embed_text_built ?? 0;
-      archived += batch.archived ?? 0;
-      withheld += batch.needs_review ?? 0;
-      amendmentPending += batch.amendment_pending ?? 0;
-      unstamped += batch.unstamped ?? 0;
-      // في وضع «ما صحّ»: الدفعة تنجح ومعها أسطرٌ متخطّاة. تُجمع أسبابها
-      // ليُقال ما فات، فتخطٍّ صامت يجعل نظاماً ناقصاً يبدو تامّاً.
-      if (batch.failed) {
-        skipped += batch.failed;
-        summary.push(...(batch.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })));
-      }
-    }
-
-    /* ختام الدفعة — بعد آخر جزء، وعلى الملف تامّاً وحده (§8).
-       الاستيراد استبدالٌ لا يحذف ما اختفى من المصدر، فمادةٌ أُسقطت تبقى في
-       النتائج إلى الأبد. فيُقاس الغائب ويُسأل عنه: لا يُحذف بلا جواب. والخادم
-       يرفض الحذف على ملفٍّ تُخطّيت منه أسطر، فلا يُعرض السؤال أصلاً — وتُقال
-       الجملة التي تقول لماذا. */
-    let deleted = 0;
-    let orphansKept = 0;
-    let finalizeError: string | undefined;
+    /* ١) الأجزاء تُجمع جانباً ولا يمسّ القاعدةَ منها شيء حتى يكتمل الملف (§4-٦).
+       فانقطاعٌ هنا لا يترك أثراً: يُلغى ما جُمع، ويُقال إن شيئاً لم يُكتب. */
     try {
-      const plan = await api.legalFinalize(batchId);
-      const missing = plan.count ?? 0;
-      if (missing > 0 && (plan.skipped ?? 0) > 0) {
-        orphansKept = missing;
-      } else if (missing > 0) {
-        const apply = await new Promise<boolean>((decide) => setOrphans({ filename: file.name, count: missing, decide }));
-        setOrphans(null);
-        if (apply) deleted = (await api.legalFinalize(batchId, true)).deleted ?? 0;
+      for (let start = 0; start < lines.length; start += BATCH_LINES) {
+        setNow({ name: file.name, file: index + 1, files: count, batch: Math.floor(start / BATCH_LINES) + 1, batches: parts });
+        const part = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name, {
+          buildEmbed, partial, correction, batch: batchId, sha256, stage: true,
+        });
+        if (!part.ok) {
+          await api.legalAbort(batchId).catch(() => {});
+          // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل جزءٍ لا
+          // يدلّ صاحبَ الملف على شيء.
+          return {
+            name: file.name,
+            ok: false,
+            inserted: 0,
+            updated: 0,
+            report: {
+              ...part,
+              errors: (part.errors ?? []).map((e) => ({ ...e, line: start + e.line })),
+              error_summary: (part.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })),
+            },
+          };
+        }
+        built += part.embed_text_built ?? 0;
+        withheld += part.needs_review ?? 0;
+        amendmentPending += part.amendment_pending ?? 0;
+        unstamped += part.unstamped ?? 0;
+        // في وضع «ما صحّ»: الجزء يُقبل ومعه أسطرٌ متخطّاة. تُجمع أسبابها ليُقال ما
+        // فات، فتخطٍّ صامت يجعل نظاماً ناقصاً يبدو تامّاً.
+        if (part.failed) {
+          skipped += part.failed;
+          summary.push(...(part.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })));
+        }
       }
-    } catch (e: any) {
-      finalizeError = e?.message ?? 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة';
+    } catch {
+      await api.legalAbort(batchId).catch(() => {});
+      return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: STAGE_INTERRUPTED } };
     }
 
-    return {
-      name: file.name, ok: true, inserted, updated, built, skipped, archived, withheld, amendmentPending,
-      unstamped, deleted, orphansKept, finalizeError,
-      report: skipped ? { ok: true, error_summary: summary } : undefined,
-    };
+    /* ٢) ما سيقع، ومنه سؤالُ الحذف قبل الكتابة (§8) — والحذفُ يقع مع كل نظامٍ وهو
+       مجمَّد، فلا يُقرأ نظامٌ حُذف بعضُه. ولا يُعرض على ملفٍّ تُخطّيت منه أسطر:
+       السطر المتخطّى غائبٌ عن الملف وحاضرٌ في القاعدة، وتُقال الجملة التي تقول لماذا. */
+    let prune = false;
+    let orphansKept = 0;
+    try {
+      const plan = await api.legalCommit(batchId);
+      if (plan.orphans > 0 && plan.failed > 0) {
+        orphansKept = plan.orphans;
+      } else if (plan.orphans > 0) {
+        prune = await new Promise<boolean>((decide) => setOrphans({ filename: file.name, count: plan.orphans, decide }));
+        setOrphans(null);
+      }
+
+      /* ٣) الكتابةُ خطوةً خطوة حتى تتمّ: نظاماً نظاماً، وكلُّ نظامٍ يغيب عن البحث وهو
+         يُكتب ويعود كاملاً. وما تعذّر يُردّ في الخادم كلُّه ويرمي بجملته. */
+      let progress = await api.legalCommit(batchId, { apply: true, prune });
+      while (!progress.done) {
+        setNow({ name: file.name, file: index + 1, files: count, batch: plan.staged - progress.remaining, batches: plan.staged });
+        progress = await api.legalCommit(batchId, { apply: true, prune });
+      }
+      return {
+        name: file.name, ok: true,
+        inserted: progress.inserted, updated: progress.updated, archived: progress.archived, deleted: progress.deleted,
+        built, skipped, withheld, amendmentPending, unstamped, orphansKept,
+        report: skipped ? { ok: true, error_summary: summary } : undefined,
+      };
+    } catch (e: any) {
+      /* الخادم ردّ ما كتب وقال جملته. وإن انقطع الاتصال فالإلغاءُ يردّه الآن، وإلا
+         ردّه المؤقّت بعد دقائق — ولا يُقال «أُعيدت» عن ردٍّ لم يتحقّق. */
+      const aborted = await api.legalAbort(batchId).then(() => true).catch(() => false);
+      const error = e instanceof Error && e.message && !/fetch|network/i.test(e.message)
+        ? e.message
+        : aborted ? STAGE_INTERRUPTED : 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة';
+      return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error } };
+    }
   };
 
   const run = async (files: FileList | null) => {
@@ -421,7 +436,7 @@ export function LegalImport() {
               ويُقال حين يوجد غائبٌ فعلاً، فتنبيهٌ عن خطرٍ غير قائم يُعلّم
               القارئ تجاهل التنبيهات. */}
           {results.map((r, i) =>
-            r.unstamped || r.orphansKept || r.finalizeError ? (
+            r.unstamped || r.orphansKept ? (
               <div key={i} className="import-report">
                 {r.unstamped ? (
                   <p>
@@ -431,11 +446,6 @@ export function LegalImport() {
                 {r.orphansKept ? (
                   <p>
                     <bdi>{r.name}</bdi>: لم يُعرض حذف ما غاب عن الملف: تُخطّيت منه أسطر، والغائب قد يكون ما تُخطّي
-                  </p>
-                ) : null}
-                {r.finalizeError ? (
-                  <p>
-                    <bdi>{r.name}</bdi>: {r.finalizeError}
                   </p>
                 ) : null}
               </div>

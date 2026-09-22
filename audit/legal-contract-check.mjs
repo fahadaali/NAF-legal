@@ -2303,7 +2303,10 @@ await check('٢٤ · ولا حذفَ لأيتام دفعةٍ تُخطّيت من
   assert.match(body, /SUM\(failed\)/, 'الختام لا ينظر فيما تُخطّي من الدفعة');
   assert.match(body, /if \(skipped > 0\)/, 'الحذف يقع على دفعةٍ ناقصة');
   const script = readFileSync(path.join(ROOT, 'scripts', 'import-legal.mjs'), 'utf8');
-  assert.match(script, /seen\.skipped/, 'السكربت يطلب الحذف على دفعةٍ ناقصة');
+  // والسكربت يسأل الخطّة قبل الكتابة: ملفٌّ تُخطّيت منه أسطر لا يُطلب معه الحذف
+  // (والخادم يرفضه أيضاً — ٢٧).
+  assert.match(script, /\} else if \(plan\.body\.failed\) \{[\s\S]{0,400}\} else if \(!prune\)/,
+    'السكربت يطلب الحذف على دفعةٍ ناقصة');
 });
 
 // ═══ ٢٥) بقاءُ التحرير البشري عبر الدفعات (§6-6)، ومرشّحُ نوع التعديل (§6-3) ═══
