@@ -79,6 +79,32 @@ const STATUS_ALIASES = new Map<string, string>(
 );
 
 /**
+ * حقول بطاقة النظام — §3-10 من وثيقة الاستيراد، منذ إصدارها الرابع.
+ *
+ * **و`status` صار له معنيان عبر الإصدارات.** كان حالَ المادة (سارية · معدَّلة ·
+ * منسوخة)، وصار حالَ **النظام** من بطاقته في البوابة: ساري · ملغى · لم يبدأ
+ * العمل به · جاري العمل على النظام. والفرق ليس لفظياً: «ملغى» في المعنى الأوّل
+ * تُخرج المادة، وفي الثاني قد تكون المادة مستبقاةً نافذةً بعد إلغاء نظامها —
+ * وقراءتُها بالمعنى الأوّل تحجبها وهي نافذة (§5-5). وقيمتان من الأربع لا
+ * يعرفهما المعنى الأوّل أصلاً، فكان السطر يُرفض ومعه موادُّ النظام كلُّها.
+ *
+ * فالسطر يُقرأ بالمعنى الثاني متى حمل حقلاً من البطاقة، أو حمل قيمةً لا تكون
+ * إلا حالَ نظام. وبغيرهما يبقى بمعناه القديم — ملفّاتٌ رُفعت قبل الإصدار
+ * الرابع تُعاد كما كانت تُقرأ.
+ */
+const LAW_CARD_FIELDS = [
+  'law_status_source', 'status_raw', 'law_repealed', 'law_pending', 'law_effective_from',
+  'scheduled_repeal_from', 'kept_after_repeal', 'published_hijri', 'published_gregorian', 'instruments',
+] as const;
+
+/** حالاتٌ لا تكون إلا حالَ نظام — لا يعرفها المعنى القديم لـ`status`. */
+const LAW_ONLY_STATUSES = new Set(['لم يبدأ العمل به', 'جاري العمل على النظام'].map((s) => normalizeArabic(s)));
+
+/** لفظا إلغاء النظام: المعتمد في الملف، وما تكتبه البوابة. */
+const LAW_REPEALED_WORDS = new Set(['ملغى', 'لاغي'].map((s) => normalizeArabic(s)));
+const LAW_PENDING_WORD = normalizeArabic('لم يبدأ العمل به');
+
+/**
  * أنواع الأدوات النظامية ومقابلها العربي.
  *
  * الملفات تكتب النوع عربياً، والمخزَّن إنجليزيٌّ واحد — كما تُخزَّن الحالة.
@@ -146,15 +172,30 @@ const RETRIEVAL_ALIASES = new Map<string, string>(
 );
 
 /**
+ * إلغاءٌ مجدول حلّ تاريخه — يُقيَّم وقت الاستعلام لا وقت الرفع (§6-8).
+ *
+ * حالُ المادة المجدول إلغاؤها يتبدّل حين تُرفع دفعةٌ بعد التاريخ، فإن تأخّر
+ * الرفع بقيت «نافذة» وقد أُلغيت قانوناً. والتاريخ ميلاديّ `YYYY-MM-DD` يُقارَن
+ * بتاريخ الخادم مباشرةً — والاستيراد يرفض غير هذه الصيغة، فلا يُقارَن هنا
+ * هجريٌّ بميلاديّ.
+ */
+const REPEAL_DUE_SQL = `(c.scheduled_repeal_from IS NOT NULL AND c.scheduled_repeal_from <= date('now'))`;
+
+/**
  * التصفية الافتراضية الإلزامية.
  *
  * ثلاثة شروطٍ لا شرط: `retrieval_status` هو حقل المواصفة، ويرافقه الحقلان
  * القديمان لأن دفعةً لم تحمله بعدُ قد تكون في القاعدة — وأيُّها قال «منسوخ»
  * كفى لإخراج المادة. الاتجاه الآمن: مادةٌ غائبة أهون من مادة منسوخة
- * يُستشهد بها.
+ * يُستشهد بها. ورابعُها الإلغاء المجدول الذي حلّ يومه.
+ *
+ * **ولا شرطَ على إلغاء النظام هنا.** مادةٌ من نظامٍ لاغٍ تصل حالُها «ملغى»
+ * مطويّةً في `retrieval_status`، والمستبقاةُ منها تصل «نافذ» — وشرطٌ على
+ * `law_repealed` يُخرج المستبقاة وهي نافذة (§5-5).
  */
 const EFFECTIVE_SQL = `c.retrieval_status <> '${RETRIEVAL_REPEALED}'
-                       AND c.is_repealed = 0 AND c.status IN ('active','amended')`;
+                       AND c.is_repealed = 0 AND c.status IN ('active','amended')
+                       AND NOT ${REPEAL_DUE_SQL}`;
 
 /**
  * الحالات التي تُدخل المادة الاسترجاع.
@@ -366,6 +407,35 @@ export interface PreparedChunk {
   /** عطبٌ يمنع القراءة — يحجب حتى يبتّ فيه إنسان. */
   has_defect: number;
   defect_kind: string | null;
+  // ── بطاقة النظام — §3-10 ──
+  /** حالُ النظام كما وردت: ساري · ملغى · لم يبدأ العمل به · جاري العمل على النظام. */
+  law_status: string | null;
+  /** القيمة كما في البطاقة — البوابة تكتب الإلغاء «لاغي». */
+  law_status_raw: string | null;
+  /** البوابة · قرار · افتراضي — وحضورُه علامةُ الختم. */
+  law_status_source: string | null;
+  law_repealed: number;
+  law_pending: number;
+  /** ميلاديّ `YYYY-MM-DD`. */
+  law_effective_from: string | null;
+  /** ميلاديّ `YYYY-MM-DD` — يُقيَّم وقت الاستعلام. */
+  scheduled_repeal_from: string | null;
+  kept_after_repeal: number;
+  published_hijri: string | null;
+  published_gregorian: string | null;
+  /** أدوات الإصدار كلُّها نصّاً — للعرض وحده. */
+  instruments: string | null;
+  // ── المرفقات والرقم السابق — §3-11 ──
+  is_attachment: number;
+  attachment_of: string | null;
+  has_attachment: number;
+  text_from_attachment: number;
+  amend_link: string | null;
+  former_article_no: string | null;
+  former_article_no_norm: string | null;
+  // ── الملاحق ومواد «مكرر» — §3-12 و§3-11 ──
+  is_annex: number;
+  is_mukarrar: number;
   embed_text: string;
   text_norm: string;
   /** الباب مطبَّعاً — للترشيح به. */
@@ -432,6 +502,15 @@ export interface ParsedJsonl {
   amendmentPending: number;
   /** موادّ حملت نصّاً سابقاً يدخل سجلّ التحديث بتاريخ تعديله. */
   superseded: number;
+  /**
+   * سجلاتٌ بلا ختم الحالة — لا تحمل `law_status_source`.
+   *
+   * الختم آخرُ خطوةٍ في سلسلة المُرسِل، وفيه تُطوى حالُ النظام في
+   * `retrieval_status`. وملفٌّ فاته يجتاز فحص البنية ولا يجتاز صحّة الحالات:
+   * مادةٌ من نظامٍ لاغٍ قد تصل «نافذ». فيُعدّ ويُقال — ولا يُرفض، لأن ملفّات ما
+   * قبل الإصدار الرابع لا ختم فيها أصلاً.
+   */
+  unstamped: number;
 }
 
 /** خطأ تحقّقٍ برمزه. الرمز ثابت والرسالة قد تُصاغ من جديد. */
@@ -513,6 +592,7 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string, opts: Impor
   let needsReview = 0;
   let amendmentPending = 0;
   let superseded = 0;
+  let unstamped = 0;
 
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
@@ -560,6 +640,7 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string, opts: Impor
       if (row.needs_review) needsReview++;
       if (row.has_amendments && !row.amendment_applied) amendmentPending++;
       if (row.text_superseded) superseded++;
+      if (!row.law_status_source) unstamped++;
       rows.push(row);
     } catch (e: any) {
       // حقول السطر تُرافق الخطأ: ملفٌّ مولَّد بقالب واحد تفشل أسطره كلّها
@@ -573,7 +654,9 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string, opts: Impor
     }
   }
 
-  return { total, rows, errors, warnings, longEmbedText, builtEmbedText, needsReview, amendmentPending, superseded };
+  return {
+    total, rows, errors, warnings, longEmbedText, builtEmbedText, needsReview, amendmentPending, superseded, unstamped,
+  };
 }
 
 const MAX_ID_LEN = 200;
@@ -616,18 +699,30 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
   if (embedText.length > MAX_TEXT_LEN) throw new ChunkError('long_embed_text', '`embed_text` أطول من الحدّ المسموح');
 
   const rawStatus = str(o.status);
-  const status = !rawStatus
-    ? 'active'
-    : VALID_STATUSES.has(rawStatus)
-      ? rawStatus
-      : (STATUS_ALIASES.get(normalizeArabic(rawStatus)) ?? '');
-  if (!status) {
-    throw new ChunkError('bad_status', `\`status\` غير معروف: ${rawStatus} — المسموح: active | amended | repealed`);
+  // `status` بمعنيين عبر الإصدارات — التفصيل عند `LAW_CARD_FIELDS`.
+  const lawCard = LAW_CARD_FIELDS.some((k) => present(o[k])) || LAW_ONLY_STATUSES.has(normalizeArabic(rawStatus));
+  let status: string;
+  if (lawCard) {
+    // حالُ النظام لا حالُ المادة: تُحفظ في `law_status`، وعمودُ المادة يُكتب
+    // أدناه من حال الاسترجاع بعد حسابها — فلا يقول عمودان قولين.
+    status = 'active';
+  } else {
+    status = !rawStatus
+      ? 'active'
+      : VALID_STATUSES.has(rawStatus)
+        ? rawStatus
+        : (STATUS_ALIASES.get(normalizeArabic(rawStatus)) ?? '');
+    if (!status) {
+      throw new ChunkError('bad_status', `\`status\` غير معروف: ${rawStatus} — المسموح: active | amended | repealed`);
+    }
   }
 
   // منسوخٌ إن قال أيُّهما ذلك. لا يُصحَّح أحدهما بالآخر: التصفية تأخذ
   // بالاثنين، وتغيير قيمة وردت في الملف اختلاقٌ لبيانات لم تُرسَل.
-  const isRepealed = status === 'repealed' || truthy(o.is_repealed) ? 1 : 0;
+  //
+  // و`is_repealed` في ملفّات البطاقة للمادة أو بابها وحدهما (§3-5)، وإلغاءُ
+  // النظام في `law_repealed` — فلا يُقرأ «ملغى» في `status` إلغاءً للمادة.
+  const isRepealed = (!lawCard && status === 'repealed') || truthy(o.is_repealed) ? 1 : 0;
 
   const lawId = str(o.law_id) || null;
   const rawDocType = str(o.doc_type);
@@ -661,6 +756,26 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
   const textVersions = parseTextVersions(o.text_versions, text);
   const amendmentEvents = parseAmendmentEvents(o.amendment_events);
 
+  // ── بطاقة النظام ──
+  // الحقلان المنطقيان يُقرآن كما وردا، ولا يُرجَع إلى لفظ `status` إلا حين
+  // يغيبان: قرارُ صاحب البيانات (`law_status_source: قرار`) قد يخالف البطاقة،
+  // والحقل الصريح هو ما كتبه.
+  const lawStatus = lawCard ? rawStatus || null : null;
+  const lawRepealed = lawCard && explicitOr(o.law_repealed, LAW_REPEALED_WORDS.has(normalizeArabic(rawStatus))) ? 1 : 0;
+  const lawPending = lawCard && explicitOr(o.law_pending, normalizeArabic(rawStatus) === LAW_PENDING_WORD) ? 1 : 0;
+  const lawEffectiveFrom = gregorianOnly(o.law_effective_from, 'law_effective_from');
+  const scheduledRepealFrom = gregorianOnly(o.scheduled_repeal_from, 'scheduled_repeal_from');
+  const keptAfterRepeal = truthy(o.kept_after_repeal) ? 1 : 0;
+
+  const today = gregorianToday();
+  // مادةٌ من نظامٍ لاغٍ ملغاةٌ — إلا المستبقاة (§5-5).
+  const repealedByLaw = !!lawRepealed && !keptAfterRepeal;
+  // والمجدول إلغاؤها ملغاةٌ متى حلّ يومها، ولو رُفعت بعده.
+  const repealDue = !!scheduledRepealFrom && scheduledRepealFrom <= today;
+  // والنظام الذي لم يبدأ العمل به نافذٌ بتحذير حتى يحلّ يومه.
+  const lawPendingNow = !!lawPending && (!lawEffectiveFrom || lawEffectiveFrom > today);
+  const amendmentUnmerged = !!hasAmendments && !amendmentApplied;
+
   // ── حالُ الاسترجاع ──
   // يُقرأ من الملف، فهو حقل المواصفة. وإن غاب اشتُقّ من الحقول المنطقية
   // بالقاعدة نفسها التي اشتُقّ بها هناك — وذاك سدُّ فجوةِ حقلٍ إلزاميّ غاب،
@@ -668,9 +783,9 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
   const rawRetrieval = str(o.retrieval_status);
   let retrievalStatus: string;
   if (!rawRetrieval) {
-    retrievalStatus = isRepealed
+    retrievalStatus = isRepealed || repealedByLaw || repealDue
       ? RETRIEVAL_REPEALED
-      : hasAmendments && !amendmentApplied
+      : amendmentUnmerged || lawPendingNow
         ? RETRIEVAL_WARNING
         : RETRIEVAL_EFFECTIVE;
   } else {
@@ -685,11 +800,23 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     }
   }
   // وقولُ الحقلين القديمين «منسوخ» يغلب: التصفية تأخذ بالثلاثة، وحالٌ تقول
-  // «نافذ» على مادةٍ `is_repealed` تناقضٌ يُحسم في الاتجاه الآمن.
-  if (isRepealed) retrievalStatus = RETRIEVAL_REPEALED;
+  // «نافذ» على مادةٍ `is_repealed` تناقضٌ يُحسم في الاتجاه الآمن. ومثلُه
+  // إلغاءُ النظام والإلغاءُ الذي حلّ يومه — وكلاهما مطويٌّ في الحال عند
+  // المُرسِل أصلاً، فهذا حارسٌ لا مصدرٌ ثانٍ.
+  if (isRepealed || repealedByLaw || repealDue) retrievalStatus = RETRIEVAL_REPEALED;
+  // ونظامٌ لم يبدأ العمل به لا يُعرض نصُّه نافذاً بلا تحذير.
+  else if (lawPendingNow && retrievalStatus === RETRIEVAL_EFFECTIVE) retrievalStatus = RETRIEVAL_WARNING;
 
+  // نصّ التحذير من الملف، وبديلُه المسجَّل بسببه: تعديلٌ لم يُدمج، أو نفاذٌ
+  // لم يحلّ. وبديلٌ واحد للسببين يقول للقارئ ما لم يقع.
   const retrievalWarning =
-    str(o.retrieval_warning) || (retrievalStatus === RETRIEVAL_WARNING ? AMENDMENT_NOTICE : '') || null;
+    str(o.retrieval_warning) ||
+    (retrievalStatus === RETRIEVAL_WARNING ? (lawPendingNow && !amendmentUnmerged ? DEFERRED_NOTICE : AMENDMENT_NOTICE) : '') ||
+    null;
+
+  // عمودُ حال المادة في ملفّات البطاقة يتبع حال الاسترجاع: هو ما يُصفّى به مع
+  // أخويه، وتركُه «سارية» على مادةٍ ملغاة يجعل الشروط الثلاثة تقول قولين.
+  if (lawCard) status = retrievalStatus === RETRIEVAL_REPEALED ? 'repealed' : 'active';
 
   // ── العطب ──
   // ثلاثةٌ تُحسب هنا لا في كل استعلام، وهي وحدها ما يحجب المادة عن البحث حتى
@@ -714,17 +841,43 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     'has_amendments', 'amendment_kind', 'amendment_applied', 'needs_review',
     'amendment_instrument', 'amended_on', 'amendments_count', 'amendments_raw', 'amend_note',
     'retrieval_status', 'retrieval_warning', 'text_versions', 'amendment_events',
+    ...LAW_CARD_FIELDS,
+    'is_attachment', 'attachment_of', 'has_attachment', 'text_from_attachment', 'amend_link',
+    'former_article_no', 'is_annex',
   ]);
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) if (!known.has(k)) extra[k] = v;
+
+  // ── المرفقات والملاحق ومواد «مكرر» ──
+  // الحقلان الصريحان يُقرآن كما وردا، ولاحقةُ المعرّف تقوم مقامهما حين يغيبان:
+  // `-attach` و`annex-01` صيغتان يسمّيهما العقد نفسه (§3-11، §3-12)، فقراءتُهما
+  // قراءةٌ للعقد لا تخمين. ومادة «مكرر» لا حقلَ لها غيرُ لاحقتها.
+  const isAttachment = explicitOr(o.is_attachment, /-attach\d*$/.test(id)) ? 1 : 0;
+  const attachmentOf = str(o.attachment_of) || null;
+  const isAnnex = explicitOr(o.is_annex, /\/annex-\d+$/.test(id)) ? 1 : 0;
+  const isMukarrar = /-mukarrar\d*(?:--dup\d+)?$/.test(id) ? 1 : 0;
+  // مرفقُ الملحق يحمل رقمه الاصطلاحيّ نفسه (§3-12)، فحكمُه في الرقم حكمُه.
+  const conventionalNo = !!isAnnex || /\/annex-\d+-attach\d*$/.test(id) || /\/annex-\d+$/.test(attachmentOf ?? '');
+  const formerArticleNo = str(o.former_article_no) || null;
 
   // مقبض المادة: ما يكتبه من يبحث عنها بعينها — اسم النظام ورقمها ورقم أداتها.
   // يُفهرس لفظياً لأن رقم المادة قد لا يرد داخل نصّها أصلاً.
   //
   // ومعها لفظُ الرقم وعنوانُ المادة: «المادة الخامسة والأربعون» هو ما يكتبه
   // من يقرأ النظام في مصدره، و«التعريفات» عنوانٌ يُبحث به ولا يرد في المتن.
+  //
+  // **والرقم الاصطلاحيّ لا يدخل المقبض.** «المادة 1001» لا وجود لها في أي
+  // نظام، وفهرستُها تجعل من يبحث عن مادةٍ بهذا الرقم يجد جدولاً (§3-12). ويدخله
+  // الرقم السابق: المادة المنقولة تُستدعى بالرقمين (§3-11).
   const handle = [
-    lawTitle, lawId, docType, articleNo ? `المادة ${articleNo}` : '', articleLabel, articleTitle, instrumentNo,
+    lawTitle,
+    lawId,
+    docType,
+    articleNo && !conventionalNo ? `المادة ${articleNo}` : '',
+    formerArticleNo ? `المادة ${formerArticleNo}` : '',
+    articleLabel,
+    articleTitle,
+    instrumentNo,
   ]
     .filter(Boolean)
     .join(' ');
@@ -779,6 +932,26 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     amendment_events: amendmentEvents.length ? JSON.stringify(amendmentEvents) : null,
     has_defect: defect.has,
     defect_kind: defect.kind,
+    law_status: lawStatus,
+    law_status_raw: str(o.status_raw) || null,
+    law_status_source: str(o.law_status_source) || null,
+    law_repealed: lawRepealed,
+    law_pending: lawPending,
+    law_effective_from: lawEffectiveFrom,
+    scheduled_repeal_from: scheduledRepealFrom,
+    kept_after_repeal: keptAfterRepeal,
+    published_hijri: str(o.published_hijri) || null,
+    published_gregorian: str(o.published_gregorian) || null,
+    instruments: parseInstruments(o.instruments),
+    is_attachment: isAttachment,
+    attachment_of: attachmentOf,
+    has_attachment: truthy(o.has_attachment) ? 1 : 0,
+    text_from_attachment: truthy(o.text_from_attachment) ? 1 : 0,
+    amend_link: str(o.amend_link) || null,
+    former_article_no: formerArticleNo,
+    former_article_no_norm: normalizeArticleNo(formerArticleNo),
+    is_annex: isAnnex,
+    is_mukarrar: isMukarrar,
     embed_text: embedText,
     text_norm: normalizeArabic(text),
     book_norm: normalizeArabic(str(o.book)) || null,
@@ -794,6 +967,63 @@ function str(v: unknown): string {
   if (typeof v === 'string') return v.trim();
   if (typeof v === 'number' || typeof v === 'boolean') return String(v).trim();
   return '';
+}
+
+/**
+ * هل ورد الحقل؟ الغائبُ والفارغ سواء (§3-9)، و`false` واردٌ لا غائب: قولٌ
+ * صريحٌ بالنفي لا يُستبدل به ما يُقرأ من غيره.
+ */
+function present(v: unknown): boolean {
+  if (v == null) return false;
+  if (typeof v === 'string') return v.trim() !== '';
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+
+/** الحقل المنطقيّ إن ورد، وإلا ما يُقرأ من غيره. */
+function explicitOr(v: unknown, fallback: boolean): boolean {
+  return present(v) ? truthy(v) : fallback;
+}
+
+/** تاريخ اليوم ميلادياً `YYYY-MM-DD` — تاريخُ الخادم كما يُقارَن في SQL. */
+function gregorianToday(now = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+/**
+ * تاريخٌ ميلاديّ لا غير — لحقلين تُبنى عليهما حالُ المادة (§3-10).
+ *
+ * `law_effective_from` و`scheduled_repeal_from` يُقارَنان بتاريخ الخادم وقت
+ * الاستعلام، والمقارنة نصّية: `1448/01/01` أصغرُ نصّاً من `2026-09-22` فتُلغى
+ * المادة في غير يومها لو حُفظ هجريٌّ هنا. فيُرفض السطر برمزه ولا يُحفظ ما
+ * لا يُقارَن — بخلاف `issue_date` الذي يُعرض ولا يُبنى عليه شيء.
+ */
+function gregorianOnly(v: unknown, field: string): string | null {
+  const d = parseDate(v, field);
+  if (d.hijri) {
+    throw new ChunkError(`bad_date:${field}`, `\`${field}\` ميلاديٌّ بصيغة YYYY-MM-DD — ورد هجرياً: ${d.hijri}`);
+  }
+  return d.gregorian;
+}
+
+/**
+ * أدوات الإصدار كلُّها — مرسومٌ وقرارُ مجلس وزراء معاً. للعرض وحده، فما لم
+ * يكن مصفوفةً يُترك ولا يُرفض لأجله سطر.
+ */
+function parseInstruments(v: unknown): string | null {
+  if (!Array.isArray(v) || !v.length) return null;
+  const out = v
+    .filter((x) => x && typeof x === 'object')
+    .map((x) => {
+      const o = x as Record<string, unknown>;
+      return {
+        type: str(o.type) || null,
+        no: str(o.no) || null,
+        date_hijri: str(o.date_hijri) || null,
+        raw: str(o.raw) || null,
+      };
+    });
+  return out.length ? JSON.stringify(out) : null;
 }
 
 /** نوع الأداة كما يُخزَّن، أو `null` إن لم يُعرف اللفظ. */
@@ -1227,8 +1457,12 @@ const UPSERT_SQL = `
     has_amendments, amendment_kind, amendment_kind_norm, amendment_applied, needs_review,
     amendment_instrument, amended_on, amendments_count, amendments_raw, amend_note,
     retrieval_status, retrieval_warning, text_versions, amendment_events, has_defect, defect_kind,
+    law_status, law_status_raw, law_status_source, law_repealed, law_pending, law_effective_from,
+    scheduled_repeal_from, kept_after_repeal, published_hijri, published_gregorian, instruments,
+    is_attachment, attachment_of, has_attachment, text_from_attachment, amend_link,
+    former_article_no, former_article_no_norm, is_annex, is_mukarrar,
     embed_text, text_norm, book_norm, handle_norm, meta_json, embed_hash, embedded_at, imported_at, updated_at
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)
+  ) VALUES (${Array(47).fill('?').join(',')},${Array(20).fill('?').join(',')},?,?,?,?,?,?,NULL,?,?)
   ON CONFLICT(id) DO UPDATE SET
     law_id = excluded.law_id,
     parent_law_id = excluded.parent_law_id,
@@ -1281,6 +1515,26 @@ const UPSERT_SQL = `
     amendment_events = excluded.amendment_events,
     has_defect = excluded.has_defect,
     defect_kind = excluded.defect_kind,
+    law_status = excluded.law_status,
+    law_status_raw = excluded.law_status_raw,
+    law_status_source = excluded.law_status_source,
+    law_repealed = excluded.law_repealed,
+    law_pending = excluded.law_pending,
+    law_effective_from = excluded.law_effective_from,
+    scheduled_repeal_from = excluded.scheduled_repeal_from,
+    kept_after_repeal = excluded.kept_after_repeal,
+    published_hijri = excluded.published_hijri,
+    published_gregorian = excluded.published_gregorian,
+    instruments = excluded.instruments,
+    is_attachment = excluded.is_attachment,
+    attachment_of = excluded.attachment_of,
+    has_attachment = excluded.has_attachment,
+    text_from_attachment = excluded.text_from_attachment,
+    amend_link = excluded.amend_link,
+    former_article_no = excluded.former_article_no,
+    former_article_no_norm = excluded.former_article_no_norm,
+    is_annex = excluded.is_annex,
+    is_mukarrar = excluded.is_mukarrar,
     embed_text = excluded.embed_text,
     text_norm = excluded.text_norm,
     book_norm = excluded.book_norm,
@@ -1430,6 +1684,10 @@ export async function upsertLegalChunks(
           r.amendment_instrument, r.amended_on, r.amendments_count, r.amendments_raw, r.amend_note,
           r.retrieval_status, r.retrieval_warning, r.text_versions, r.amendment_events,
           r.has_defect, r.defect_kind,
+          r.law_status, r.law_status_raw, r.law_status_source, r.law_repealed, r.law_pending, r.law_effective_from,
+          r.scheduled_repeal_from, r.kept_after_repeal, r.published_hijri, r.published_gregorian, r.instruments,
+          r.is_attachment, r.attachment_of, r.has_attachment, r.text_from_attachment, r.amend_link,
+          r.former_article_no, r.former_article_no_norm, r.is_annex, r.is_mukarrar,
           r.embed_text, r.text_norm, r.book_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now
         )
       )

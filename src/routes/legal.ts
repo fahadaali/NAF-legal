@@ -121,6 +121,10 @@ app.post('/import', requireAdmin, async (c) => {
     // لا يجد المحامي أثره في البحث ولا يعرف لماذا.
     needs_review: parsed.needsReview,
     amendment_pending: parsed.amendmentPending,
+    // ما لم يمرّ بختم الحالة — آخر خطوةٍ في سلسلة المُرسِل، وفيها تُطوى حالُ
+    // النظام في `retrieval_status`. يُقال ولا يُرفض: ملفّات ما قبل الإصدار
+    // الرابع لا ختم فيها، وملفٌّ فاته الختم قد يُدخل مادةً من نظامٍ لاغٍ «نافذة».
+    unstamped: parsed.unstamped,
   };
 
   if (dryRun) {
