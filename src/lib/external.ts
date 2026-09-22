@@ -173,6 +173,14 @@ export interface SourceOutcome {
   hits: ExternalHit[];
   /** سببُ التعذّر — يُعرض للمسؤول في لوحة الإدارة لا للمستخدم في الشاشة. */
   error?: string;
+  /**
+   * عنوانُ وثيقة الموارد حين يدلّ ٤٠١ عليه — أي حين يكون الخادم على OAuth.
+   *
+   * يمرّ كما هو إلى المنادي ولا يُفسَّر هنا: `searchSource` تبحث، ومن أراد
+   * أن يسبر بابَ التفويض سبره بنفسه (`lib/discover.ts`). وخلطُ السبر
+   * بالبحث يجعل كلَّ استعلامٍ فقهيّ يجلب وثيقتين.
+   */
+  resourceMetadata?: string;
 }
 
 /** يبحث في مصدرٍ واحد. ولا يرمي: الحالُ تُوصَف في `status`. */
@@ -204,6 +212,7 @@ export async function searchSource(
       status: outcome.kind === 'config' ? 'unconfigured' : 'unreachable',
       hits: [],
       error: outcome.message,
+      ...(outcome.resourceMetadata ? { resourceMetadata: outcome.resourceMetadata } : {}),
     };
   }
   return { ...base, status: 'ok', hits: adapt(source, outcome.data) };

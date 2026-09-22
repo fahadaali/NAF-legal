@@ -15,6 +15,7 @@ import {
 import { uuid } from '../lib/crypto';
 import { listSources, getSource, recordCheck } from '../lib/sources';
 import { searchSource } from '../lib/external';
+import { discoverAuth } from '../lib/discover';
 import { notify } from '../lib/notify';
 import type { Env, Variables } from '../types';
 
@@ -418,9 +419,32 @@ app.post('/sources/:id/test', async (c) => {
     return c.json({ ok: false, status: 'unconfigured', error: 'لا عنوان للمصدر' });
   }
   const outcome = await searchSource(c.env, source, 'الإجارة');
-  await recordCheck(c.env, id, outcome.status, outcome.error ?? null);
-  await audit(c, 'external_source.test', id, { status: outcome.status });
-  return c.json({ ok: outcome.status === 'ok', status: outcome.status, error: outcome.error, hits: outcome.hits.length });
+
+  /* وحين يدلّ ٤٠١ على وثيقة موارد فالخادم على OAuth، ورسالةُ التعذّر تقول
+     ذلك ولا تقول أكثر. فيُسبَر البابُ هنا وحده — في الفحص الذي يطلبه
+     المسؤول صراحةً، لا في كلّ استعلامٍ فقهيّ — ويُعرض ما وراءه: أيُّ خادمٍ
+     يُفوّض، وأيَّ نطاقاتٍ يطلب، وهل يقبل تسجيلاً ديناميّاً.
+     وسقوطُ المسبار لا يمسّ النتيجة: تبقى كما كانت، ويُقرأ سببُها كما كان. */
+  const discovered = outcome.resourceMetadata
+    ? await discoverAuth(outcome.resourceMetadata, source.timeoutMs, source.endpoint)
+    : null;
+
+  /* ويُقيَّد في الصفّ سطرٌ واحد — اسمُ خادم التفويض — لا الوثيقةُ كلُّها:
+     `last_error` تُقرأ في الشاشة بعد إعادة التحميل، وإغراقُها بجسمٍ كامل
+     يُخفي الجملة التي تقول ما يُفعل. والتفصيلُ يعود في ردّ هذا الطلب. */
+  const server = discovered?.issuer ?? discovered?.authorizationServers[0];
+  const note = server
+    ? [outcome.error, `خادم التفويض: ${server}`].filter(Boolean).join(' · ')
+    : (outcome.error ?? null);
+  await recordCheck(c.env, id, outcome.status, note);
+  await audit(c, 'external_source.test', id, { status: outcome.status, oauth: !!discovered });
+  return c.json({
+    ok: outcome.status === 'ok',
+    status: outcome.status,
+    error: outcome.error,
+    hits: outcome.hits.length,
+    discovered,
+  });
 });
 
 // ── خلاصة أخبار جريدة أم القرى (§5) ──

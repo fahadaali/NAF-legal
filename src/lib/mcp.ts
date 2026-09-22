@@ -49,6 +49,14 @@ export interface McpFail {
   /** `transport` عطلُ شبكة أو حالة · `protocol` خطؤنا · `tool` رفضُ الأداة. */
   kind: 'transport' | 'protocol' | 'tool' | 'config';
   message: string;
+  /**
+   * عنوانُ وثيقة الموارد المحمية حين يدلّ عليه تحدّي ٤٠١ (RFC 9728).
+   *
+   * ووجودُه هو الفارق بين «اضبط رمزاً» و«ابدأ تفويضاً»: خادمٌ على OAuth
+   * يدلّ على وثيقته، ومنها يُعرف خادمُ تفويضه ونطاقاتُه. وكان يُبتلع في
+   * جملةٍ تُقرأ ولا يُفعل بها شيء — فصار حقلاً يُقرأ آلياً.
+   */
+  resourceMetadata?: string;
 }
 export type McpOutcome = McpOk | McpFail;
 
@@ -212,6 +220,7 @@ async function handshake(
       ok: false,
       kind: authFailure ? 'config' : 'transport',
       message: authFailure ? `مصافحة ${authProblem(res, !!token)}` : `initialize ${res.status}`,
+      ...(authFailure ? { resourceMetadata: resourceMetadataUrl(res) ?? undefined } : {}),
     };
   }
   if (body?.error) return { ok: false, kind: 'protocol', message: body.error.message ?? 'initialize error' };
@@ -308,6 +317,7 @@ export async function callTool(
         ok: false,
         kind: authFailure ? 'config' : 'transport',
         message: authFailure ? `${tool} ${authProblem(res, !!token)}` : `${tool} ${res.status}`,
+        ...(authFailure ? { resourceMetadata: resourceMetadataUrl(res) ?? undefined } : {}),
       };
     }
     if (body?.error) return { ok: false, kind: 'protocol', message: body.error.message ?? 'خطأ بروتوكول' };
@@ -368,6 +378,29 @@ function textOf(result: any): string {
  *
  * والفرق بينهما هو الفرق بين دقيقةٍ ومشروع، فيُقال للمسؤول في شاشته.
  */
+/**
+ * عنوانُ وثيقة الموارد من تحدّي ٤٠١ — أو `null`.
+ *
+ * والمعامل يأتي مقتبساً في العادة (`resource_metadata="https://…"`) وقد يأتي
+ * عارياً، فيُقرأ الشكلان. و**`https` وحدها تُقبل**: العنوان يأتي من الخادم
+ * لا منّا، ومتابعةُ ما يُملى علينا على `http` تُرسل ترويساتِنا بلا تعمية.
+ */
+function resourceMetadataUrl(res: Response): string | null {
+  const challenge = res.headers.get('www-authenticate');
+  if (!challenge) return null;
+  const m =
+    /resource_metadata\s*=\s*"([^"]+)"/i.exec(challenge) ??
+    /resource_metadata\s*=\s*([^\s,]+)/i.exec(challenge);
+  const raw = m?.[1]?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function authProblem(res: Response, sentToken: boolean): string {
   const parts = [`${res.status}`];
   parts.push(sentToken ? 'والرمز المرسَل مرفوض' : 'ولم يُرسَل رمز');
