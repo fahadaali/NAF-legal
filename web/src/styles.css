@@ -748,6 +748,10 @@ a { color: var(--primary); }
   border-radius: var(--radius-lg); font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 600;
 }
 .intake-toggle .seg.on { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
+/* صفُّ رقاقاتٍ يطول بطول المصادر المربوطة — فيلتفّ.
+   والمُحوِّر على صفّ البحث وحده: صفُّ نافذة البدء رقاقتان ثابتتان، وتغييرُه
+   تغييرٌ في شاشةٍ لم يُطلب. */
+.intake-toggle.wrap { flex-wrap: wrap; }
 .modal-foot {
   display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-4); border-top: 1px solid var(--border);
   background: var(--card);

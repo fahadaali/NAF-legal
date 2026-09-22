@@ -79,7 +79,7 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
           />
         </div>
 
-        <div className="intake-toggle">
+        <div className="intake-toggle wrap">
           {[...INTERNAL_SCOPES, ...known].map(([s, label]) => (
             <button key={s} className={`seg ${scope === s ? 'on' : ''}`} onClick={() => setScope(s)}>
               {label}
