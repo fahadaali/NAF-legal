@@ -124,7 +124,16 @@ app.get('/', async (c) => {
     // المقاطع المستوردة: فهرسٌ لفظيّ مطبَّع عربياً — والتصفية على السريان
     // فيه كما في كل مسار، فلا يُعرض للمستخدم نصٌّ منسوخ.
     try {
-      articles = await searchLegal(c.env, q, { limit: LIMIT, lexicalOnly: true });
+      // ومرشّحاتُ المواد (§6-1) — النظام والنوع والباب، و«تشمل الملغاة» للباحث
+      // القانوني. تُمرَّر إلى طبقة الاسترجاع فتُصفّى هناك كما يُصفّى كل نداء.
+      articles = await searchLegal(c.env, q, {
+        limit: LIMIT,
+        lexicalOnly: true,
+        lawId: c.req.query('law_id') || null,
+        docType: c.req.query('doc_type') || null,
+        book: c.req.query('book') || null,
+        includeRepealed: c.req.query('include_repealed') === '1',
+      });
     } catch {
       articles = [];
     }

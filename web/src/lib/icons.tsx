@@ -16,6 +16,9 @@ import {
   Ban,
   BookX,
   Boxes,
+  CalendarClock,
+  CalendarX,
+  Pin,
   ClipboardPaste,
   Copy,
   Import as ImportIcon,
@@ -176,6 +179,11 @@ export const Icon = {
   amendmentLog: FileDiff,   // سجل التعديلات — ما فُعل بالمادة، وليست History (ما صارت إليه)
   versionTimeline: HistoryIcon, // الخط الزمني — «سجلّ النسخ» المسجَّلة أصلاً
   originalText: FileClock,  // الأصل — نصٌّ من زمنٍ مضى، وليست Archive (فعلُ الأرشفة)
+  // حالُ النظام من بطاقته — naf-icons.md تحت «حالُ الاسترجاع ونافذة سجلّ التعديلات».
+  repealedLaw: BookX,       // نظام لاغٍ — معنى «ملغاة» نفسه على النظام كلِّه
+  lawPending: CalendarClock, // لم يبدأ العمل به — أجلٌ قادمٌ يبدأ عنده، ولا Hourglass (مؤجَّلة)
+  scheduledRepeal: CalendarX, // تُلغى في ‹التاريخ› — أجلٌ يقطع ما كان جارياً
+  keptAfterRepeal: Pin,     // مستبقاة بعد إلغاء النظام — ثُبِّتت وقد زال ما حولها
   copy: Copy,               // نسخ
   externalLink: ExternalLink, // رابط خارجي — الوجهة خارج النظام
   // التحديد داخل المحادثة — naf-icons.md: «تظليل النصّ» تحت «التنسيق داخل

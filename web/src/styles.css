@@ -584,10 +584,16 @@ a { color: var(--primary); }
 .data-table tr { transition: background 0.15s; }
 .data-table tbody tr:hover td { background: var(--muted); }
 .pill { padding: var(--space-1) var(--space-2); border-radius: var(--radius-lg); font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 700; display: inline-flex; align-items: center; gap: var(--space-1); }
-.pill.active, .pill.ready { background: var(--success-soft); color: var(--success-strong); }
+.pill.active, .pill.ready, .pill.success { background: var(--success-soft); color: var(--success-strong); }
 .pill.warn { background: var(--warning-soft); color: var(--warning-strong); }
 .pill.error { background: var(--destructive-soft); color: var(--destructive-strong); }
 .pill.pending { background: var(--muted); color: var(--muted-foreground); }
+/* التصنيف ليس حالة (naf-icons.md): حدٌّ ونصٌّ بلون المتن، بلا خلفيةٍ ولا لون
+   حالة — «الرقم السابق» يصف المادة ولا يحذّر منها. */
+.pill.outline { background: transparent; color: var(--foreground); border: 1px solid var(--border); font-weight: 500; }
+/* تاريخٌ في وسمٍ لا ينكسر في منتصفه: «(1448/06/21» في سطرٍ و«هـ)» في آخر
+   يُقرأ تاريخين. والوسمُ ينكسر قبله إن ضاق. */
+.pill-date { white-space: nowrap; }
 .user-add-row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-2); }
 .user-add-row input, .user-add-row select {
   padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--input);
@@ -889,6 +895,20 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .legal-article p + p { margin-top: var(--space-3); }
 /* عنوان المادة يتبع رقمها ولا ينافسه: «التعريفات» بعد «المادة 1». */
 .legal-article-title { color: var(--muted-foreground); font-weight: 400; }
+/* المرفق تحت مادته بعنوانه (§7-2): حدٌّ على جانب البداية يقول إنه منها لا مادةٌ
+   تليها، ومطويٌّ إن طال فلا يُبعد القارئ عمّا فتح. */
+.legal-attachment {
+  margin-top: var(--space-3); padding-inline-start: var(--space-3);
+  border-inline-start: 2px solid var(--border);
+}
+.legal-attachment summary {
+  cursor: pointer; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 500;
+}
+.legal-attachment > * + * { margin-top: var(--space-2); }
+/* رابطُ المصدر في ذيل البطاقة — سطرٌ بمقاس الشارة لا بمقاس المتن. */
+.legal-source { margin-top: var(--space-2); font-size: var(--text-sm); line-height: var(--text-sm--line-height); }
+.legal-source a { display: inline-flex; align-items: center; gap: var(--space-1); }
 /* ── تنبيه المادة ──
    يُقرأ قبل النصّ لا بعده: ما يقع تحت النصّ يبلغه القارئ بعد أن ينسخه.
    واللون وحده لا يقول شيئاً — معه أيقونة «تحذير» ونصُّ التنبيه كاملاً. */
@@ -1073,6 +1093,13 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .review-raw del, .review-raw ins { padding-inline: var(--space-1); border-radius: var(--radius-sm); }
 .review-raw del { background: var(--destructive-soft); color: var(--destructive-strong); text-decoration: line-through; }
 .review-raw ins { background: var(--success-soft); color: var(--success-strong); text-decoration: underline; }
+/* الاعتماد السابق — أثرُ قرارٍ أسقطته دفعةٌ لاحقة. يُفصل عن الألواح بحدٍّ
+   وبعنوانه لا بلون: ليس تحذيراً، بل سياقٌ لقرارٍ يُعاد على الفرق. */
+.review-prior { border-top: 1px solid var(--border); padding-top: var(--space-3); margin-block: var(--space-3); }
+.review-prior-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block: 0 var(--space-2);
+  color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height);
+}
 .review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block: var(--space-3); }
 .review-actions .compare-label { margin-bottom: 0; }
 /* قيمةُ القيد قد تكون مادةً كاملة: تُقصّ في الجدول ولا تمدّه، ويُقرأ كاملُها

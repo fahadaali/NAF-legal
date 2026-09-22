@@ -17,12 +17,17 @@ import {
   getArticle,
   getChunkAmendment,
   getChunkById,
+  hiddenReason,
+  withAttachments,
   listLaws,
   listLawArticles,
+  listLawBooks,
   listReviewQueue,
   listReviewQueueIds,
+  listReviewKinds,
   listBatchOrphans,
   deleteOrphans,
+  listImports,
   listRevertableBatches,
   planRevert,
   revertLaw,
@@ -31,7 +36,7 @@ import {
   reviewChunk,
   reviewChunks,
   reviewDashboard,
-  resolveLawIdByTitle,
+  resolveLawByTitle,
   BULK_LIMIT,
   getLawWithRegulations,
   legalStats,
@@ -121,6 +126,10 @@ app.post('/import', requireAdmin, async (c) => {
     // لا يجد المحامي أثره في البحث ولا يعرف لماذا.
     needs_review: parsed.needsReview,
     amendment_pending: parsed.amendmentPending,
+    // ما لم يمرّ بختم الحالة — آخر خطوةٍ في سلسلة المُرسِل، وفيها تُطوى حالُ
+    // النظام في `retrieval_status`. يُقال ولا يُرفض: ملفّات ما قبل الإصدار
+    // الرابع لا ختم فيها، وملفٌّ فاته الختم قد يُدخل مادةً من نظامٍ لاغٍ «نافذة».
+    unstamped: parsed.unstamped,
   };
 
   if (dryRun) {
@@ -147,6 +156,8 @@ app.post('/import', requireAdmin, async (c) => {
     importId,
     correction,
     batchId: batchId ?? undefined,
+    // صاحبُ الدفعة يُقيَّد على قرارات المراجعة التي أسقطتها — كلُّ تغييرٍ بصاحبه.
+    actorId: c.get('user').id,
   });
 
   const full = {
@@ -213,7 +224,32 @@ app.post('/finalize', requireAdmin, async (c) => {
   if (!batchId) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
 
   const orphans = await listBatchOrphans(c.env, batchId);
-  if (!c.req.query('apply')) return c.json({ ok: true, applied: false, orphans, count: orphans.length });
+  /* **ولا حذف على دفعةٍ تُخطّيت منها أسطر.** السطر المتخطّى لم يُكتب، فمعرّفُه
+     غائبٌ عن الدفعة وحاضرٌ في القاعدة — والحذف على هذا الظنّ يمحو مادةً لم
+     يُسقطها المصدر، بل أسقطها فحصُ خانة. والحارس هنا لا في الشاشة وحدها: السكربت
+     والأتمتة يصلان هذا المسار مباشرةً. */
+  const skipped =
+    (
+      await c.env.DB.prepare('SELECT COALESCE(SUM(failed), 0) AS n FROM legal_imports WHERE batch_id = ?')
+        .bind(batchId)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+  if (!c.req.query('apply')) {
+    return c.json({ ok: true, applied: false, orphans, count: orphans.length, skipped });
+  }
+  if (skipped > 0) {
+    return c.json(
+      {
+        ok: false,
+        applied: false,
+        orphans,
+        count: orphans.length,
+        skipped,
+        error: 'لم يُعرض حذف ما غاب عن الملف: تُخطّيت منه أسطر، والغائب قد يكون ما تُخطّي',
+      },
+      409
+    );
+  }
 
   const importId = uuid();
   const deleted = await deleteOrphans(c.env, orphans.map((o) => o.id), {
@@ -274,7 +310,16 @@ app.post('/revert', requireAdmin, async (c) => {
   return c.json({ ok: true, applied: true, ...result, plan });
 });
 
-app.get('/stats', requireAdmin, async (c) => c.json(await legalStats(c.env)));
+/**
+ * صحّة القاعدة — عدٌّ حيّ يُقابَل ببيان آخر دفعة.
+ *
+ * و`vectors=1` يسأل الفهرس المتجهي نفسه عن عدده ويقابله بسجلاته (§6-7). وهو
+ * بطلبٍ صريح لا مع كل جسّ: شريط الحال يجسّ كل خمس ثوانٍ، وسؤالُ الفهرس نداءٌ
+ * خارج القاعدة لا يستحقّ هذا الإيقاع.
+ */
+app.get('/stats', requireAdmin, async (c) =>
+  c.json(await legalStats(c.env, { vectors: c.req.query('vectors') === '1' }))
+);
 
 /**
  * سجلّ الدفعات — وأثرُ كلٍّ: مضاف ومحدَّث ومحذوف.
@@ -283,14 +328,7 @@ app.get('/stats', requireAdmin, async (c) => c.json(await legalStats(c.env)));
  * المُرسِل. ومعرّفُ الدفعة يجمع أجزاء الملف الواحد، فيُقرأ سجلُّها سطراً
  * واحداً لا خمسةَ أسطر لملفٍ قُسِّم خمساً.
  */
-app.get('/imports', requireAdmin, async (c) => {
-  const rows = await c.env.DB.prepare(
-    `SELECT id, actor_id, filename, lines, inserted, updated, failed, deleted,
-            file_sha256, batch_id, created_at, kind
-     FROM legal_imports ORDER BY created_at DESC LIMIT 50`
-  ).all();
-  return c.json({ imports: rows.results });
-});
+app.get('/imports', requireAdmin, async (c) => c.json({ imports: await listImports(c.env) }));
 
 /**
  * ما ينتظر المراجعة البشرية.
@@ -305,6 +343,7 @@ app.get('/review', requireAdmin, async (c) => {
     lawId: c.req.query('law_id') ?? null,
     capturedAt: c.req.query('captured_at') ?? null,
     docType: c.req.query('doc_type') ?? null,
+    amendmentKind: c.req.query('amendment_kind') ?? null,
     offset: Number(c.req.query('offset') ?? 0),
     limit: Number(c.req.query('limit') ?? 25),
   });
@@ -318,6 +357,7 @@ app.get('/review/dashboard', requireAdmin, async (c) =>
       lawId: c.req.query('law_id') ?? null,
       capturedAt: c.req.query('captured_at') ?? null,
       docType: c.req.query('doc_type') ?? null,
+      amendmentKind: c.req.query('amendment_kind') ?? null,
     })
   )
 );
@@ -336,12 +376,27 @@ app.get('/review/ids', requireAdmin, async (c) =>
       lawId: c.req.query('law_id') ?? null,
       capturedAt: c.req.query('captured_at') ?? null,
       docType: c.req.query('doc_type') ?? null,
+      amendmentKind: c.req.query('amendment_kind') ?? null,
     })
   )
 );
 
 /** دفعات الاستيراد المتاحة للترشيح. */
 app.get('/review/batches', requireAdmin, async (c) => c.json({ batches: await listCaptureBatches(c.env) }));
+
+/**
+ * أنواع التعديل في الطابور — لقائمة المرشّح (§6-3)، حيّةً من القاعدة بعدد ما
+ * ينتظر من كلٍّ. ومرشّحات الطابور الأخرى تحصرها، فلا يُعرض نوعٌ لا مادة له.
+ */
+app.get('/review/kinds', requireAdmin, async (c) =>
+  c.json({
+    kinds: await listReviewKinds(c.env, {
+      lawId: c.req.query('law_id') ?? null,
+      capturedAt: c.req.query('captured_at') ?? null,
+      docType: c.req.query('doc_type') ?? null,
+    }),
+  })
+);
 
 /** سجلّ التدقيق: لمادةٍ بعينها بـ`?chunk_id=`، أو آخر ما وقع في المنصة. */
 app.get('/review/audit', requireAdmin, async (c) =>
@@ -433,6 +488,8 @@ app.get('/search', async (c) => {
     lawId: c.req.query('law_id') ?? null,
     docType: c.req.query('doc_type') ?? null,
     articleNo: c.req.query('article_no') ?? null,
+    // الباب كما ورد في الملف — ويُطابَق مطبَّعاً في طبقة الاسترجاع (§6-1).
+    book: c.req.query('book') ?? null,
     withRegulations: c.req.query('with_regulations') !== '0',
     includeRepealed: c.req.query('include_repealed') === '1',
     // `lexical=1` يبحث بلا نموذج تضمين — لشاشات البحث المباشر.
@@ -454,15 +511,21 @@ app.get('/article', async (c) => {
   const id = c.req.query('id');
   if (id) {
     const hit = await getChunkById(c.env, id, includeRepealed);
-    if (hit) return c.json({ results: [hit], count: 1 });
+    if (hit) {
+      // ومرفقاتُها معها بعدها (§5-6): الاستشهاد يفتح المادة، والجدول الذي تحيل
+      // إليه في مرفقها — والتصفية نفسها تسري على المرفق.
+      const results = await withAttachments(c.env, [hit], {
+        lawId: hit.lawId,
+        withRegulations: false,
+        includeRepealed,
+      });
+      return c.json({ results, count: results.length });
+    }
     // موجودةٌ لكنها محجوبة: يُقال لماذا غابت بدل «غير موجودة» المضلّلة —
     // والسببان مختلفان، فمنسوخةٌ خرجت من النظام ومحجوبةٌ لم تُراجَع بعد.
-    const exists = await c.env.DB
-      .prepare('SELECT is_repealed, status, needs_review, reviewed_at FROM legal_chunks WHERE id = ?')
-      .bind(id)
-      .first<{ is_repealed: number; status: string; needs_review: number; reviewed_at: number | null }>();
-    if (!exists) return c.json({ error: 'المادة غير موجودة' }, 404);
-    if (exists.is_repealed === 1 || exists.status === 'repealed') {
+    const reason = await hiddenReason(c.env, id);
+    if (reason === 'missing') return c.json({ error: 'المادة غير موجودة' }, 404);
+    if (reason === 'repealed') {
       return c.json({ error: 'المادة منسوخة — أضِف include_repealed=1 للاطّلاع عليها', repealed: true }, 404);
     }
     return c.json(
@@ -473,7 +536,15 @@ app.get('/article', async (c) => {
 
   const articleNo = c.req.query('article_no');
   const lawTitle = c.req.query('law_title')?.trim();
-  const lawId = c.req.query('law_id') || (lawTitle ? await resolveLawIdByTitle(c.env, lawTitle) : null);
+  const byTitle = !c.req.query('law_id') && lawTitle ? await resolveLawByTitle(c.env, lawTitle) : null;
+  // الاسم يطابق نظامين: لا يُفتح أقربُهما، ويُقال لماذا (`naf-terms.md` — نافذة المصدر).
+  if (byTitle?.ambiguous) {
+    return c.json(
+      { error: 'في المنصة أكثر من نظام بهذا الاسم — افتح المادة من صفحة نظامها', ambiguous: true },
+      409
+    );
+  }
+  const lawId = c.req.query('law_id') || byTitle?.lawId || null;
   if (!lawId || !articleNo) {
     // عنوانٌ أُرسل ولم يُطابق نظاماً: السبب غيابُ النظام لا نقصُ المعاملات.
     if (lawTitle && articleNo) return c.json({ error: 'المادة غير موجودة' }, 404);
@@ -496,6 +567,9 @@ app.get('/laws/:lawId/articles', async (c) => {
   });
   return c.json({ articles, total });
 });
+
+/** أبوابُ نظامٍ بترتيب ورودها — لمرشّح الباب في البحث (§6-1). */
+app.get('/laws/:lawId/books', async (c) => c.json({ books: await listLawBooks(c.env, c.req.param('lawId')) }));
 
 /** سجلّ تحديث نظام: ما أُزيح من مواده ومتى وبأيّ حقل. */
 app.get('/laws/:lawId/changes', async (c) => {

@@ -9,7 +9,14 @@
 //
 // والتصفية على السريان تُطبَّق على المصدرين هنا — في طبقة الاسترجاع — لا في
 // الواجهة. فأيّ مسار: محادثة أو تقرير أو أتمتة أو واجهة برمجية، يمرّ بها.
-import { searchLegal, AMENDMENT_NOTICE, DEFERRED_NOTICE, EFFECTIVE_STATUSES, type LegalHit } from './legal';
+import {
+  searchLegal,
+  AMENDMENT_NOTICE,
+  DEFERRED_NOTICE,
+  EFFECTIVE_STATUSES,
+  RETRIEVAL_WARNING,
+  type LegalHit,
+} from './legal';
 import { embed } from './embed';
 import type { Env } from '../types';
 
@@ -83,6 +90,12 @@ export interface RagResult {
   /** تاريخ نفاذها لم يحلّ بعد — نصُّها سابقٌ لأوانه. */
   effectivePending?: boolean;
   effectiveFrom?: string;
+  /**
+   * نصُّ تحذيرها جاهزاً حين تكون حالُها «نافذ بتحذير» — من طبقة الاسترجاع لا
+   * مُركَّباً هنا: قد يكون تعديلاً لم يُدمج، وقد يكون نظاماً لم يبدأ العمل به
+   * بتاريخ نفاذه والنافذ قبله (§5-5).
+   */
+  retrievalWarning?: string;
 }
 
 /** ثابت دمج الرتب — كما في `lib/legal.ts`. */
@@ -148,7 +161,7 @@ function fromLegalHit(h: LegalHit): RagResult {
     score: h.score,
     documentId: h.id,
     title: h.lawTitle || h.lawId || 'نظام',
-    articleRef: h.articleNo ? `المادة ${h.articleNo}` : undefined,
+    articleRef: articleRefOf(h),
     key: `legal:${h.id}`,
     source: 'legal',
     lawId: h.lawId ?? undefined,
@@ -166,7 +179,22 @@ function fromLegalHit(h: LegalHit): RagResult {
     amendedOn: h.amendedOn ?? undefined,
     effectivePending: h.effectivePending,
     effectiveFrom: h.effectiveFrom ?? h.effectiveFromHijri ?? undefined,
+    retrievalWarning:
+      h.retrievalStatus === RETRIEVAL_WARNING ? (h.retrievalWarning ?? AMENDMENT_NOTICE) : undefined,
   };
+}
+
+/**
+ * ما يُستشهد به من موضع المادة.
+ *
+ * الملحق بعنوانه لا برقمه: رقمُه اصطلاحيّ (`1001`) للترتيب وحده، ولا مادةَ بهذا
+ * الرقم في أي نظام (§3-12) — والاستشهاد به يُحيل القاضي إلى ما لا وجود له.
+ * والمرفق بعنوانه كذلك («مرفق المادة 14»)، ومادة «مكرر» بعنوانها لا برقم أصلها
+ * فلا تُقرأ المادةَ الأصل.
+ */
+function articleRefOf(h: LegalHit): string | undefined {
+  if (h.isAnnex || h.isAttachment || h.isMukarrar) return h.articleLabel ?? undefined;
+  return h.articleNo ? `المادة ${h.articleNo}` : undefined;
 }
 
 /**
@@ -251,7 +279,7 @@ export function formatRagContext(results: RagResult[]): string {
   const blocks = results
     .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`)
     .join('\n\n---\n\n');
-  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا حاشيةٌ عليه — انقله مع الاستشهاد:\n\n${blocks}\n</سياق_نظامي>`;
+  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا حاشيةٌ عليه — انقله في متن الإجابة مع الاستشهاد لا في حاشيتها. وما نبّه التنبيه أن نصَّه أصليٌّ لم يُدمج تعديلُه فلا تصغ نصَّه النافذ من عندك: قل صراحةً إن النصّ النافذ غير متاح في قاعدة المعرفة، وأحِل إلى سجل التعديلات.\n\n${blocks}\n</سياق_نظامي>`;
 }
 
 /**
@@ -263,11 +291,18 @@ export function formatRagContext(results: RagResult[]): string {
  */
 function noticeLines(r: RagResult): string {
   const lines: string[] = [];
-  if (r.amendmentPending) {
-    const by = [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' — ');
-    lines.push(`تنبيه: ${AMENDMENT_NOTICE}${by ? ` (${by})` : ''}`);
+  // تحذيرُ الحال بنصّه كما جاء من طبقة الاسترجاع (§6-4): هو الذي يعرف سببه —
+  // تعديلٌ لم يُدمج أو نظامٌ لم يبدأ العمل به — ويذكر تاريخه والنافذ قبله.
+  // وكان التنبيه يُركَّب هنا من التعديل وحده، فتصل مادةُ نظامٍ لم يبدأ العمل به
+  // إلى البرومبت بلا تحذيرها وتُقرأ نافذة.
+  if (r.retrievalWarning) {
+    const by = r.amendmentPending ? [r.amendmentInstrument, r.amendedOn].filter(Boolean).join(' — ') : '';
+    lines.push(`تنبيه: ${r.retrievalWarning}${by ? ` (${by})` : ''}`);
   }
-  if (r.effectivePending) {
+  // ولا تحذيرَ يُشتقّ هنا من الحقول المنطقية (§3-4): مادةٌ صعّد مراجعٌ حالها
+  // بعد أن قرأ ألواحها كان الاشتقاق يعيد تحذيرها، فلا يبقى للاعتماد أثر. وما
+  // سبق عمودَ الحال اشتُقّت حالُه مرّةً في الهجرة 0030.
+  if (r.effectivePending && r.retrievalWarning !== DEFERRED_NOTICE) {
     lines.push(`تنبيه: ${DEFERRED_NOTICE}${r.effectiveFrom ? ` (${r.effectiveFrom})` : ''}`);
   }
   return lines.length ? `${lines.join('\n')}\n` : '';

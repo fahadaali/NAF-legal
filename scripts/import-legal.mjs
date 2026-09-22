@@ -121,6 +121,16 @@ async function comparefirst() {
     for (const g of r.error_summary ?? []) console.error(`  ${g.count} سطراً: ${g.error}`);
     process.exit(1);
   }
+  // والصارمُ صارمٌ على الملف كلِّه (§4-٦): المقارنة قرأت الأسطر كلَّها، فسطرٌ
+  // مرفوض في أيّ موضع يقف قبل أوّل كتابة — لا بعد أن تُكتب الأجزاء التي سبقته.
+  if (!partial && r.failed) {
+    console.error(`\nالملف رُفض: ${r.failed} سطراً غير صالح — لم يُكتب شيء.`);
+    for (const g of r.error_summary ?? []) {
+      const at = g.lines?.length ? ` (أسطر: ${g.lines.join(' · ')}…)` : '';
+      console.error(`  ${g.count} سطراً: ${g.error}${at}`);
+    }
+    process.exit(1);
+  }
   const d = r.diff ?? {};
   console.log('── المقارنة قبل الكتابة ──');
   console.log(`جديد ${d.added ?? 0} · متغيّر ${d.changed ?? 0} · بلا تغيير ${d.unchanged ?? 0} · غائب عن الملف ${d.missing ?? 0}`);
@@ -230,11 +240,18 @@ try {
     }
     if (seen.orphans.length > 20) console.log(`  … و${seen.orphans.length - 20} غيرها`);
 
-    if (!prune) {
+    if (seen.skipped) {
+      // السطر المتخطّى لم يُكتب، فمعرّفُه غائبٌ عن الدفعة وحاضرٌ في القاعدة:
+      // حذفُ «الغائب» هنا يمحو مادةً أسقطها فحصُ خانة لا المصدر. والخادم يرفضه
+      // أيضاً — وهذا يقوله قبل أن يُطلب.
+      console.log(`لم تُحذف: تُخطّي من الدفعة ${seen.skipped} سطراً، والغائب قد يكون ما تُخطّي.`);
+      console.log('أصلِح الأسطر المرفوضة وأعِد رفع الملف كاملاً، ثم احذف.');
+    } else if (!prune) {
       console.log('لم تُحذف. لحذفها — السجلّ ومتجهه — أعِد التشغيل مع --prune');
     } else {
       const done = await finalize(true);
-      console.log(`حُذف ${done.deleted}. ونصُّ كلٍّ محفوظٌ في سجلّ التحديث قبل ذهابه.`);
+      if (!done.applied) console.log(`لم تُحذف: ${done.error ?? 'رفض الخادم الحذف'}`);
+      else console.log(`حُذف ${done.deleted}. ونصُّ كلٍّ محفوظٌ في سجلّ التحديث قبل ذهابه.`);
     }
   }
 } catch (e) {

@@ -26,7 +26,7 @@ import { Icon, ICON_SM } from '../lib/icons';
 import { useScrollReset } from '../lib/scrollBox';
 import { docTypeLabel } from '../lib/labels';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
-import { ReviewStatusPill } from './LegalArticleView';
+import { ArticleName, LawTags, ReviewStatusPill } from './LegalArticleView';
 
 /**
  * أسماء الطوابير بترتيب أولويتها: ما يُفسد الاسترجاع أوّلاً.
@@ -67,6 +67,8 @@ export function LegalReview() {
   const [dash, setDash] = useState<ReviewDashboard | null>(null);
   const [laws, setLaws] = useState<LegalLaw[]>([]);
   const [batches, setBatches] = useState<{ captured_at: string; chunks: number }[]>([]);
+  /** أنواع التعديل في الطابور — حيّةً من القاعدة بعدد ما ينتظر من كلٍّ (§6-3). */
+  const [kinds, setKinds] = useState<{ kind: string; pending: number }[]>([]);
   const [articles, setArticles] = useState<LegalArticle[]>([]);
   const [total, setTotal] = useState(0);
   const [at, setAt] = useState(0);
@@ -91,6 +93,7 @@ export function LegalReview() {
 
   const load = useCallback(() => {
     api.legalReviewDashboard(filters).then(setDash).catch(() => {});
+    api.legalReviewKinds(filters).then((r) => setKinds(r.kinds)).catch(() => {});
     api
       .legalReviewQueue({ ...filters, queue }, 0, 25)
       .then((r) => {
@@ -107,7 +110,7 @@ export function LegalReview() {
      أعلاها. ولا تُعاد على `at`: بطاقة المادة أسفل الشاشة والمراجع ينظر
      إليها أصلاً، فإعادتُه إلى الأعلى مع كل «التالي» تُبعده عن عمله. */
   useScrollReset(
-    [queue ?? '', filters.lawId ?? '', filters.capturedAt ?? '', filters.docType ?? ''].join('|')
+    [queue ?? '', filters.lawId ?? '', filters.capturedAt ?? '', filters.docType ?? '', filters.amendmentKind ?? ''].join('|')
   );
 
   /* أخوات الرقم الواحد تُعرض مجتمعة: الحكم عليها لا يصحّ إلا كذلك — أهي مادة
@@ -137,6 +140,19 @@ export function LegalReview() {
     () => Array.from(new Set(laws.map((l) => l.doc_type).filter((t): t is string => !!t))).sort(),
     [laws]
   );
+
+  /* نظامان باسمٍ واحد يُفرَّق بينهما في القائمة بأداتهما وتاريخهما (§7-2):
+     مراجعةُ نظامٍ بعينه لا تصحّ وخياران بلفظٍ واحد. */
+  const lawOption = useMemo(() => {
+    const count = new Map<string, number>();
+    for (const l of laws) count.set(l.law_title || l.law_id, (count.get(l.law_title || l.law_id) ?? 0) + 1);
+    return (l: LegalLaw) => {
+      const title = l.law_title || l.law_id;
+      if ((count.get(title) ?? 0) < 2) return title;
+      const id = [[l.instrument, l.instrument_no].filter(Boolean).join(' '), l.issue_date_hijri].filter(Boolean).join(' — ');
+      return `${title} — ${id || l.law_id}`;
+    };
+  }, [laws]);
 
   const move = useCallback(
     (step: number) => setAt((i) => Math.max(0, Math.min(groups.length - 1, i + step))),
@@ -277,7 +293,7 @@ export function LegalReview() {
             <option value="">كل الأنظمة</option>
             {laws.map((l) => (
               <option key={l.law_id} value={l.law_id}>
-                {l.law_title || l.law_id}
+                {lawOption(l)}
               </option>
             ))}
           </select>
@@ -321,6 +337,26 @@ export function LegalReview() {
             ))}
           </select>
         </label>
+        {/* نوعُ التعديل كما ورد في الملف (§6-3). مفرداتُه تتغيّر بين إصدارات
+            الوثيقة، والطوابير مسمّاةٌ بأنواعٍ بعينها — فالقائمة من القاعدة، ولا
+            يبقى نوعٌ جديد بلا طريقٍ إليه. */}
+        <label className="import-option">
+          نوع التعديل
+          <select
+            value={filters.amendmentKind ?? ''}
+            onChange={(e) => {
+              setSeat({ queue, filters: { ...filters, amendmentKind: e.target.value || null } });
+              setAt(0);
+            }}
+          >
+            <option value="">كل الأنواع</option>
+            {kinds.map((k) => (
+              <option key={k.kind} value={k.kind}>
+                {k.kind} ({formatNumber(k.pending)})
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {total === 0 || !group ? (
@@ -330,7 +366,7 @@ export function LegalReview() {
           {/* التحديد يسقط بتغيّر الطابور أو المرشّحات: معرّفٌ حُدِّد تحت شرطٍ
               ثم تغيّر الشرط لم يعد ممّا يراه المراجع أمامه. */}
           <QueueList
-            key={`${queue ?? ''}|${filters.lawId ?? ''}|${filters.capturedAt ?? ''}|${filters.docType ?? ''}`}
+            key={`${queue ?? ''}|${filters.lawId ?? ''}|${filters.capturedAt ?? ''}|${filters.docType ?? ''}|${filters.amendmentKind ?? ''}`}
             groups={groups}
             total={total}
             at={at}
@@ -386,7 +422,7 @@ function ReviewEvents({ events }: { events: AmendmentEvent[] }) {
               <bdi>{[e.instrument, e.instrument_no].filter(Boolean).join(' ') || '—'}</bdi>
               {e.date_hijri ? <> · <bdi>{e.date_hijri}هـ</bdi></> : null}
             </span>
-            <span className={`pill ${e.applied ? 'success' : 'pending'}`}>
+            <span className={`pill ${e.applied ? 'ready' : 'warn'}`}>
               {e.applied ? (
                 <><Icon.approved size={ICON_SM} aria-hidden /> مطبَّق</>
               ) : (
@@ -581,7 +617,8 @@ function QueueList({
                   </td>
                   <td><bdi>{a.lawTitle || a.lawId}</bdi></td>
                   <td>
-                    <bdi>{a.articleNo ?? a.id}</bdi>
+                    {/* الملحق بعنوانه لا برقمه الاصطلاحيّ (§3-12). */}
+                    <ArticleName a={a} />
                     {a.duplicateOf ? <span className="pill pending">رقم مكرّر</span> : null}
                   </td>
                   <td className="audit-value"><bdi>{a.amendNote ?? a.amendmentKind ?? '—'}</bdi></td>
@@ -775,7 +812,8 @@ function ReviewHeading({ a }: { a: LegalArticle }) {
     a.lawTitle || a.lawId,
     [a.instrument, a.instrumentNo].filter(Boolean).join(' '),
     [a.book, a.chapter].filter(Boolean).join(' — '),
-    a.articleNo ? `المادة ${a.articleNo}` : '',
+    // الملحق والمرفق و«مكرر» بعناوينها — ورقمُ الملحق اصطلاحيّ لا يُعرض.
+    a.isAnnex || a.isAttachment || a.isMukarrar ? a.articleLabel : a.articleNo ? `المادة ${a.articleNo}` : '',
     a.articleTitle,
     [a.amendmentInstrument, a.amendedOn].filter(Boolean).join(' — '),
   ].filter(Boolean);
@@ -784,6 +822,7 @@ function ReviewHeading({ a }: { a: LegalArticle }) {
     <div className="law-head">
       <h3>
         <bdi>{a.lawTitle || a.lawId}</bdi>
+        <LawTags repealed={a.lawRepealed} pending={a.lawPending} from={a.lawEffectiveFrom} />
         <ReviewStatusPill status={a.reviewStatus} />
       </h3>
       <p>
@@ -883,6 +922,12 @@ function ArticlePanes({
         </>
       ) : null}
 
+      {/* الاعتمادُ السابق (§6-6): المادة اعتُمدت ثم أعاد رفعَها نصٌّ مختلف، فعادت
+          بأثر قرارها لا مصفَّرة. والنصُّ الذي اعتُمد مقابَلٌ بما يُراجَع الآن،
+          فيعيد المراجع قراره على الفرق لا على المادة كلِّها — وقد يكون ذلك
+          النصُّ تحريرَه هو. */}
+      {amendment?.prior_review ? <PriorReview prior={amendment.prior_review} draft={draft} /> : null}
+
       <div className="review-actions">
         <button className="btn-sm primary" disabled={busy} onClick={onCommit}>
           {changed ? 'تحرير واعتماد' : 'اعتماد'}
@@ -904,6 +949,31 @@ function ArticlePanes({
           </span>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** الاعتمادُ الذي أسقطته دفعةٌ غيّرت النصّ — ومن اعتمد ومتى وبأيّ نصّ. */
+function PriorReview({ prior, draft }: { prior: NonNullable<LegalAmendment['prior_review']>; draft: string }) {
+  return (
+    <div className="review-prior">
+      <div className="compare-label">الاعتماد السابق</div>
+      <p className="review-prior-meta">
+        <ReviewStatusPill status={prior.status} />
+        {prior.by ? <bdi>{prior.by}</bdi> : null}
+        {prior.at ? <bdi>{formatDate(prior.at)} {formatTime(prior.at)}</bdi> : null}
+      </p>
+      {prior.note ? (
+        <p>
+          <span className="compare-label">ملاحظة المراجع</span> <bdi>{prior.note}</bdi>
+        </p>
+      ) : null}
+      {prior.text ? (
+        <>
+          <div className="compare-label">النصّ الذي اعتُمد</div>
+          <DiffText from={prior.text} to={draft} />
+        </>
+      ) : null}
     </div>
   );
 }

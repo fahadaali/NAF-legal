@@ -290,6 +290,22 @@ export interface LegalStats {
   stale_vector: number;
   /** معطوبٌ محجوبٌ ينتظر البتّ. */
   defective: number;
+  /**
+   * الفهرس المتجهي مقابَلاً بسجلاته — يُطلب صراحةً (`legalStats(…, true)`).
+   * `actual` ما في الفهرس فعلاً، و`orphans` ما زاد فيه على سجلاته.
+   */
+  vectors?: { actual: number | null; expected: number; orphans: number | null };
+}
+
+/**
+ * مرشّحات مواد الأنظمة في البحث (§6-1 من وثيقة الاستيراد): النظام والنوع
+ * والباب، و«تشمل الملغاة» للباحث القانوني. والتصفية نفسها في طبقة الاسترجاع.
+ */
+export interface LegalSearchFilters {
+  lawId?: string | null;
+  docType?: string | null;
+  book?: string | null;
+  includeRepealed?: boolean;
 }
 
 /** نتيجة البحث في المنصة، مقسّمةً بمواضعها. */
@@ -405,6 +421,13 @@ export interface LegalLaw {
   chunks: number;
   effective: number;
   repealed: number;
+  /** حالُ النظام من بطاقته في البوابة كما وردت. */
+  law_status?: string | null;
+  /** النظام كلُّه لاغٍ — `1` أو `0`. */
+  law_repealed?: number;
+  /** لم يبدأ العمل به — مُقيَّماً بتاريخ اليوم. */
+  law_pending?: number;
+  law_effective_from?: string | null;
 }
 
 /** مادةٌ كما تُعرض — `text` وحده، ولا أثر لـ`embed_text`. */
@@ -460,6 +483,22 @@ export interface LegalArticle {
   amendedOn: string | null;
   amendmentsCount: number | null;
   amendNote: string | null;
+  // ── بطاقة النظام (§3-10) — مُقيَّمةً بتاريخ اليوم في طبقة الاسترجاع ──
+  lawStatus?: string | null;
+  lawRepealed?: boolean;
+  lawPending?: boolean;
+  lawEffectiveFrom?: string | null;
+  scheduledRepealFrom?: string | null;
+  keptAfterRepeal?: boolean;
+  // ── المرفقات والرقم السابق (§3-11) والملاحق (§3-12) ──
+  isAttachment?: boolean;
+  /** المادة الأم للمرفق — يُعرض تحتها. */
+  attachmentOf?: string | null;
+  hasAttachment?: boolean;
+  formerArticleNo?: string | null;
+  /** ملحقٌ لا مادة: يُعرض بعنوانه، ورقمُه الاصطلاحيّ لا يُعرض أبداً. */
+  isAnnex?: boolean;
+  isMukarrar?: boolean;
 }
 
 /** قرار المراجع على مادة. */
@@ -471,6 +510,8 @@ export interface ReviewFilters {
   lawId?: string | null;
   capturedAt?: string | null;
   docType?: string | null;
+  /** نوع التعديل كما ورد في الملف — من قائمة الأنواع الحيّة. */
+  amendmentKind?: string | null;
 }
 
 function reviewQuery(f: ReviewFilters, offset?: number, limit?: number): string {
@@ -479,6 +520,7 @@ function reviewQuery(f: ReviewFilters, offset?: number, limit?: number): string 
   if (f.lawId) p.set('law_id', f.lawId);
   if (f.capturedAt) p.set('captured_at', f.capturedAt);
   if (f.docType) p.set('doc_type', f.docType);
+  if (f.amendmentKind) p.set('amendment_kind', f.amendmentKind);
   if (offset !== undefined) p.set('offset', String(offset));
   if (limit !== undefined) p.set('limit', String(limit));
   return p.toString();
@@ -570,6 +612,19 @@ export interface LegalAmendment {
   source_url: string | null;
   versions: TextVersion[];
   events: AmendmentEvent[];
+  /** كيف رُبطت نوافذ التعديل — للتدقيق لا للعرض. */
+  amend_link?: string | null;
+  /**
+   * الاعتماد الذي أسقطته دفعةٌ غيّرت النصّ (§6-6)، والنصُّ الذي اعتُمد.
+   * `null` إن لم يسقط اعتمادٌ عن المادة.
+   */
+  prior_review?: {
+    status: string;
+    by: string | null;
+    at: number | null;
+    text: string | null;
+    note: string | null;
+  } | null;
 }
 
 /** مادةٌ تغيّر فيها شيء — القديم والجديد جنباً إلى جنب. */
@@ -615,7 +670,7 @@ export interface LegalChunkVersion {
   current_article_no: string | null;
 }
 
-/** دفعة استيراد كما سُجّلت. */
+/** ملفٌّ في سجلّ الاستيراد — أجزاؤه مجموعةٌ بمعرّف دفعته. */
 export interface LegalImportRecord {
   id: string;
   filename: string | null;
@@ -626,6 +681,13 @@ export interface LegalImportRecord {
   created_at: number;
   /** `correction` دفعةُ تصحيح بيانات · `import` استيرادٌ عاديّ. */
   kind: string | null;
+  /** ما حُذف في ختام الدفعة ممّا غاب عنها. */
+  deleted?: number;
+  /** بصمة الملف SHA-256 — تُطابَق ببصمة المُرسِل. */
+  file_sha256?: string | null;
+  batch_id?: string | null;
+  /** كم نداءً حمل الملف. */
+  parts?: number;
 }
 
 /** سطرٌ رُفض، برقمه في الملف وسببه. */
@@ -671,6 +733,8 @@ export interface LegalImportReport {
   needs_review?: number;
   /** موادّ عُدِّلت ونصُّها المعروض أصليّ. */
   amendment_pending?: number;
+  /** سجلاتٌ لم تمرّ بختم الحالة. */
+  unstamped?: number;
   pending_embeddings?: number;
   error?: string;
 }
@@ -811,7 +875,9 @@ export const api = {
   kbVersionTextUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/text`,
   kbVersionFileUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/file`,
   // المحتوى النظامي المستورد — عقد الاستيراد في docs/legal-import.md
-  legalStats: (background = false) => req<LegalStats>('/legal/stats', {}, background),
+  /** و`vectors` يسأل الفهرس المتجهي عن عدده — لصحّة القاعدة لا لجسّ الشريط. */
+  legalStats: (background = false, vectors = false) =>
+    req<LegalStats>(`/legal/stats${vectors ? '?vectors=1' : ''}`, {}, background),
   legalLaws: () => req<{ laws: LegalLaw[] }>('/legal/laws'),
   /** بحث المسؤول في المحتوى النظامي — لفظيّ بلا نموذج تضمين. */
   legalSearch: (q: string, limit = 20) =>
@@ -872,6 +938,21 @@ export const api = {
    * تُجلب لتعود صريحةً إلى مسار القرار: العدد الذي يراه المراجع قبل التأكيد
    * هو العدد الذي يقع عليه القرار، وكلُّ اعتماد يبقى مقيَّداً وحده.
    */
+  /** أنواع التعديل في الطابور بعدد ما ينتظر من كلٍّ — حيّةً من القاعدة. */
+  legalReviewKinds: (filters: ReviewFilters = {}) =>
+    req<{ kinds: { kind: string; pending: number }[] }>(`/legal/review/kinds?${reviewQuery({ ...filters, amendmentKind: null })}`),
+  /** أبوابُ نظامٍ بترتيب ورودها — لمرشّح الباب. */
+  legalLawBooks: (lawId: string) =>
+    req<{ books: string[] }>(`/legal/laws/${encodeURIComponent(lawId)}/books`),
+  /**
+   * ختام الدفعة: ما في القاعدة من أنظمتها ولم يرد فيها. وبـ`apply` يُحذف —
+   * والخادم يرفض الحذف على دفعةٍ تُخطّيت منها أسطر.
+   */
+  legalFinalize: (batch: string, apply = false) =>
+    req<{ ok: boolean; applied: boolean; count?: number; deleted?: number; skipped?: number; error?: string }>(
+      `/legal/finalize?${new URLSearchParams({ batch, ...(apply ? { apply: '1' } : {}) })}`,
+      { method: 'POST' }
+    ),
   legalReviewQueueIds: (filters: ReviewFilters = {}) =>
     req<{ ids: string[]; total: number; truncated: number }>(`/legal/review/ids?${reviewQuery(filters)}`),
   /**
@@ -906,7 +987,16 @@ export const api = {
   importLegal: async (
     lines: string[],
     filename: string,
-    opts: { buildEmbed?: boolean; partial?: boolean; dryRun?: boolean; correction?: boolean } = {}
+    opts: {
+      buildEmbed?: boolean;
+      partial?: boolean;
+      dryRun?: boolean;
+      correction?: boolean;
+      /** معرّف الدفعة يجمع أجزاء الملف: عليه تُؤخذ الصور ويُقاس اليتيم عند الختام. */
+      batch?: string;
+      /** بصمة الملف كاملاً — تُقيَّد في سجلّ الدفعات. */
+      sha256?: string;
+    } = {}
   ): Promise<LegalImportReport> => {
     const query = new URLSearchParams({
       filename,
@@ -914,6 +1004,8 @@ export const api = {
       ...(opts.partial ? { partial: '1' } : {}),
       ...(opts.dryRun ? { dry_run: '1' } : {}),
       ...(opts.correction ? { correction: '1' } : {}),
+      ...(opts.batch ? { batch: opts.batch } : {}),
+      ...(opts.sha256 ? { sha256: opts.sha256 } : {}),
     });
     const res = await fetch(`/api/legal/import?${query}`, {
       method: 'POST',
@@ -996,11 +1088,21 @@ export const api = {
    * و`folder` يحصره في قضية — للشريط الجانبي حين تكون شارةُ قضيةٍ مضاءة.
    * ولا يمسّ قاعدة المعرفة: تلك مشتركة لا تخصّ قضيةً بعينها.
    */
-  search: (q: string, scope = 'all', folder?: string, semantic = false) =>
-    req<PlatformSearch>(
+  search: (q: string, scope = 'all', folder?: string, semantic = false, legal: LegalSearchFilters = {}) => {
+    // مرشّحات مواد الأنظمة (§6-1) تُرسَل حين تُضبط وحدها: الافتراض «النافذة
+    // فقط» هو افتراض طبقة الاسترجاع نفسها، فلا يُكتب في الرابط.
+    const p = new URLSearchParams();
+    if (legal.lawId) p.set('law_id', legal.lawId);
+    if (legal.docType) p.set('doc_type', legal.docType);
+    if (legal.book) p.set('book', legal.book);
+    if (legal.includeRepealed) p.set('include_repealed', '1');
+    const extra = p.toString();
+    return req<PlatformSearch>(
       `/search?q=${encodeURIComponent(q)}&scope=${encodeURIComponent(scope)}` +
-        `${folder ? `&folder=${encodeURIComponent(folder)}` : ''}${semantic ? '&semantic=1' : ''}`
-    ),
+        `${folder ? `&folder=${encodeURIComponent(folder)}` : ''}${semantic ? '&semantic=1' : ''}` +
+        `${extra ? `&${extra}` : ''}`
+    );
+  },
 
   // بنك البنود
   clauses: (q?: string) => req<{ clauses: any[] }>(`/clauses${q ? `?q=${encodeURIComponent(q)}` : ''}`),

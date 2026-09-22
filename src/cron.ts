@@ -3,7 +3,7 @@
 import { callClaude, webSearchTool, TRACKING_DOMAINS } from './lib/claude';
 import { notify } from './lib/notify';
 import { dualDate } from './lib/hijri';
-import { embedPending } from './lib/legal';
+import { embedPending, vectorHealth, vectorCheck } from './lib/legal';
 import type { Env } from './types';
 
 /**
@@ -324,6 +324,8 @@ export async function runLegalEmbedding(env: Env): Promise<{
   missing_vector: number;
   /** ضُمِّن ولم يعد يستحقّ — يجب أن يبقى صفراً بعد التنظيف. */
   stale_vector: number;
+  /** في الفهرس المتجهي بلا سجلّ — `null` إن لم يُسأل الفهرس. */
+  orphan_vectors: number | null;
 }> {
   try {
     // دفعاتٌ متتابعة حتى ينتهي المعلَّق أو يبلغ السقف. دفعةٌ واحدة في الليلة
@@ -352,22 +354,31 @@ export async function runLegalEmbedding(env: Env): Promise<{
      * والفحص لا يُصلح بنفسه غير ما يملك إصلاحه: ما ينقصه متجه يُصرَّف في
      * الدورة التالية، وما زاد متجهُه يُحذف أعلاه. وما بقي بعدهما يُقال في
      * تقرير الدورة ليُرى — إصلاحٌ صامت لعطبٍ متكرّر يُخفي سببه. */
-    const health = await env.DB.prepare(
-      `SELECT SUM(CASE WHEN retrieval_status <> 'repealed' AND is_repealed = 0 AND embedded_at IS NULL
-                       THEN 1 ELSE 0 END) AS missing,
-              SUM(CASE WHEN (retrieval_status = 'repealed' OR is_repealed = 1) AND embedded_at IS NOT NULL
-                       THEN 1 ELSE 0 END) AS stale
-       FROM legal_chunks`
-    ).first<{ missing: number; stale: number }>();
+    // الشرط من `lib/legal.ts` لا مكتوبٌ هنا: كان يُكتب باليد فأغفل الإلغاء
+    // المجدول الذي حلّ يومه — ومقياسٌ بشرطٍ غير شرط التضمين يعدّ ما لا يُصلَح.
+    const health = await vectorHealth(env);
+    // والمتجه بلا سجلّ لا يُرى من القاعدة: يُسأل الفهرس عن عدده ويُقابَل بما
+    // وُسم مضمَّناً (§6-7). وعدُّ الفهرس يتأخّر ثوانيَ عن آخر كتابة، والدورة
+    // الليلية بعيدةٌ عن أيّ استيراد فقراءتُها أصدق ما يكون.
+    const check = await vectorCheck(env);
+
+    // ويُقال في سجلّ الدورة: إصلاحٌ صامت لعطبٍ متكرّر يُخفي سببه.
+    if (health.stale || check.orphans) {
+      console.warn(
+        'legal vector health:',
+        JSON.stringify({ stale_vector: health.stale, orphan_vectors: check.orphans, actual: check.actual, expected: check.expected })
+      );
+    }
 
     return {
       embedded,
       remaining,
       purged,
-      missing_vector: health?.missing ?? 0,
-      stale_vector: health?.stale ?? 0,
+      missing_vector: health.missing,
+      stale_vector: health.stale,
+      orphan_vectors: check.orphans,
     };
   } catch {
-    return { embedded: 0, remaining: 0, purged: 0, missing_vector: 0, stale_vector: 0 };
+    return { embedded: 0, remaining: 0, purged: 0, missing_vector: 0, stale_vector: 0, orphan_vectors: null };
   }
 }

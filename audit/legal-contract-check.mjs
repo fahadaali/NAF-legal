@@ -152,6 +152,10 @@ const VECTORIZE = {
   async deleteByIds(ids) {
     for (const id of ids) vectorStore.delete(id);
   },
+  // عدُّ الفهرس بصيغة الربط الحاليّ — لفحص «المتجه بلا سجل» (§6-7).
+  async describe() {
+    return { vectorCount: vectorStore.size, dimensions: DIM };
+  },
 };
 
 const env = { DB, AI, VECTORIZE, EMBEDDING_MODEL: '@cf/baai/bge-m3' };
@@ -1358,7 +1362,9 @@ await check('١٩ · وقيدُ الاعتماد جملةً يُميَّز في 
   const single = entries.filter((e) => e.via === 'single');
   assert.ok(bulk.length > 0, 'لا أثر للاعتماد جملةً في السجلّ');
   assert.ok(single.length > 0, 'ضاع تمييزُ القرار المفرد');
-  assert.ok(entries.every((e) => e.via === 'bulk' || e.via === 'single'), 'قيدٌ بلا وسمٍ لكيفيّته');
+  // وثالثُها `import`: قرارٌ أسقطته دفعةٌ غيّرت النصّ (§6-6) — تغييرٌ في حال
+  // المراجعة لم يقع بيد مراجع، وكلُّ تغييرٍ يُقيَّد بكيفيّته.
+  assert.ok(entries.every((e) => ['bulk', 'single', 'import'].includes(e.via)), 'قيدٌ بلا وسمٍ لكيفيّته');
 });
 
 await check('١٩ · ولا اعتماد بمرور الوقت: لا مهمّة خلفية تمسّ حال المراجعة', () => {
@@ -1677,12 +1683,28 @@ await check('٢١ · والعدد المعروض هو ما يصرّفه الزر
   assert.ok(repealedUnembedded > 0, 'لا ملغاةَ بلا متجه في البيانات — الفحص أعلاه لا يفحص شيئاً');
 });
 
-await check('٢١ · وسجلّ الدفعات يقول أثرها وبصمتَها', () => {
-  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
-  const q0 = routes.slice(routes.indexOf("app.get('/imports'"), routes.indexOf("app.get('/imports'") + 700);
-  for (const col of ['inserted', 'updated', 'failed', 'deleted', 'file_sha256', 'batch_id']) {
-    assert.ok(q0.includes(col), `سجلّ الدفعات بلا \`${col}\``);
+await check('٢١ · وسجلّ الدفعات يقول أثرها وبصمتَها — والملفُّ فيه سطرٌ واحد', async () => {
+  // ملفٌّ رُفع في جزأين ثم خُتم بحذف ثلاث: الختام يقيّد العدد على كلّ جزء،
+  // فجمعُه في السجلّ يجعلها ستّاً.
+  for (const [id, inserted] of [['imp-list-1', 4], ['imp-list-2', 6]]) {
+    await env.DB.prepare(
+      `INSERT INTO legal_imports (id, actor_id, filename, lines, inserted, updated, failed, created_at,
+                                  batch_id, file_sha256, deleted)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(id, 'مسؤول', 'قائمة.jsonl', 10, inserted, 1, 0, Date.now(), 'batch-list', 'ab'.repeat(32), 3).run();
   }
+  const rows = (await lib.listImports(env)).filter((r) => r.batch_id === 'batch-list');
+  assert.equal(rows.length, 1, 'ملفٌّ رُفع في جزأين ظهر في السجلّ مرّتين');
+  const [row] = rows;
+  for (const col of ['inserted', 'updated', 'failed', 'deleted', 'file_sha256', 'batch_id']) {
+    assert.ok(col in row, `سجلّ الدفعات بلا \`${col}\``);
+  }
+  assert.equal(row.lines, 20);
+  assert.equal(row.inserted, 10);
+  assert.equal(row.updated, 2);
+  assert.equal(row.deleted, 3, 'المحذوف جُمع على أجزاء الملف فتضاعف');
+  assert.equal(row.file_sha256, 'ab'.repeat(32));
+  assert.equal(row.parts, 2);
 });
 
 await check('٢١ · والاستشهاد يحمل نسخة النصّ لا رقم المادة وحده', async () => {
@@ -1861,6 +1883,580 @@ await check('٢٢ · والردُّ يُعرض ولا يقع إلا بطلبٍ �
   assert.match(body, /review_lost: plan\.review_lost\.map/, 'القيد بلا ما أسقطه من قرارات مراجعة');
   assert.match(body, /embedPending/, 'ما صُفِّر متجهُه يبقى بلا فهرسةٍ إلى الليلة القادمة');
   assert.match(routes, /app\.get\('\/revertable', requireAdmin/, 'لا مسار يعرض الدفعات القابلة للردّ');
+});
+
+// ═══ ٢٣) الإصدارات الرابع إلى السادس: بطاقة النظام، والمرفقات، ومواد «مكرر»، والملاحق ═══
+//
+// `status` صار حالَ **النظام** من بطاقته في البوابة، فكان السطر يُرفض بقيمتين
+// من أربع، وكانت المادة المستبقاة بعد إلغاء نظامها تُقلب «ملغاة» وهي نافذة.
+// والملحق رقمُه اصطلاحيّ (`1001`) لا يُفهرَس ولا يُستشهد به ولا يُستدعى.
+//
+// والتاريخان بعيدان عن اليوم عمداً: فحصٌ يمرّ اليوم ويفشل غداً لأن تاريخاً
+// حلّ ليس فحصاً.
+
+const FUTURE = '2999-01-01';
+const PAST = '2000-01-01';
+const V6_BASE = {
+  law_id: 'sixth', law_name: 'نظام السادسة', doc_type: 'نظام', law_status_source: 'البوابة',
+  status: 'ساري', law_repealed: false, has_amendments: false, is_repealed: false, needs_review: false,
+  amendment_events: [], instrument_no: 'م/60', date_hijri: '1440/01/01',
+};
+// ونصُّ التضمين يحمل نصَّ المادة كما يحمله في الملفّات الحقيقية: مسبوقاً بسياقه.
+const v6line = (o) => line({ ...V6_BASE, embed_text: `${o.law_name ?? V6_BASE.law_name} — ${o.text ?? o.id}`, ...o });
+
+const V6_LINES = [
+  v6line({ id: 'سادسة-معلّق/art-001', law_id: 'sixth-pending', law_name: 'نظام السادسة الجديد',
+    status: 'لم يبدأ العمل به', law_pending: true, law_effective_from: FUTURE,
+    article_no: 1, article_label: 'المادة الأولى',
+    text: 'يُعمل بهذا النظام الجديد في التاريخ المحدّد لنفاذه.',
+    retrieval_status: 'نافذ_بتحذير',
+    retrieval_warning: 'هذا النظام لم يبدأ العمل به — يُعمل به من 2999-01-01، والنافذ قبله نظام السادسة القديم.' }),
+  v6line({ id: 'سادسة-قيد/art-001', law_id: 'sixth-drafting', status: 'جاري العمل على النظام',
+    article_no: 1, article_label: 'المادة الأولى', text: 'مادةٌ من نظامٍ جارٍ العملُ عليه.',
+    retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة-قديم/art-001', law_id: 'sixth-old', law_name: 'نظام السادسة القديم',
+    status: 'ملغى', status_raw: 'لاغي', law_repealed: true,
+    article_no: 1, article_label: 'المادة الأولى', text: 'مادةٌ من نظامٍ ألغاه اللاحقُ كلَّه.',
+    retrieval_status: 'ملغى' }),
+  v6line({ id: 'سادسة-قديم/art-002', law_id: 'sixth-old', law_name: 'نظام السادسة القديم',
+    status: 'ملغى', status_raw: 'لاغي', law_repealed: true, kept_after_repeal: true,
+    article_no: 2, article_label: 'المادة الثانية', text: 'مادةٌ مستبقاة تبقى نافذةً بعد إلغاء نظامها.',
+    retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة/art-003', article_no: 3, article_label: 'المادة الثالثة',
+    text: 'مادةٌ حلّ تاريخُ إلغائها المجدول قبل رفع الدفعة.', scheduled_repeal_from: PAST,
+    retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة/art-004', article_no: 4, article_label: 'المادة الرابعة',
+    text: 'مادةٌ مجدولٌ إلغاؤها في تاريخٍ لم يحلّ.', scheduled_repeal_from: FUTURE,
+    retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة/art-014', article_no: 14, article_label: 'المادة الرابعة عشرة', has_attachment: true,
+    text: 'تُفرض الرسوم المبيّنة في الجدول المرفق بهذه المادة.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة/art-014-attach', article_no: 14, article_label: 'مرفق المادة 14',
+    is_attachment: true, attachment_of: 'سادسة/art-014', amend_link: 'رقم',
+    text: 'جدول الرسوم: الفئة الأولى مئة ريال، والفئة الثانية مئتا ريال.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة/art-015', article_no: 15, article_label: 'المادة الخامسة عشرة',
+    text: 'يُنشأ سجلٌّ للمنشآت في الوزارة.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة/art-015-mukarrar', article_no: 15, article_label: 'المادة الخامسة عشرة مكرر',
+    text: 'تُحدَّث بيانات السجلّ سنوياً.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة/art-231', article_no: 231, former_article_no: 240,
+    article_label: 'المادة الحادية والثلاثون بعد المائتين',
+    text: 'مادةٌ نُقلت من موضعها السابق إلى موضعها الحالي.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'سادسة/annex-01', article_no: 1001, is_annex: true, article_label: 'جدول المخالفات رقم (6)',
+    text: 'مخالفة السرعة: غرامةٌ من ثلاثمئة إلى خمسمئة ريال.', retrieval_status: 'نافذ' }),
+];
+const v6 = lib.parseJsonl(V6_LINES.join('\n'));
+const v6by = Object.fromEntries(v6.rows.map((r) => [r.id, r]));
+
+await check('٢٣ · حالُ النظام بقيمها الأربع تُقرأ ولا تُرفض — ولا تُقرأ حالاً للمادة', () => {
+  assert.equal(v6.errors.length, 0, JSON.stringify(v6.errors));
+  assert.equal(v6.rows.length, V6_LINES.length);
+  assert.equal(v6by['سادسة-معلّق/art-001'].law_status, 'لم يبدأ العمل به');
+  assert.equal(v6by['سادسة-قيد/art-001'].law_status, 'جاري العمل على النظام');
+  assert.equal(v6by['سادسة-قديم/art-001'].law_status_raw, 'لاغي');
+  assert.equal(v6by['سادسة-معلّق/art-001'].law_pending, 1);
+  assert.equal(v6by['سادسة-معلّق/art-001'].law_effective_from, FUTURE);
+  // والنظام الذي لم يبدأ العمل به نافذٌ بتحذير، ونصُّ تحذيره من الملف كما ورد.
+  assert.equal(v6by['سادسة-معلّق/art-001'].retrieval_status, lib.RETRIEVAL_WARNING);
+  assert.match(v6by['سادسة-معلّق/art-001'].retrieval_warning, /لم يبدأ العمل به/);
+});
+
+await check('٢٣ · والمستبقاة بعد إلغاء نظامها نافذة، وسائرُ مواد النظام اللاغي ملغاة', () => {
+  const kept = v6by['سادسة-قديم/art-002'];
+  assert.equal(kept.retrieval_status, lib.RETRIEVAL_EFFECTIVE, '«ملغى» في status قلبت المستبقاة ملغاة');
+  assert.equal(kept.is_repealed, 0, 'إلغاءُ النظام قُرئ إلغاءً للمادة');
+  assert.equal(kept.status, 'active');
+  assert.equal(kept.kept_after_repeal, 1);
+  assert.equal(kept.law_repealed, 1);
+  const gone = v6by['سادسة-قديم/art-001'];
+  assert.equal(gone.retrieval_status, lib.RETRIEVAL_REPEALED);
+  assert.equal(gone.status, 'repealed', 'عمودُ الحال يقول غيرَ ما يقوله حالُ الاسترجاع');
+  // وحارسُ الاتجاه الآمن: نظامٌ لاغٍ ومادةٌ غيرُ مستبقاة وحالٌ تقول «نافذ» — تناقضٌ يُحسم ملغى.
+  const conflict = lib.parseJsonl(v6line({ id: 'سادسة-قديم/art-009', law_id: 'sixth-old', status: 'ملغى',
+    law_repealed: true, text: 'نصّ', retrieval_status: 'نافذ' }));
+  assert.equal(conflict.rows[0].retrieval_status, lib.RETRIEVAL_REPEALED);
+  // وقرارُ صاحب البيانات الصريح يغلب لفظ البطاقة: `law_repealed: false` مع «ملغى».
+  const decided = lib.parseJsonl(v6line({ id: 'سادسة-قرار/art-001', law_id: 'sixth-decided', status: 'ملغى',
+    law_repealed: false, law_status_source: 'قرار', text: 'نصّ', retrieval_status: 'نافذ' }));
+  assert.equal(decided.rows[0].retrieval_status, lib.RETRIEVAL_EFFECTIVE, 'قرارٌ صريح غلبه لفظُ البطاقة');
+});
+
+await check('٢٣ · والإلغاء المجدول يُحسم بيومه: ما حلّ يومه ملغى، وما لم يحلّ نافذ', () => {
+  assert.equal(v6by['سادسة/art-003'].retrieval_status, lib.RETRIEVAL_REPEALED, 'إلغاءٌ حلّ يومه بقي نافذاً');
+  assert.equal(v6by['سادسة/art-004'].retrieval_status, lib.RETRIEVAL_EFFECTIVE);
+  assert.equal(v6by['سادسة/art-004'].scheduled_repeal_from, FUTURE);
+});
+
+await check('٢٣ · والتاريخان ميلاديّان: هجريٌّ فيهما يُرفض برمزه ولا يُقارَن', () => {
+  const bad = lib.parseJsonl(v6line({ id: 'سادسة/art-090', text: 'نصّ', scheduled_repeal_from: '1448/01/01هـ' }));
+  assert.equal(bad.rows.length, 0, 'هجريٌّ حُفظ في حقلٍ يُقارَن بتاريخ الخادم نصّاً');
+  assert.equal(bad.errors[0].code, 'bad_date:scheduled_repeal_from');
+  const bad2 = lib.parseJsonl(v6line({ id: 'سادسة/art-091', text: 'نصّ', law_pending: true, law_effective_from: '1449/05/01' }));
+  assert.equal(bad2.errors[0]?.code, 'bad_date:law_effective_from');
+});
+
+await check('٢٣ · والتحذير البديل بسببه: نفاذٌ لم يحلّ أو تعديلٌ لم يُدمج', () => {
+  const pending = lib.parseJsonl(v6line({ id: 'سادسة-معلّق/art-002', law_id: 'sixth-pending',
+    status: 'لم يبدأ العمل به', law_pending: true, law_effective_from: FUTURE, text: 'نصّ',
+    retrieval_status: 'نافذ' }));
+  // نافذٌ في الملف ونظامُه لم يبدأ العمل به: يُحسم بتحذير، ونصُّه البديل للنفاذ لا للتعديل.
+  assert.equal(pending.rows[0].retrieval_status, lib.RETRIEVAL_WARNING);
+  assert.equal(pending.rows[0].retrieval_warning, lib.DEFERRED_NOTICE);
+  const amended = lib.parseJsonl(v6line({ id: 'سادسة/art-092', text: 'نصّ', has_amendments: true,
+    amendment_applied: false, retrieval_status: 'نافذ_بتحذير' }));
+  assert.equal(amended.rows[0].retrieval_warning, lib.AMENDMENT_NOTICE);
+});
+
+await check('٢٣ · والملحق لا يُفهرَس برقمه الاصطلاحيّ، والمنقولة تُفهرَس بالرقمين', () => {
+  const annex = v6by['سادسة/annex-01'];
+  assert.equal(annex.is_annex, 1);
+  assert.ok(!annex.handle_norm.includes('1001'), 'الرقم الاصطلاحيّ دخل الفهرس: ' + annex.handle_norm);
+  assert.ok(annex.handle_norm.includes('جدول المخالفات'), 'الملحق بلا عنوانه في الفهرس');
+  const moved = v6by['سادسة/art-231'];
+  assert.equal(moved.former_article_no_norm, '240');
+  assert.ok(moved.handle_norm.includes('الماده 240'), 'الرقم السابق غائبٌ عن الفهرس');
+  assert.ok(moved.handle_norm.includes('الماده 231'));
+});
+
+await check('٢٣ · والمرفق ومادة «مكرر» يُعرفان بحقولهما ولاحقة معرّفهما', () => {
+  const att = v6by['سادسة/art-014-attach'];
+  assert.equal(att.is_attachment, 1);
+  assert.equal(att.attachment_of, 'سادسة/art-014');
+  assert.equal(att.amend_link, 'رقم');
+  assert.equal(v6by['سادسة/art-014'].has_attachment, 1);
+  assert.equal(v6by['سادسة/art-015-mukarrar'].is_mukarrar, 1);
+  assert.equal(v6by['سادسة/art-015'].is_mukarrar, 0);
+  // ومادة «مكرر» ليست تكراراً (§3-8): لا وسمَ رقمٍ مكرّر عليها.
+  assert.equal(v6by['سادسة/art-015-mukarrar'].is_duplicate, 0);
+  // والحقول الجديدة أعمدةٌ لا `meta_json`.
+  for (const r of v6.rows) {
+    const meta = r.meta_json ? JSON.parse(r.meta_json) : {};
+    for (const k of ['law_status_source', 'law_repealed', 'is_annex', 'is_attachment', 'former_article_no']) {
+      assert.ok(!(k in meta), `«${k}» بقي في meta_json في ${r.id}`);
+    }
+  }
+});
+
+await check('٢٣ · والملفّ القديم يُقرأ كما كان: «ملغى» بلا بطاقةٍ حالُ المادة', () => {
+  const legacy = lib.parseJsonl(line({ id: 'قديم/1', law_id: 'legacy', text: 'نصّ', embed_text: 'نصّ', status: 'ملغى' }));
+  assert.equal(legacy.rows[0].is_repealed, 1, 'المعنى القديم لـstatus ضاع');
+  assert.equal(legacy.rows[0].retrieval_status, lib.RETRIEVAL_REPEALED);
+  assert.equal(legacy.rows[0].law_status, null);
+  // وقيمةٌ لا تكون إلا حالَ نظام تُقرأ كذلك ولو بلا بطاقة — لا تُرفض ومعها النظام كلُّه.
+  const lawOnly = lib.parseJsonl(line({ id: 'قديم/2', law_id: 'legacy', text: 'نصّ', embed_text: 'نصّ',
+    status: 'لم يبدأ العمل به' }));
+  assert.equal(lawOnly.errors.length, 0, JSON.stringify(lawOnly.errors));
+  assert.equal(lawOnly.rows[0].law_pending, 1);
+  assert.equal(lawOnly.rows[0].retrieval_status, lib.RETRIEVAL_WARNING);
+});
+
+await check('٢٣ · وما فاته الختم يُعدّ ويُقال في تقرير الاستيراد', () => {
+  assert.equal(v6.unstamped, 0);
+  const mixed = lib.parseJsonl([
+    v6line({ id: 'ختم/1', text: 'نصّ' }),
+    line({ id: 'ختم/2', law_id: 'sixth', text: 'نصّ', embed_text: 'نصّ' }),
+  ].join('\n'));
+  assert.equal(mixed.unstamped, 1);
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /unstamped: parsed\.unstamped/, 'التقرير لا يقول ما فاته الختم');
+});
+
+await lib.upsertLegalChunks(env, v6.rows, { importId: 'imp-v6', batchId: 'batch-v6' });
+
+await check('٢٣ · والحقول تُكتب في أعمدتها وتبقى بإعادة الرفع', async () => {
+  const row = q("SELECT law_status, law_status_source, kept_after_repeal, law_repealed, is_annex, is_mukarrar, former_article_no_norm, attachment_of, scheduled_repeal_from FROM legal_chunks WHERE id = 'سادسة-قديم/art-002'")[0];
+  assert.equal(row.law_status, 'ملغى');
+  assert.equal(row.law_status_source, 'البوابة');
+  assert.equal(row.kept_after_repeal, 1);
+  assert.equal(row.law_repealed, 1);
+  assert.equal(q("SELECT attachment_of FROM legal_chunks WHERE id = 'سادسة/art-014-attach'")[0].attachment_of, 'سادسة/art-014');
+  assert.equal(q("SELECT is_annex FROM legal_chunks WHERE id = 'سادسة/annex-01'")[0].is_annex, 1);
+  assert.equal(q("SELECT is_mukarrar FROM legal_chunks WHERE id = 'سادسة/art-015-mukarrar'")[0].is_mukarrar, 1);
+  // إعادةُ رفع الدفعة نفسها لا تُضيف ولا تُغيّر شيئاً.
+  const again = await lib.upsertLegalChunks(env, v6.rows, { importId: 'imp-v6b', batchId: 'batch-v6b' });
+  assert.equal(again.inserted, 0);
+  assert.equal(again.archived, 0, 'إعادةُ رفع الملف نفسه أرشفت نسخاً');
+});
+
+// ═══ ٢٤) الاسترجاع في الإصدار السادس: الحال والتاريخ والرقم والمرفق ═══
+//
+// كلُّ شرطٍ هنا في طبقة الاسترجاع لا في الواجهة (§5): المحادثة والتقرير
+// والواجهة البرمجية يمرّون به سواء.
+
+await lib.embedPending(env, 200);
+const ids = (hits) => hits.map((h) => h.id);
+
+await check('٢٤ · المستبقاة بعد إلغاء نظامها تدخل البحث، وسائرُ مواد النظام اللاغي لا تدخله', async () => {
+  const kept = await lib.searchLegal(env, 'مادةٌ مستبقاة تبقى نافذةً بعد إلغاء نظامها', { limit: 10, lexicalOnly: true });
+  assert.ok(ids(kept).includes('سادسة-قديم/art-002'), 'المستبقاة غابت عن البحث وهي نافذة');
+  const gone = await lib.searchLegal(env, 'مادةٌ من نظامٍ ألغاه اللاحقُ كلَّه', { limit: 10, lexicalOnly: true });
+  assert.ok(!ids(gone).includes('سادسة-قديم/art-001'), 'مادةٌ من نظامٍ لاغٍ دخلت البحث');
+  const archive = await lib.searchLegal(env, 'مادةٌ من نظامٍ ألغاه اللاحقُ كلَّه', {
+    limit: 10, lexicalOnly: true, includeRepealed: true,
+  });
+  const found = archive.find((h) => h.id === 'سادسة-قديم/art-001');
+  assert.ok(found, 'ولا يُستدعى بوسمه صراحةً');
+  assert.equal(found.lawRepealed, true);
+  assert.equal(found.retrievalStatus, lib.RETRIEVAL_REPEALED);
+  // ولا متجهَ لها: الملغاة لا تُفهرَس أصلاً.
+  const seq = q("SELECT seq FROM legal_chunks WHERE id = 'سادسة-قديم/art-001'")[0].seq;
+  assert.ok(!vectorStore.has(`legal:${seq}`), 'مادةُ نظامٍ لاغٍ فُهرست');
+});
+
+await check('٢٤ · الإلغاء المجدول يُقيَّم وقت الاستعلام، لا حين تُرفع دفعةٌ بعده (§6-8)', async () => {
+  // دفعةٌ رُفعت قبل اليوم والتاريخ لم يحلّ؛ ثم حلّ ولم تُرفع دفعة.
+  const before = await lib.searchLegal(env, 'مادةٌ مجدولٌ إلغاؤها في تاريخٍ لم يحلّ', { limit: 10, lexicalOnly: true });
+  const hit = before.find((h) => h.id === 'سادسة/art-004');
+  assert.ok(hit, 'مادةٌ لم يحلّ تاريخُ إلغائها غابت');
+  assert.equal(hit.scheduledRepealFrom, FUTURE);
+  q("UPDATE legal_chunks SET scheduled_repeal_from = ? WHERE id = 'سادسة/art-004'", PAST);
+  try {
+    const after = await lib.searchLegal(env, 'مادةٌ مجدولٌ إلغاؤها في تاريخٍ لم يحلّ', { limit: 10, lexicalOnly: true });
+    assert.ok(!ids(after).includes('سادسة/art-004'), 'إلغاءٌ حلّ يومه ينتظر دفعةً تقوله');
+    const direct = await lib.getChunkById(env, 'سادسة/art-004', true);
+    assert.equal(direct.retrievalStatus, lib.RETRIEVAL_REPEALED, 'الاستدعاء المباشر لا يقول إنها ملغاة');
+    // والتنظيف يحذف متجهها في أوّل دورة بعد يومها.
+    await lib.embedPending(env, 50);
+    const seq = q("SELECT seq FROM legal_chunks WHERE id = 'سادسة/art-004'")[0].seq;
+    assert.ok(!vectorStore.has(`legal:${seq}`), 'بقي متجهُ مادةٍ حلّ إلغاؤها');
+  } finally {
+    q("UPDATE legal_chunks SET scheduled_repeal_from = ? WHERE id = 'سادسة/art-004'", FUTURE);
+    q("UPDATE legal_chunks SET embedded_at = NULL WHERE id = 'سادسة/art-004'");
+    await lib.embedPending(env, 50);
+  }
+});
+
+await check('٢٤ · وتحذيرُ نظامٍ لم يبدأ العمل به يسقط وحده حين يحلّ يومه', async () => {
+  const pending = await lib.getChunkById(env, 'سادسة-معلّق/art-001');
+  assert.equal(pending.lawPending, true);
+  assert.equal(pending.retrievalStatus, lib.RETRIEVAL_WARNING);
+  assert.match(pending.retrievalWarning, /لم يبدأ العمل به/);
+  q("UPDATE legal_chunks SET law_effective_from = ? WHERE id = 'سادسة-معلّق/art-001'", PAST);
+  try {
+    const started = await lib.getChunkById(env, 'سادسة-معلّق/art-001');
+    assert.equal(started.lawPending, false, 'نظامٌ حلّ يومُ نفاذه بقي «لم يبدأ العمل به»');
+    assert.equal(started.retrievalStatus, lib.RETRIEVAL_EFFECTIVE);
+    assert.equal(started.retrievalWarning, null, 'تحذيرُ النفاذ بقي بعد يومه');
+    // وتعديلٌ لم يُدمج يبقى تحذيرُه ولو حلّ يومُ النظام.
+    q("UPDATE legal_chunks SET has_amendments = 1, amendment_applied = 0 WHERE id = 'سادسة-معلّق/art-001'");
+    const amended = await lib.getChunkById(env, 'سادسة-معلّق/art-001');
+    assert.equal(amended.retrievalStatus, lib.RETRIEVAL_WARNING);
+    assert.equal(amended.retrievalWarning, lib.AMENDMENT_NOTICE, 'سقط تحذيرُ التعديل مع تحذير النفاذ');
+    const [law] = (await lib.listLaws(env)).filter((l) => l.law_id === 'sixth-pending');
+    assert.equal(law.law_pending, 0, 'قائمة الأنظمة تقول «لم يبدأ العمل به» بعد يومه');
+  } finally {
+    q("UPDATE legal_chunks SET law_effective_from = ?, has_amendments = 0 WHERE id = 'سادسة-معلّق/art-001'", FUTURE);
+  }
+  const [law] = (await lib.listLaws(env)).filter((l) => l.law_id === 'sixth-pending');
+  assert.equal(law.law_pending, 1);
+  assert.equal(law.law_effective_from, FUTURE);
+});
+
+await check('٢٤ · الاستدعاء بالرقم: المرفق بعد مادته، و«مكرر» وحدها، والملحق لا برقمه، والمنقولة بالرقمين', async () => {
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '14' })),
+    ['سادسة/art-014', 'سادسة/art-014-attach'], 'المرفق لم يُرجَع مع مادته بعدها');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '15' })),
+    ['سادسة/art-015'], 'مادة «مكرر» رُدّت مع الأصل');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '15 مكرر' })),
+    ['سادسة/art-015-mukarrar'], 'مادة «مكرر» لا تُستدعى بعنوانها');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '1001' })), [],
+    'الملحق استُدعي برقمه الاصطلاحيّ');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '240' })), ['سادسة/art-231'],
+    'المنقولة لا تُستدعى برقمها السابق');
+  assert.deepEqual(ids(await lib.getArticle(env, { lawId: 'sixth', articleNo: '231' })), ['سادسة/art-231']);
+});
+
+await check('٢٤ · والبحث يرجّح بالشرط نفسه، والملحق يُجد بعنوانه', async () => {
+  const byNo = await lib.searchLegal(env, 'ما نصّ المادة 14', { lawId: 'sixth', limit: 10, lexicalOnly: true });
+  const order = ids(byNo);
+  assert.ok(order.includes('سادسة/art-014-attach'), 'البحث بالرقم لم يُرجع المرفق مع مادته');
+  const mk = await lib.searchLegal(env, 'المادة 15 مكرر', { lawId: 'sixth', limit: 10, lexicalOnly: true });
+  assert.equal(mk[0]?.id, 'سادسة/art-015-mukarrar', 'مادة «مكرر» لم تتصدّر حين طُلبت بعنوانها');
+  const annex = await lib.searchLegal(env, 'المادة 1001', { lawId: 'sixth', limit: 10, lexicalOnly: true });
+  assert.ok(!annex.some((h) => h.isAnnex && h.signals.includes('article')), 'الملحق رُجِّح برقمه الاصطلاحيّ');
+  const table = await lib.searchLegal(env, 'جدول المخالفات', { limit: 10, lexicalOnly: true });
+  assert.ok(ids(table).includes('سادسة/annex-01'), 'الملحق لا يُجد بعنوانه');
+});
+
+await check('٢٤ · تحذيرُ الحال يبلغ سياق المساعد بنصّه، والملحق يُستشهد به بعنوانه (§6-4)', async () => {
+  const rag = await lib.retrieve(env, ['يُعمل بهذا النظام الجديد في التاريخ المحدّد لنفاذه'], 10);
+  const context = lib.formatRagContext(rag);
+  assert.match(context, /تنبيه: هذا النظام لم يبدأ العمل به/, 'تحذيرُ النفاذ لم يبلغ البرومبت: ' + context.slice(0, 2400));
+  const annexRag = await lib.retrieve(env, ['مخالفة السرعة غرامة'], 5);
+  const annexCtx = lib.formatRagContext(annexRag);
+  assert.match(annexCtx, /جدول المخالفات رقم \(6\)/, 'الملحق بلا عنوانه في سطر الإسناد');
+  assert.ok(!/المادة 1001/.test(annexCtx), 'الملحق استُشهد به برقمه الاصطلاحيّ');
+  assert.match(context, /أحِل إلى سجل التعديلات/, 'السياق لا يمنع صياغة نصٍّ نافذٍ غير متاح');
+});
+
+await check('٢٤ · الملغاة بإلغاء نظامها لا تدخل الطابور، ولا تُعدّ فيه', async () => {
+  q("UPDATE legal_chunks SET needs_review = 1 WHERE id IN ('سادسة-قديم/art-001', 'سادسة-قديم/art-002')");
+  try {
+    const queue = await lib.listReviewQueue(env, { lawId: 'sixth-old', limit: 50 });
+    assert.ok(!ids(queue.articles).includes('سادسة-قديم/art-001'), 'مادةُ نظامٍ لاغٍ دخلت الطابور');
+    assert.ok(ids(queue.articles).includes('سادسة-قديم/art-002'), 'والمستبقاة النافذة غابت عنه');
+    const dash = await lib.reviewDashboard(env, { lawId: 'sixth-old' });
+    assert.ok(dash.repealed >= 1, 'عدُّ الملغاة لا يرى مادةَ النظام اللاغي');
+  } finally {
+    q("UPDATE legal_chunks SET needs_review = 0 WHERE id IN ('سادسة-قديم/art-001', 'سادسة-قديم/art-002')");
+  }
+  const law = (await lib.listLaws(env)).find((l) => l.law_id === 'sixth-old');
+  assert.equal(law.repealed, 1, 'قائمة الأنظمة تعدّ الملغاة بحقلٍ واحد');
+  assert.equal(law.effective, 1);
+  assert.equal(law.law_repealed, 1);
+});
+
+await check('٢٤ · اسمٌ يطابق نظامين لا يُفتح أقربُهما', async () => {
+  await lib.upsertLegalChunks(env, lib.parseJsonl(v6line({ id: 'سادسة-ثانية/art-001', law_id: 'sixth-twin',
+    law_name: 'نظام السادسة القديم', instrument_no: 'م/99', date_hijri: '1446/01/01', article_no: 1,
+    text: 'مادةٌ من نظامٍ آخر بالاسم نفسه.', retrieval_status: 'نافذ' })).rows, { importId: 'imp-twin' });
+  const twin = await lib.resolveLawByTitle(env, 'نظام السادسة القديم');
+  assert.deepEqual(twin, { lawId: null, ambiguous: true }, 'فُتح أحدُ نظامين بالاسم وحده');
+  const single = await lib.resolveLawByTitle(env, 'نظام السادسة الجديد');
+  assert.deepEqual(single, { lawId: 'sixth-pending', ambiguous: false });
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /في المنصة أكثر من نظام بهذا الاسم — افتح المادة من صفحة نظامها/);
+  assert.match(routes, /ambiguous: true \},\s*409/, 'الاسم المشترك لا يُردّ بما يميّزه');
+});
+
+await check('٢٤ · الاعتماد لا يُسقط تحذيرَ نظامٍ لم يبدأ العمل به، والتحرير يُبقي الخطّ الزمني صادقاً', async () => {
+  q("UPDATE legal_chunks SET needs_review = 1 WHERE id = 'سادسة-معلّق/art-001'");
+  const res = await lib.reviewChunk(env, 'سادسة-معلّق/art-001', 'approve', 'مراجع');
+  assert.equal(res.ok, true);
+  const row = q("SELECT retrieval_status, retrieval_warning FROM legal_chunks WHERE id = 'سادسة-معلّق/art-001'")[0];
+  assert.equal(row.retrieval_status, lib.RETRIEVAL_WARNING, 'الاعتماد أسقط تحذيرَ نظامٍ لم يبدأ العمل به');
+  assert.match(row.retrieval_warning, /لم يبدأ العمل به/);
+
+  await lib.reviewChunk(env, 'سادسة/art-015', 'edit', 'مراجع', { text: 'يُنشأ سجلٌّ للمنشآت التجارية في الوزارة.' });
+  const edited = q("SELECT text, text_versions, embed_text FROM legal_chunks WHERE id = 'سادسة/art-015'")[0];
+  const current = JSON.parse(edited.text_versions).filter((v) => v.current);
+  assert.equal(current.length, 1);
+  assert.equal(current[0].text, edited.text, 'النسخة المعتمدة في الخطّ الزمني تخالف النصّ المحرَّر');
+  await lib.reviewChunk(env, 'سادسة/art-015', 'undo', 'مراجع');
+  const undone = q("SELECT text, text_versions FROM legal_chunks WHERE id = 'سادسة/art-015'")[0];
+  assert.equal(undone.text, 'يُنشأ سجلٌّ للمنشآت في الوزارة.');
+  assert.equal(JSON.parse(undone.text_versions).find((v) => v.current).text, undone.text, 'التراجع ترك الخطّ الزمني على المحرَّر');
+
+  // ونصُّ التضمين للملحق بعنوانه: تحريرُه لا يُدخل رقمه الاصطلاحيّ المتجه.
+  await lib.reviewChunk(env, 'سادسة/annex-01', 'edit', 'مراجع', { text: 'مخالفة السرعة: غرامةٌ من ثلاثمئة إلى ستمئة ريال.' });
+  const annexEmbed = q("SELECT embed_text FROM legal_chunks WHERE id = 'سادسة/annex-01'")[0].embed_text;
+  assert.ok(!annexEmbed.includes('1001'), 'نصّ تضمين الملحق المحرَّر يحمل رقمه الاصطلاحيّ: ' + annexEmbed);
+  assert.match(annexEmbed, /جدول المخالفات رقم \(6\)/);
+  await lib.reviewChunk(env, 'سادسة/annex-01', 'undo', 'مراجع');
+});
+
+await check('٢٤ · صحّة القاعدة: الفهرس يُقابَل بسجلاته، والمتجه بلا سجلٍّ يُعدّ (§6-7)', async () => {
+  await lib.embedPending(env, 500);
+  const clean = await lib.legalStats(env, { vectors: true });
+  assert.ok(clean.vectors, 'صحّة القاعدة بلا عدّ الفهرس');
+  assert.equal(clean.vectors.orphans, 0, 'متجهٌ بلا سجلٍّ في قاعدةٍ نظيفة: ' + JSON.stringify(clean.vectors));
+  vectorStore.set('legal:999999', { id: 'legal:999999', values: new Array(DIM).fill(0), metadata: {} });
+  try {
+    const dirty = await lib.legalStats(env, { vectors: true });
+    assert.equal(dirty.vectors.orphans, 1, 'متجهٌ بلا سجلّ لم يُعدّ');
+    const nightly = await lib.vectorCheck(env);
+    assert.equal(nightly.orphans, 1, 'والدورة الليلية لا تراه');
+  } finally {
+    vectorStore.delete('legal:999999');
+  }
+  // وجسُّ الشريط لا يسأل الفهرس: `vectors` بطلبٍ صريح.
+  assert.equal((await lib.legalStats(env)).vectors, undefined);
+  const cron = readFileSync(path.join(ROOT, 'src', 'cron.ts'), 'utf8');
+  assert.match(cron, /vectorCheck\(env\)/, 'الدورة الليلية لا تفحص المتجه بلا سجلّ');
+  assert.match(cron, /vectorHealth\(env\)/, 'الدورة الليلية تكتب شرط التضمين بيدها');
+});
+
+await check('٢٤ · فحصُ الملف قبل رفعه يقبل مادةَ النظام اللاغي، ويرفض ما فاته الختم وما تناقض', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = path.join(ROOT, 'node_modules', '.cache');
+  const withVersions = (o) => ({ ...o, text_versions: [{ seq: 0, text: o.text, current: true }] });
+  const run = async (name, rows) => {
+    const file = path.join(dir, name);
+    await writeFile(file, rows.map((o) => JSON.stringify(withVersions(o))).join('\n') + '\n');
+    return spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'verify-legal.mjs'), '--file', file], { encoding: 'utf8' });
+  };
+  const base = { ...V6_BASE, article_label: 'المادة', embed_text: 'نصّ', retrieval_status: 'نافذ' };
+  // مادةٌ من نظامٍ لاغٍ حالُها «ملغى» و`is_repealed` فيها `false` — ليس تناقضاً.
+  const good = await run('verify-v6-good.jsonl', [
+    { ...base, id: 'فحص/1', article_no: 1, text: 'نصّ نافذ.' },
+    { ...base, id: 'فحص-قديم/1', law_id: 'v-old', status: 'ملغى', law_repealed: true, article_no: 1,
+      text: 'نصّ من نظامٍ لاغٍ.', retrieval_status: 'ملغى' },
+    { ...base, id: 'فحص-قديم/2', law_id: 'v-old', status: 'ملغى', law_repealed: true, kept_after_repeal: true,
+      article_no: 2, text: 'نصّ مستبقى.' },
+  ]);
+  assert.equal(good.status, 0, 'الفحص رفض ملفاً سليماً من الإصدار السادس:\n' + good.stdout.slice(-1200));
+  assert.match(good.stdout, /مستبقاة بعد إلغاء نظامها/, 'البيان بلا أصناف الإصدار السادس');
+
+  const bad = await run('verify-v6-bad.jsonl', [
+    { ...base, id: 'فحص/2', article_no: 2, text: 'مستبقاةٌ قيل إنها ملغاة.', kept_after_repeal: true,
+      law_repealed: true, status: 'ملغى', retrieval_status: 'ملغى' },
+    { id: 'فحص/3', law_id: 'sixth', law_name: 'نظام السادسة', doc_type: 'نظام', article_no: 3,
+      article_label: 'المادة', text: 'سجلٌّ فاته الختم.', embed_text: 'نصّ', retrieval_status: 'نافذ',
+      amendment_events: [], has_amendments: false, is_repealed: false, needs_review: false },
+  ]);
+  assert.equal(bad.status, 1, 'الفحص قبل ملفاً متناقضاً فاته الختم');
+  assert.match(bad.stdout, /✗ الحالة والإلغاء لا يتناقضان/);
+  assert.match(bad.stdout, /✗ كل سجلٍّ يحمل ختم الحالة/);
+});
+
+await check('٢٤ · ولا حذفَ لأيتام دفعةٍ تُخطّيت منها أسطر', () => {
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  const body = routes.slice(routes.indexOf("app.post('/finalize'"), routes.indexOf("app.get('/revertable'"));
+  assert.match(body, /SUM\(failed\)/, 'الختام لا ينظر فيما تُخطّي من الدفعة');
+  assert.match(body, /if \(skipped > 0\)/, 'الحذف يقع على دفعةٍ ناقصة');
+  const script = readFileSync(path.join(ROOT, 'scripts', 'import-legal.mjs'), 'utf8');
+  assert.match(script, /seen\.skipped/, 'السكربت يطلب الحذف على دفعةٍ ناقصة');
+});
+
+// ═══ ٢٥) بقاءُ التحرير البشري عبر الدفعات (§6-6)، ومرشّحُ نوع التعديل (§6-3) ═══
+//
+// إعادةُ رفع نظامٍ رُوجعت موادُّه كانت تدهس التحرير وتُسقط الاعتماد بلا أثر —
+// ولو لم يتغيّر في المصدر حرف.
+
+const R6 = (o) => v6line({ law_id: 'seventh', law_name: 'نظام السابعة', needs_review: true,
+  has_amendments: true, amendment_applied: false, retrieval_status: 'نافذ_بتحذير', ...o });
+const SEVENTH = [
+  R6({ id: 'سابعة/1', article_no: 1, text: 'نصُّ المصدر للمادة الأولى قبل تحرير المراجع.',
+    amendment_kind: 'تعديل فقرة', amendments_raw: 'تُعدَّل الفقرة (أ).' }),
+  R6({ id: 'سابعة/2', article_no: 2, text: 'نصُّ المادة الثانية.', amendment_kind: 'إضافة مادة',
+    amendments_raw: 'تُضاف مادةٌ جديدة.' }),
+  R6({ id: 'سابعة/3', article_no: 3, text: 'نصُّ المادة الثالثة.', amendment_kind: 'تعديل فقرة',
+    amendments_raw: 'تُعدَّل الفقرة (ب).' }),
+];
+await lib.upsertLegalChunks(env, lib.parseJsonl(SEVENTH.join('\n')).rows, { importId: 'imp-7a', actorId: 'مسؤول' });
+await lib.reviewChunk(env, 'سابعة/1', 'edit', 'مراجعٌ أوّل', {
+  text: 'نصُّ المادة الأولى بعد أن حرّره المراجع ودمج تعديلها.', note: 'دُمجت الفقرة (أ) يدوياً.',
+});
+
+await check('٢٥ · تحريرُ المراجع يبقى بإعادة رفع مصدرٍ لم يتغيّر، وقرارُه معه', async () => {
+  const preview = await lib.diffChunks(env, lib.parseJsonl(SEVENTH.join('\n')).rows);
+  assert.equal(preview.changed, 0, 'المقارنة تعدّ التحرير الباقي تغيّراً: ' + JSON.stringify(preview.changes.map((c) => c.id)));
+  const before = q("SELECT embed_hash FROM legal_chunks WHERE id = 'سابعة/1'")[0].embed_hash;
+  const res = await lib.upsertLegalChunks(env, lib.parseJsonl(SEVENTH.join('\n')).rows, { importId: 'imp-7b', actorId: 'مسؤول' });
+  assert.equal(res.archived, 0, 'أُرشف التحرير كأنه أُزيح');
+  const row = q("SELECT text, text_original_import, review_status, reviewed_by, review_note, embed_hash, text_versions FROM legal_chunks WHERE id = 'سابعة/1'")[0];
+  assert.match(row.text, /بعد أن حرّره المراجع/, 'دفعةٌ لم يتغيّر مصدرُها دهست التحرير');
+  assert.equal(row.text_original_import, 'نصُّ المصدر للمادة الأولى قبل تحرير المراجع.');
+  assert.equal(row.review_status, 'edited');
+  assert.equal(row.reviewed_by, 'مراجعٌ أوّل');
+  assert.equal(row.review_note, 'دُمجت الفقرة (أ) يدوياً.');
+  assert.equal(row.embed_hash, before, 'أُعيد تضمينُ ما لم يتغيّر');
+  assert.equal(JSON.parse(row.text_versions).find((v) => v.current).text, row.text, 'الخطّ الزمني يكذّب النصّ الباقي');
+});
+
+await check('٢٥ · ومصدرٌ تغيّر يُعيدها إلى الطابور بأثر اعتمادها — لا مصفَّرة', async () => {
+  const changed = SEVENTH.map((l, i) => (i === 0
+    ? R6({ id: 'سابعة/1', article_no: 1, text: 'نصُّ المصدر للمادة الأولى بعد تعديلٍ ثانٍ صدر لاحقاً.',
+        amendment_kind: 'تعديل فقرة', amendments_raw: 'تُعدَّل الفقرة (أ) ثم الفقرة (ج).' })
+    : l));
+  await lib.upsertLegalChunks(env, lib.parseJsonl(changed.join('\n')).rows, { importId: 'imp-7c', actorId: 'مسؤول الاستيراد' });
+  const row = q("SELECT text, review_status, reviewed_by, prior_review_status, prior_reviewed_by, prior_review_text, prior_review_note FROM legal_chunks WHERE id = 'سابعة/1'")[0];
+  assert.match(row.text, /تعديلٍ ثانٍ/);
+  assert.equal(row.review_status, 'pending', 'نصٌّ جديد بقي معتمداً بقرارٍ على غيره');
+  assert.equal(row.reviewed_by, null);
+  assert.equal(row.prior_review_status, 'edited', 'سقط الاعتماد بلا أثر');
+  assert.equal(row.prior_reviewed_by, 'مراجعٌ أوّل');
+  assert.match(row.prior_review_text, /بعد أن حرّره المراجع/, 'النصّ الذي اعتُمد لم يُحفظ');
+  assert.equal(row.prior_review_note, 'دُمجت الفقرة (أ) يدوياً.');
+  const amendment = await lib.getChunkAmendment(env, 'سابعة/1');
+  assert.equal(amendment.prior_review?.status, 'edited', 'نافذة المراجعة لا ترى الاعتماد السابق');
+  assert.match(amendment.prior_review.text, /بعد أن حرّره المراجع/);
+  // والمادة في الطابور ليراها المراجع — لم تُحجب ولم تُعتمد تلقائياً.
+  const queue = await lib.listReviewQueue(env, { lawId: 'seventh', limit: 50 });
+  assert.ok(ids(queue.articles).includes('سابعة/1'));
+});
+
+await check('٢٥ · وسقوطُ القرار يُقيَّد في سجلّ التدقيق بصاحب الدفعة', async () => {
+  const trail = await lib.listReviewAudit(env, { chunkId: 'سابعة/1' });
+  const reset = trail.find((e) => e.via === 'import');
+  assert.ok(reset, 'سقوطُ الاعتماد بدفعةٍ لم يُقيَّد: ' + JSON.stringify(trail.map((e) => [e.field, e.via])));
+  assert.equal(reset.field, 'review_status');
+  assert.equal(reset.old_value, 'edited');
+  assert.equal(reset.new_value, 'pending');
+  assert.equal(reset.actor_id, 'مسؤول الاستيراد');
+  // ودفعةٌ لم تُسقط قراراً لا تُقيِّد شيئاً.
+  assert.equal(trail.filter((e) => e.via === 'import').length, 1, 'قُيِّد سقوطٌ لم يقع');
+});
+
+await check('٢٥ · مرشّحُ نوع التعديل حيٌّ من القاعدة، ويحصر الطابور', async () => {
+  const kinds = await lib.listReviewKinds(env, { lawId: 'seventh' });
+  const byKind = Object.fromEntries(kinds.map((k) => [k.kind, k.pending]));
+  assert.equal(byKind['تعديل فقرة'], 2, JSON.stringify(kinds));
+  assert.equal(byKind['إضافة مادة'], 1);
+  const one = await lib.listReviewQueue(env, { lawId: 'seventh', amendmentKind: 'إضافة مادة', limit: 50 });
+  assert.deepEqual(ids(one.articles), ['سابعة/2']);
+  assert.equal(one.total, 1);
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /app\.get\('\/review\/kinds', requireAdmin/, 'لا مسار لأنواع التعديل');
+  assert.equal((routes.match(/amendmentKind: c\.req\.query\('amendment_kind'\)/g) ?? []).length, 3,
+    'مرشّح النوع لا يصل الطابور واللوحة والتحديد الشامل معاً');
+});
+
+// ── ٢٦ · حالُ ما سبق عمودَها — تُشتقّ مرّةً في الهجرة لا في كل عرض (§3-4) ──
+// مادتان تُحاكيان ما استُورد قبل 0017: لا خطَّ زمنيّاً لهما، وحالُهما «نافذ»
+// بالافتراض. وثالثةٌ بعدها قال ملفُّها «نافذ» وتعديلُها لم يُدمج — أو صعّدها
+// مراجعٌ بعد أن قرأ ألواحها. وهذه لا يمسّها شيء.
+const EIGHTH = [
+  v6line({ id: 'ثامنة/1', law_id: 'eighth', law_name: 'نظام الثامنة', article_no: 1,
+    text: 'تُحسب مدة التقادم الخاصة بدعاوى الأجور المتأخرة من تاريخ استحقاقها.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'ثامنة/2', law_id: 'eighth', law_name: 'نظام الثامنة', article_no: 2,
+    text: 'تُرفع دعوى التعويض عن الضرر الجسدي خلال سنةٍ من وقوعه.', retrieval_status: 'نافذ' }),
+  v6line({ id: 'ثامنة/3', law_id: 'eighth', law_name: 'نظام الثامنة', article_no: 3,
+    text: 'يُقيَّد طلب التسوية الودية للنزاعات العمالية في سجلّ الهيئة المختصة.', retrieval_status: 'نافذ' }),
+];
+await lib.upsertLegalChunks(env, lib.parseJsonl(EIGHTH.join('\n')).rows, { importId: 'imp-8' });
+q(`UPDATE legal_chunks SET text_versions = NULL, has_amendments = 1, amendment_applied = 0,
+     amendment_instrument = 'م/7', retrieval_warning = NULL WHERE id = 'ثامنة/1'`);
+q("UPDATE legal_chunks SET text_versions = NULL, is_repealed = 1, status = 'repealed' WHERE id = 'ثامنة/2'");
+q(`UPDATE legal_chunks SET has_amendments = 1, amendment_applied = 0, amendment_instrument = 'م/8',
+     retrieval_warning = NULL WHERE id = 'ثامنة/3'`);
+sqlite.exec(await readFile(path.join(ROOT, 'migrations', '0030_retrieval_status_backfill.sql'), 'utf8'));
+
+await check('٢٦ · ما سبق عمودَ الحال يأخذ حالَه من الهجرة — وما قال ملفُّه قولَه لا يُمسّ', () => {
+  const at = (id) => q('SELECT retrieval_status, retrieval_warning FROM legal_chunks WHERE id = ?', id)[0];
+  assert.equal(at('ثامنة/1').retrieval_status, lib.RETRIEVAL_WARNING, 'تعديلٌ لم يُدمج بقي «نافذ» بلا تحذير');
+  assert.equal(at('ثامنة/1').retrieval_warning, lib.AMENDMENT_NOTICE, 'التحذير بغير لفظه المسجَّل');
+  assert.equal(at('ثامنة/2').retrieval_status, 'repealed', 'الملغاة بقيت «نافذة» في عمودها');
+  assert.equal(at('ثامنة/3').retrieval_status, lib.RETRIEVAL_EFFECTIVE, 'الهجرة مسّت ما قال ملفُّه «نافذ»');
+  assert.equal(at('ثامنة/3').retrieval_warning, null);
+});
+
+await check('٢٦ · ولا تحذيرَ يُشتقّ في سياق المساعد من الحقول — التنبيه من الحال وحدها', async () => {
+  const blockOf = async (query, text) => {
+    const context = lib.formatRagContext(await lib.retrieve(env, [query], 10));
+    const block = context.split('\n\n---\n\n').find((b) => b.includes(text));
+    assert.ok(block, 'المادة لم تبلغ السياق: ' + context.slice(0, 1200));
+    return block;
+  };
+  const kept = await blockOf('طلب التسوية الودية للنزاعات العمالية', 'طلب التسوية الودية');
+  // سطرُ التنبيه يبدأ به السطر — والكلمة نفسها في تمهيد السياق لا تُحسب.
+  assert.ok(!/^تنبيه:/m.test(kept), 'تحذيرٌ اشتُقّ لمادةٍ حالُها «نافذ»: ' + kept);
+  const legacy = await blockOf('مدة التقادم الخاصة بدعاوى الأجور المتأخرة', 'مدة التقادم');
+  assert.ok(legacy.includes(`تنبيه: ${lib.AMENDMENT_NOTICE}`), 'المادة القديمة فقدت تحذيرها: ' + legacy);
+});
+
+await check('٢٦ · وسببُ غياب المادة عن استدعائها بمعرّفها بالشرط الذي يحجبها — لا بعمودها', async () => {
+  // حلّ تاريخُ إلغائها المجدول بعد رفعها وعمودُها «نافذ»: ملغاةٌ اليوم لا
+  // «بانتظار المراجعة». والتاريخ يُنقل إلى الماضي كما في ٢٤، ثم يُردّ.
+  q("UPDATE legal_chunks SET scheduled_repeal_from = ? WHERE id = 'سادسة/art-004'", PAST);
+  try {
+    assert.equal(q("SELECT retrieval_status FROM legal_chunks WHERE id = 'سادسة/art-004'")[0].retrieval_status,
+      lib.RETRIEVAL_EFFECTIVE, 'الفحص لا يفحص شيئاً: العمود ليس «نافذ»');
+    assert.equal(await lib.getChunkById(env, 'سادسة/art-004'), null);
+    assert.equal(await lib.hiddenReason(env, 'سادسة/art-004'), 'repealed');
+  } finally {
+    q("UPDATE legal_chunks SET scheduled_repeal_from = ? WHERE id = 'سادسة/art-004'", FUTURE);
+  }
+  assert.equal(await lib.hiddenReason(env, 'ثامنة/2'), 'repealed');
+  assert.equal(await lib.hiddenReason(env, 'لا-وجود-لها/art-1'), 'missing');
+  // ومحجوبةٌ لعطبٍ تنتظر المراجعة — لا ملغاة.
+  q("UPDATE legal_chunks SET needs_review = 1, has_defect = 1, defect_kind = 'preamble_leak', review_status = 'pending' WHERE id = 'ثامنة/3'");
+  try {
+    assert.equal(await lib.getChunkById(env, 'ثامنة/3'), null, 'المعطوبة لم تُحجب — الفحص لا يفحص شيئاً');
+    assert.equal(await lib.hiddenReason(env, 'ثامنة/3'), 'review');
+  } finally {
+    q("UPDATE legal_chunks SET needs_review = 0, has_defect = 0, defect_kind = NULL WHERE id = 'ثامنة/3'");
+  }
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /const reason = await hiddenReason\(c\.env, id\)/, 'مسار المادة لا يسأل عن السبب بالشرط');
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');

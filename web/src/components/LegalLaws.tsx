@@ -9,9 +9,18 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw, type LegalStats } from '../lib/api';
 import { formatDate, formatNumber } from '../lib/format';
+import { Icon, ICON_SM } from '../lib/icons';
 import { useScrollReset } from '../lib/scrollBox';
 import { docTypeLabel } from '../lib/labels';
-import { ArticleCard, ArticleFlags, ArticleNotices, groupArticleParts } from './LegalArticleView';
+import {
+  ArticleCard,
+  ArticleFlags,
+  ArticleName,
+  ArticleNotices,
+  LawIdentity,
+  LawTags,
+  groupWithAttachments,
+} from './LegalArticleView';
 
 /** أسماء الحقول التي تُقارَن، بالعربية — كما في نافذة إعادة الرفع. */
 const FIELD_LABELS: Record<string, string> = {
@@ -82,26 +91,9 @@ export function LegalLaws({ stats }: { stats?: LegalStats | null }) {
 
   return (
     <>
-      {/* حالُ المتن — ما يُسترجَع منه وما خرج وما ينتظر دمج تعديله. كان في
-          آخر شاشة الاستيراد بجانب أعداد شريط الحال نفسها، فيُقرأ العدد
-          الواحد في موضعين. وموضعه هنا: وصفُ ما في القاعدة لا وصفُ إضافةٍ
-          تجري. */}
-      {stats && stats.chunks > 0 ? (
-        <dl className="kb-counts kb-counts--inline">
-          <div className="kb-count">
-            <dt>الداخلة في الاسترجاع</dt>
-            <dd><bdi>{formatNumber(stats.effective)}</bdi></dd>
-          </div>
-          <div className="kb-count">
-            <dt>المنسوخة</dt>
-            <dd><bdi>{formatNumber(stats.repealed)}</bdi></dd>
-          </div>
-          <div className="kb-count">
-            <dt>تعديل غير مطبَّق</dt>
-            <dd><bdi>{formatNumber(stats.amendment_pending)}</bdi></dd>
-          </div>
-        </dl>
-      ) : null}
+      {/* صحّةُ القاعدة (§6-7) — وصفُ ما فيها لا وصفُ إضافةٍ تجري، فموضعُها
+          هنا لا في شاشة الاستيراد. */}
+      {stats && stats.chunks > 0 ? <KbHealth stats={stats} /> : null}
 
       <div className="search-page-box">
         <input placeholder="ابحث باسم النظام أو في نصّ مواده" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -114,9 +106,12 @@ export function LegalLaws({ stats }: { stats?: LegalStats | null }) {
             <article key={a.id} className="legal-article">
               <h4>
                 <bdi>{a.lawTitle ?? ''}</bdi>
-                {a.articleNo ? <span className="pill pending">المادة <bdi>{a.articleNo}</bdi></span> : null}
+                <LawTags repealed={a.lawRepealed} pending={a.lawPending} from={a.lawEffectiveFrom} />
+                <span className="pill pending"><ArticleName a={a} /></span>
                 <ArticleFlags a={a} />
               </h4>
+              {/* نظامان باسمٍ واحد يُفرَّق بينهما هنا — بأداتهما وتاريخهما (§7-2). */}
+              <LawIdentity a={a} />
               {/* التنبيه يلاحق النصّ حيث عُرض: نتيجةُ بحثٍ تُنسخ إلى مذكرة
                   كما تُنسخ من صفحة النظام، ونصٌّ أصليّ بلا تنبيهه يُستشهد به
                   على أنه الجاري. */}
@@ -136,7 +131,82 @@ export function LegalLaws({ stats }: { stats?: LegalStats | null }) {
   );
 }
 
+/**
+ * صحّة القاعدة — عدٌّ حيّ يُقابَل ببيان آخر دفعة (§6-7).
+ *
+ * توزيعُ حال الاسترجاع بألفاظه المسجَّلة الثلاثة، وما يجب أن يكون في الفهرس
+ * المتجهي مقابَلاً بما فيه فعلاً. والفهرسُ يُسأل عن عدده مرّةً عند فتح القسم لا
+ * مع جسّ الشريط: نداءٌ خارج القاعدة لا يستحقّ إيقاع خمس ثوانٍ.
+ */
+function KbHealth({ stats }: { stats: LegalStats }) {
+  const [vectors, setVectors] = useState<LegalStats['vectors'] | null>(null);
+
+  useEffect(() => {
+    // نداءٌ يبدؤه القارئ بفتح القسم لا مؤقّت، فلا يحمل وسمَ الجسّ الدوريّ.
+    api
+      .legalStats(false, true)
+      .then((r) => setVectors(r.vectors ?? null))
+      .catch(() => setVectors(null));
+  }, []);
+
+  return (
+    <section aria-label="صحّة القاعدة">
+      <div className="kb-section">صحّة القاعدة</div>
+      <dl className="kb-counts kb-counts--inline">
+        <HealthCount label="المواد" value={stats.chunks} />
+        <HealthCount label="نافذ" value={stats.retrieval.effective} />
+        <HealthCount label="نافذ بتحذير" value={stats.retrieval.warning} />
+        <HealthCount label="ملغاة" value={stats.retrieval.repealed} />
+        <HealthCount label="تُفهرَس" value={stats.indexed} />
+        {/* ما في الفهرس فعلاً — وشرطةٌ لا صفر حين لم يُسأل أو لم يُهيَّأ:
+            صفرٌ يُقرأ خبراً عن فهرسٍ فارغ. */}
+        <HealthCount label="في الفهرس المتجهي" value={vectors?.actual ?? undefined} />
+      </dl>
+      {vectors?.orphans ? (
+        <p className="kb-index warn">
+          <Icon.warning size={ICON_SM} aria-hidden />
+          <span>
+            في الفهرس المتجهي ما لا سجلَّ له — <bdi>{formatNumber(vectors.orphans)}</bdi>
+          </span>
+        </p>
+      ) : null}
+      {stats.stale_vector ? (
+        <p className="kb-index warn">
+          <Icon.warning size={ICON_SM} aria-hidden />
+          <span>
+            موادّ ملغاة بقي لها متجه — <bdi>{formatNumber(stats.stale_vector)}</bdi> — يُحذف في دورة التضمين التالية
+          </span>
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function HealthCount({ label, value }: { label: string; value?: number }) {
+  return (
+    <div className="kb-count">
+      <dt>{label}</dt>
+      <dd>{value === undefined ? '—' : <bdi>{formatNumber(value)}</bdi>}</dd>
+    </div>
+  );
+}
+
+/**
+ * نظامان باسمٍ واحد — القديم اللاغي وخلفُه، أو نسختان ساريتان — يُفرَّق بينهما
+ * بأداة الإصدار وتاريخه لا بالاسم وحده (§7-2). ويُكتب الفارق حين يلزم وحده:
+ * سطرٌ ثانٍ تحت واحدٍ وسبعين اسماً ضجيجٌ لا تمييز.
+ */
+function sharedTitles(laws: LegalLaw[]): Set<string> {
+  const seen = new Map<string, number>();
+  for (const l of laws) {
+    const t = l.law_title || l.law_id;
+    seen.set(t, (seen.get(t) ?? 0) + 1);
+  }
+  return new Set([...seen].filter(([, n]) => n > 1).map(([t]) => t));
+}
+
 function LawsTable({ laws, onOpen }: { laws: LegalLaw[]; onOpen: (id: string) => void }) {
+  const shared = sharedTitles(laws);
   return (
     <div className="table-scroll">
       <table className="data-table">
@@ -153,7 +223,15 @@ function LawsTable({ laws, onOpen }: { laws: LegalLaw[]; onOpen: (id: string) =>
         <tbody>
           {laws.map((l) => (
             <tr key={l.law_id}>
-              <td><bdi>{l.law_title || l.law_id}</bdi></td>
+              <td>
+                <bdi>{l.law_title || l.law_id}</bdi>
+                <LawTags repealed={!!l.law_repealed} pending={!!l.law_pending} from={l.law_effective_from} />
+                {shared.has(l.law_title || l.law_id) ? (
+                  <p className="legal-notice-meta">
+                    <bdi>{[[l.instrument, l.instrument_no].filter(Boolean).join(' '), l.issue_date_hijri].filter(Boolean).join(' — ') || l.law_id}</bdi>
+                  </p>
+                ) : null}
+              </td>
               <td>{docTypeLabel(l.doc_type)}</td>
               <td><bdi>{formatNumber(l.chunks)}</bdi></td>
               <td><bdi>{formatNumber(l.effective)}</bdi></td>
@@ -219,7 +297,10 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
 
       {law ? (
         <div className="law-head">
-          <h3><bdi>{law.law_title || law.law_id}</bdi></h3>
+          <h3>
+            <bdi>{law.law_title || law.law_id}</bdi>
+            <LawTags repealed={!!law.law_repealed} pending={!!law.law_pending} from={law.law_effective_from} />
+          </h3>
           <p>
             {[
               docTypeLabel(law.doc_type) === '—' ? null : docTypeLabel(law.doc_type),
@@ -350,19 +431,22 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
       {/* أجزاء المادة الواحدة تُعرض متتابعةً تحت عنوانٍ واحد: `#a` و`#b` مادةٌ
           واحدة قُسّمت لطولها، وعرضُها مادتين يجعل النظام يبدو ذا مادتين
           برقمٍ واحد. */}
-      {groupArticleParts(articles).map((group, i, all) => {
+      {groupWithAttachments(articles).map(({ group, attachments }, i, all) => {
         /* الباب والفصل عنوانٌ يظهر عند تغيّره لا مع كل مادة: تكرارُه على
            مئتَي مادة ضجيج، وغيابُه يجعل المواد قائمةً بلا بنية. ونصُّه من
            الملف كما ورد — لا لفظَ من عندنا. ويظهر في رأس كل صفحة ولو لم
-           يتغيّر عن سابقتها، فقارئُ الصفحة الثانية لم يرَ الأولى. */
+           يتغيّر عن سابقتها، فقارئُ الصفحة الثانية لم يرَ الأولى.
+
+           والمرفقُ تحت مادته لا بطاقةً تليها (§7-2)، والملحقُ بعنوانه بعد
+           مواد نظامه — والترتيب ترتيبُ الملف. */
         const heading = sectionHeading(group[0]);
-        const previous = i > 0 ? sectionHeading(all[i - 1][0]) : null;
+        const previous = i > 0 ? sectionHeading(all[i - 1].group[0]) : null;
         return (
           <Fragment key={group[0].id}>
             {heading && (i === 0 || heading !== previous) ? (
               <div className="kb-section"><bdi>{heading}</bdi></div>
             ) : null}
-            <ArticleCard group={group} />
+            <ArticleCard group={group} attachments={attachments} />
           </Fragment>
         );
       })}
