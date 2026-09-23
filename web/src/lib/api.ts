@@ -690,6 +690,31 @@ export interface LegalImportRecord {
   parts?: number;
 }
 
+/** ما سيقع إن كُتبت دفعةٌ جُمعت — يُعرض قبل الكتابة. */
+export interface LegalCommitPlan {
+  batch_id: string;
+  state: string;
+  staged: number;
+  laws: number;
+  /** أسطرٌ تُخطّيت عند الرفع — ولا حذفَ معها لما غاب. */
+  failed: number;
+  /** ما في القاعدة من أنظمة الملف ولم يرد فيه. */
+  orphans: number;
+  locked: string[];
+}
+
+/** أين بلغت كتابة الدفعة — وأثرُها حتى الآن. */
+export interface LegalCommitProgress {
+  done: boolean;
+  remaining: number;
+  inserted: number;
+  updated: number;
+  archived: number;
+  superseded: number;
+  deleted: number;
+  import_id: string | null;
+}
+
 /** سطرٌ رُفض، برقمه في الملف وسببه. */
 export interface LegalLineError {
   line: number;
@@ -735,6 +760,8 @@ export interface LegalImportReport {
   amendment_pending?: number;
   /** سجلاتٌ لم تمرّ بختم الحالة. */
   unstamped?: number;
+  /** ما جُمع من الجزء جانباً — في `stage` وحده. */
+  staged?: number;
   pending_embeddings?: number;
   error?: string;
 }
@@ -948,6 +975,26 @@ export const api = {
    * ختام الدفعة: ما في القاعدة من أنظمتها ولم يرد فيها. وبـ`apply` يُحذف —
    * والخادم يرفض الحذف على دفعةٍ تُخطّيت منها أسطر.
    */
+  /**
+   * إتمامُ دفعةٍ جُمعت: بلا `apply` يُردّ ما سيقع (ومنه عدُّ الغائب لسؤال الحذف)،
+   * وبه تُكتب خطوة — ويُنادى حتى يعود `done`. وما تعذّر يُردّ في الخادم كلُّه،
+   * ويرمي بجملته.
+   */
+  legalCommit: (batch: string, opts: { apply?: boolean; prune?: boolean } = {}) =>
+    req<LegalCommitPlan & LegalCommitProgress>(
+      `/legal/commit?${new URLSearchParams({
+        batch,
+        ...(opts.apply ? { apply: '1' } : {}),
+        ...(opts.prune ? { prune: '1' } : {}),
+      })}`,
+      { method: 'POST' }
+    ),
+  /** إلغاءُ دفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ. */
+  legalAbort: (batch: string) =>
+    req<{ ok: boolean; restored: number; removed: number }>(
+      `/legal/abort?${new URLSearchParams({ batch })}`,
+      { method: 'POST' }
+    ),
   legalFinalize: (batch: string, apply = false) =>
     req<{ ok: boolean; applied: boolean; count?: number; deleted?: number; skipped?: number; error?: string }>(
       `/legal/finalize?${new URLSearchParams({ batch, ...(apply ? { apply: '1' } : {}) })}`,
@@ -996,6 +1043,8 @@ export const api = {
       batch?: string;
       /** بصمة الملف كاملاً — تُقيَّد في سجلّ الدفعات. */
       sha256?: string;
+      /** يُجمع الجزء جانباً ولا يُكتب — الملف يُكتب كاملاً بـ`legalCommit`. */
+      stage?: boolean;
     } = {}
   ): Promise<LegalImportReport> => {
     const query = new URLSearchParams({
@@ -1006,6 +1055,7 @@ export const api = {
       ...(opts.correction ? { correction: '1' } : {}),
       ...(opts.batch ? { batch: opts.batch } : {}),
       ...(opts.sha256 ? { sha256: opts.sha256 } : {}),
+      ...(opts.stage ? { stage: '1' } : {}),
     });
     const res = await fetch(`/api/legal/import?${query}`, {
       method: 'POST',

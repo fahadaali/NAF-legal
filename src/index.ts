@@ -24,7 +24,7 @@ import clauseRoutes from './routes/clauses';
 import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
 import legalRoutes from './routes/legal';
-import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding } from './cron';
+import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
 import type { Env, Variables } from './types';
@@ -205,6 +205,17 @@ app.get('*', async (c) => {
   return new Response(res.body, res);
 });
 
+/**
+ * نبضةُ مهامّ الليل: الثالثة فجراً بتوقيت غرينتش، كما كان مؤقّتُها وحده.
+ *
+ * المؤقّت الوحيد في `wrangler.toml` كل عشر دقائق، و`scheduledTime` وقتُ النبضة
+ * المقصود لا وقتُ وصولها — فنبضةُ ٠٣:٠٠ تُعرف بدقيقتها بالضبط.
+ */
+function isNightlyTick(scheduledTime: number): boolean {
+  const at = new Date(scheduledTime);
+  return at.getUTCHours() === 3 && at.getUTCMinutes() === 0;
+}
+
 export default {
   fetch: app.fetch,
 
@@ -218,7 +229,10 @@ export default {
    * وكلُّ واحدةٍ تبتلع خطأها في موضعها أيضاً؛ وهذا حارسٌ ثانٍ على ما قد
    * يُكتب غداً: مهمّةٌ خامسة تُضاف بلا `try` لا تُسقط من قبلها.
    */
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // ردُّ دفعات الاستيراد المتروكة في كل نبضة، ومهامُّ الليل في نبضتها وحدها.
+    ctx.waitUntil(runImportRecovery(env).then(() => {}));
+    if (!isNightlyTick(event.scheduledTime)) return;
     ctx.waitUntil(
       Promise.allSettled([
         runTrackingScan(env),
