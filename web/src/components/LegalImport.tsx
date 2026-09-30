@@ -7,6 +7,8 @@
 // ولا أيقونة في متن هذه الشاشة: أيقونة «استيراد» (`Import`) على بطاقة مصدرها
 // في «الإضافة» وحدها، فهي تفرّق المسار عن أخويه عند الاختيار. وتكرارُها هنا
 // يعلو نموذجاً اختير سلفاً — والمختار لا يُعرَّف بنفسه ثانيةً.
+// وما في المتن من أيقونات حالٍ لا فعل: شريطا الوقوف — انتهاء الجلسة و«لم يكتمل
+// استيراد» — ولونُ الحال لا يُقال بلونه وحده.
 import { useEffect, useRef, useState } from 'react';
 import { api, SessionExpired, type LegalImportDiff, type LegalImportRecord, type LegalImportReport } from '../lib/api';
 import { renewSessionInWindow } from '../lib/session';
@@ -598,6 +600,7 @@ export function LegalImport() {
       {/* استيرادٌ سابق لم يكتمل — والملف يُختار ثانيةً، فالمتصفّح لا يحفظ ملفاً. */}
       {!busy && pendingImport ? (
         <div className="import-held" role="status">
+          <Icon.importPaused size={ICON_SM} aria-hidden />
           <span>
             لم يكتمل استيراد <bdi>{pendingImport.name}</bdi>: رُفع <bdi>{formatNumber(pendingImport.partsDone)}</bdi> من{' '}
             <bdi>{formatNumber(pendingImport.parts)}</bdi> جزءاً. اختر الملف نفسه ليكمل من حيث توقف.

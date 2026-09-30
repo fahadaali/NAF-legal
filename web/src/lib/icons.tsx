@@ -41,6 +41,7 @@ import {
   CircleAlert,
   CircleCheck,
   CircleHelp,
+  CirclePause,
   CircleSlash,
   CircleX,
   Clock,
@@ -159,6 +160,8 @@ export const Icon = {
   // صفّ لها، ولا `CircleCheck`: صحٌّ أخضر على وثيقةٍ لم تُقرأ يُقرأ اعتماداً.
   embedding: LoaderCircle, // جارٍ التضمين — عملٌ يجري، كـ«جارٍ التنفيذ»
   awaitingIndex: Unplug,   // بانتظار الفهرس — مرفقٌ لم يُوصَل، وليست Clock ولا Link2Off
+  // استيرادٌ لم يكتمل — naf-icons.md تحت العنوان نفسه. وقفةٌ تُكمَل، لا فشل ولا انتظارُ مراجع.
+  importPaused: CirclePause,
   // الحالات
   approved: CircleCheck,   // معتمد
   pendingReview: Clock,    // بانتظار المراجعة
