@@ -703,6 +703,17 @@ a { color: var(--primary); }
   font-size: var(--text-sm); line-height: var(--text-sm--line-height); text-align: center;
 }
 .session-bar .btn-sm { background: var(--card); color: var(--foreground); }
+/* وقوفُ الاستيراد — انتهت الجلسة في منتصفه، أو لم يكتمل من قبل. لونُ شريط الجلسة
+   نفسه، فالمعنى واحد: عملٌ ينتظر دخولاً أو ملفاً، لا خطأ. */
+.import-held {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  padding: var(--space-3); margin-bottom: var(--space-4);
+  background: var(--warning-soft); color: var(--warning-strong);
+  border: 1px solid var(--warning); border-radius: var(--radius-md);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height);
+}
+.import-held .btn-sm { background: var(--card); color: var(--foreground); }
+.import-held-error { flex-basis: 100%; color: var(--destructive-strong); }
 .modal-actions .btn-sm { display: inline-flex; align-items: center; gap: var(--space-1); }
 
 /* مبدّلة منظرَي المرفق — الملف والنصّ المستخرَج. زرّان متلاصقان لا تبويبان:
