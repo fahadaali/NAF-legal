@@ -31,6 +31,14 @@
 //                       الملف ولم يرد فيه، يُحذف مع كل نظامٍ وهو مجمَّد. ويُقاس
 //                       على الملف كلِّه بعد جمعه — قياسُ الزائد على جزءٍ منه
 //                       محوُ نظامٍ لا تنظيفُ أثر. وبلا `--prune` يُعدّ ولا يُحذف
+//   --resume <دفعة>     إكمالُ دفعةٍ انقطعت: معرّفُها كما طُبع عند الانقطاع
+//   --from-part <رقم>   الجزء الذي يبدأ منه الإكمال (مع `--resume` وحده)
+//
+// **وانتهاءُ جلسة الدخول لا يُسقط ما رُفع.** الكوكي يعيش ربع ساعة، وملفٌّ كبير
+// يتجاوزه. فعند ٤٠١ تقف الأداة ولا تُلغي الدفعة، وتطبع أمرَ الإكمال كاملاً إلا
+// الكوكي: `--resume` بمعرّف الدفعة و`--from-part` بالجزء الذي لم يُجمع. والأجزاء
+// المجموعة باقيةٌ في المنصة يوماً (`STAGING_TTL_MS`). والإكمال لا يُعيد المقارنة:
+// قرأت الملف كلَّه قبل الانقطاع. و`--batch` يُعاد بقيمته، فحدودُ الأجزاء منه.
 //
 // و«قبول الصالح» مطفأٌ هنا وفي شاشة الإدارة: الدفعة تنجح كاملة أو تُلغى كاملة.
 // و«بناء نصّ التضمين» مطفأٌ هنا ومفعَّلٌ في الشاشة: أمرٌ في طرفية يُكتب مرّة
@@ -69,8 +77,23 @@ const correction = args.has('correction');
 const prune = args.has('prune');
 const checkOnly = args.has('check-only');
 const preview = !args.has('no-preview');
+const resume = args.get('resume');
+const fromPart = Math.max(1, Number(args.get('from-part') ?? 1));
+if (resume === 'true') {
+  console.error('المطلوب: --resume <معرّف الدفعة> كما طُبع عند الانقطاع');
+  process.exit(1);
+}
+if (args.has('from-part') && !resume) {
+  console.error('--from-part يُستعمل مع --resume وحده');
+  process.exit(1);
+}
+if (resume && checkOnly) {
+  console.error('--check-only لا يجتمع مع --resume: الدفعة المنقطعة قورنت قبل أن تُجمع');
+  process.exit(1);
+}
 // معرّفٌ يجمع أجزاء الملف الواحد. بلا هذا لا تُعرف الدفعة التامّة عند الختام.
-const batchId = randomUUID();
+// وفي الإكمال هو معرّفُ الدفعة المنقطعة نفسها، فيُلحق ما بقي بما جُمع.
+const batchId = resume ?? randomUUID();
 
 if (!cookie) {
   console.error('المطلوب: --cookie "naf_session=…" أو متغيّر البيئة NAF_COOKIE');
@@ -108,7 +131,47 @@ console.log(
     (correction ? ' · تصحيح بيانات' : '')
 );
 console.log(`بصمة الملف: ${sha256}`);
+console.log(`الدفعة: ${batchId}${resume ? ` · إكمالٌ من الجزء ${fromPart}` : ''}`);
 console.log(`الوجهة: ${endpoint}\n`);
+
+/** خيارات التشغيل كما هي إلا الكوكي، ومعها موضع الإكمال. */
+function resumeFlags(part) {
+  return [
+    `--file ${JSON.stringify(file)}`,
+    `--url ${origin}`,
+    `--batch ${batchSize}`,
+    ...(partial ? ['--partial'] : []),
+    ...(buildEmbedText ? ['--build-embed-text'] : []),
+    ...(correction ? ['--correction'] : []),
+    ...(prune ? ['--prune'] : []),
+    `--resume ${batchId}`,
+    `--from-part ${part}`,
+  ];
+}
+
+/**
+ * انتهت جلسة الدخول: تقف الأداة ولا تُلغي شيئاً، وتطبع أمر الإكمال.
+ *
+ * `part` الجزء الذي لم يُجمع — وبعد آخر جزء (`of + 1`) يعني أن الجمع تمّ وأن
+ * الإكمال يبدأ من الكتابة. والكوكي لا يُطبع: سرٌّ في سجلّ طرفية يبقى بعد
+ * انتهائه، والجديد يُلصق بيد صاحبه.
+ */
+function sessionExpired(part, of) {
+  const flags = resumeFlags(part);
+  console.error(
+    part > of
+      ? `\nانتهت جلسة الدخول بعد جمع الأجزاء كلِّها (${of}/${of}) — لم يُلغَ شيء.`
+      : `\nانتهت جلسة الدخول عند الجزء ${part}/${of} — لم يُلغَ شيء، وما جُمع قبله محفوظ يوماً.`
+  );
+  console.error('أعِد التشغيل بكوكي جديد (في NAF_COOKIE أو --cookie):');
+  printResume(flags);
+}
+
+/** يطبع أمر الإكمال ويقف. رمز الخروج ٢: توقّفٌ يُكمَل، لا رفضٌ (١). */
+function printResume(flags) {
+  console.error(`  npm run import:legal -- ${flags.join(' ')}`);
+  process.exit(2);
+}
 
 /**
  * المقارنة قبل الكتابة — الخطوة الأرخص وأنفعُ من أيّ تراجع.
@@ -120,10 +183,15 @@ console.log(`الوجهة: ${endpoint}\n`);
 async function comparefirst() {
   const res = await fetch(`${endpoint}&dry_run=1`, {
     method: 'POST',
-    headers: { 'content-type': 'application/x-ndjson', cookie },
+    headers: { 'content-type': 'application/x-ndjson', accept: 'application/json', cookie },
     body: lines.join('\n'),
   });
   const r = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    // لم يُجمع شيء بعد: لا دفعة تُكمَل، والتشغيل نفسه يُعاد بكوكي جديد.
+    console.error('\nانتهت جلسة الدخول قبل المقارنة — لم يُرفع شيء. أعِد التشغيل بكوكي جديد.');
+    process.exit(2);
+  }
   if (!res.ok) {
     console.error(`\nالمقارنة رُفضت (${res.status}): ${r.error ?? ''}`);
     for (const g of r.error_summary ?? []) console.error(`  ${g.count} سطراً: ${g.error}`);
@@ -157,7 +225,10 @@ async function comparefirst() {
 // ما يُعرف من الجمع؛ والجديد والمستبدَل والمحذوف من الكتابة نفسها.
 const totals = { failed: 0, withheld: 0, amendmentPending: 0 };
 
-if (preview || checkOnly) {
+if (resume) {
+  // المقارنة قرأت الملف كلَّه قبل الانقطاع، وقرارُها أُخذ — فلا تُعاد.
+  console.log('إكمال: المقارنة جرت قبل الانقطاع فلا تُعاد.\n');
+} else if (preview || checkOnly) {
   await comparefirst();
   if (checkOnly) {
     console.log('مقارنةٌ بلا كتابة — لم يُكتب شيء.');
@@ -165,36 +236,51 @@ if (preview || checkOnly) {
   }
 }
 
+/* `accept` صريحاً: الوسيط يفرّق التصفّح عن النداء البرمجي بطبيعة الطلب، ونداءٌ
+   يطلب JSON يأخذ ٤٠١ عند انتهاء الجلسة لا تحويلةً إلى صفحة الدخول. */
 const post = (url) =>
-  fetch(url, { method: 'POST', headers: { cookie } }).then(async (r) => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) }));
+  fetch(url, { method: 'POST', headers: { accept: 'application/json', cookie } }).then(async (r) => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) }));
 const commitUrl = (extra = {}) => `${origin}/api/legal/commit?${new URLSearchParams({ batch: batchId, ...extra })}`;
 // إلغاءُ الدفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ. ويُحاوَل ولا يُعوَّل عليه —
 // ما لم يبلغ الخادمَ يردّه مؤقّتُه بعد دقائق.
 const abort = () => post(`${origin}/api/legal/abort?${new URLSearchParams({ batch: batchId })}`).catch(() => {});
 
 // ── ١) الأجزاء تُجمع جانباً — لا يمسّ القاعدةَ منها شيء ──
-for (let start = 0; start < lines.length; start += batchSize) {
+const of = Math.ceil(lines.length / batchSize);
+if (fromPart > of + 1) {
+  console.error(`--from-part ${fromPart} بعد آخر جزء: الملف ${of} جزءاً بدفعة ${batchSize} سطراً`);
+  process.exit(1);
+}
+for (let start = (fromPart - 1) * batchSize; start < lines.length; start += batchSize) {
   const slice = lines.slice(start, start + batchSize);
   const no = Math.floor(start / batchSize) + 1;
-  const of = Math.ceil(lines.length / batchSize);
 
   let res;
   let report;
   try {
     res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'content-type': 'application/x-ndjson', cookie },
+      headers: { 'content-type': 'application/x-ndjson', accept: 'application/json', cookie },
       body: slice.join('\n'),
     });
     report = await res.json();
   } catch (e) {
+    // انقطاعٌ في إكمال: الإلغاء يُسقط ما جُمع في التشغيلين، فلا يُلغى — يُعاد الأمر نفسه.
+    if (resume) {
+      console.error(`\nالجزء ${no}/${of}: انقطع الرفع (${String(e?.message ?? e)}) — لم يُلغَ شيء. أعِد الأمر نفسه:`);
+      printResume(resumeFlags(no));
+    }
     await abort();
     console.error(`\nالجزء ${no}/${of}: انقطع الرفع (${String(e?.message ?? e)}) — لم يُكتب من الملف شيء.`);
     process.exit(1);
   }
 
+  if (res.status === 401) sessionExpired(no, of);
+
   if (!res.ok) {
-    await abort();
+    // ٤٠٩ في إكمالٍ معناه أن الدفعة لم تعد تُجمع — ربما بدأت كتابتها — فالإلغاء
+    // يردّ ما كُتب منها. يُقال السبب ولا يُمسّ شيء.
+    if (!(resume && res.status === 409)) await abort();
     console.error(`\nالجزء ${no}/${of} رُفض (${res.status}): ${report.error ?? ''} — لم يُكتب من الملف شيء.`);
     // الأسباب مجموعةً أولاً: ملفٌّ مولَّد بقالب واحد تفشل أسطره بالسبب نفسه،
     // وطباعةُ خمسين رسالة متطابقة تُخفي ما تقوله واحدة.
@@ -220,6 +306,7 @@ for (let start = 0; start < lines.length; start += batchSize) {
 // `upsert` تُحدّث وتُضيف ولا تحذف ما اختفى، فمادةٌ أُسقطت من المصدر تبقى في
 // النتائج إلى الأبد. والقياس على الملف كلِّه بعد جمعه، وعلى أنظمته وحدها.
 const plan = await post(commitUrl()).catch((e) => ({ ok: false, body: { error: String(e?.message ?? e) } }));
+if (plan.status === 401) sessionExpired(of + 1, of);
 if (!plan.ok) {
   await abort();
   console.error(`\nتعذّر إتمام الدفعة: ${plan.body.error ?? ''} — لم يُكتب من الملف شيء.`);
@@ -247,6 +334,7 @@ for (;;) {
     network: true,
     body: { error: String(e?.message ?? e) },
   }));
+  if (step.status === 401) sessionExpired(of + 1, of);
   if (!step.ok) {
     if (step.network) await abort();
     // الخادم ردّ ما كتب وقال جملته؛ وانقطاعٌ لم يبلغه يردّه الإلغاء أو المؤقّت.
