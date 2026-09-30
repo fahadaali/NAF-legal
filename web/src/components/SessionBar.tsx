@@ -12,7 +12,8 @@ import { isSessionLost, resumeSession, subscribeSessionLost } from '../lib/sessi
 export default function SessionBar() {
   const [lost, setLost] = useState(isSessionLost);
 
-  useEffect(() => subscribeSessionLost(() => setLost(true)), []);
+  // الشريط ينزل إن عادت الجلسة بتجديدٍ في نافذةٍ جانبية — انظر `renewSessionInWindow`.
+  useEffect(() => subscribeSessionLost(() => setLost(isSessionLost())), []);
 
   if (!lost) return null;
 

@@ -77,3 +77,106 @@ export function rememberLoginUrl(url: string): void {
 export function resumeSession(): void {
   loginWithReturn(loginUrl ?? '/');
 }
+
+/* ============================================================
+   تجديد الجلسة في نافذةٍ جانبية — والشاشة الأصلية باقية كما هي.
+
+   فعلٌ طويل كاستيراد ملفٍّ كبير يتجاوز عمر الرمز حتماً. والتحويل عنده يُفقده
+   موضعَه — معرّفَ الدفعة وآخرَ جزءٍ وصل — فيبدأ من الصفر ويتجاوز الرمز ثانيةً:
+   حلقةٌ لا تنتهي. فيُفتح الباب في نافذةٍ صغيرة، وجلسةُ المركز حيّةٌ في الغالب
+   فتعود في ثوانٍ، والفعلُ ينتظر ثم يكمل من حيث وقف.
+
+   والنافذة تُفتح بضغطة القارئ لا من تلقاء نفسها: المتصفّح يحجب نافذةً لم
+   تسبقها ضغطة. وإن حُجبت مع ذلك فالتحويل الكامل هو البديل، ومن يستدعي هذه
+   الدالة يحفظ موضعه قبلها.
+   ============================================================ */
+
+/** المعامل الذي تعود به نافذة التجديد — به تعرف أنها نافذةُ تجديد لا تبويب. */
+const RENEWED_PARAM = 'renewed';
+const RENEWED_CHANNEL = 'naf-session';
+const RENEWED_MESSAGE = 'renewed';
+
+/**
+ * يفتح الباب في نافذةٍ جانبية ويُحلّ حين تعود بجلسةٍ جديدة.
+ *
+ * يعيد `false` إن حُجبت النافذة — وعندها يقع التحويل الكامل ولا يُحلّ الوعد
+ * بشيء بعده، فالصفحة على وشك أن تُغادر.
+ *
+ * والإشارة بقناة البثّ لا بـ`opener` وحده: المركز أصلٌ آخر، وقد يقطع ما بين
+ * النافذتين بترويسة `Cross-Origin-Opener-Policy` فلا تبلغ رسالةُ `opener`
+ * صاحبَها. والقناة لا تمرّ بذلك الرابط أصلاً — تجمع نوافذ الأصل الواحد.
+ */
+export function renewSessionInWindow(login: string): Promise<boolean> {
+  let target = login;
+  try {
+    const url = new URL(login, window.location.origin);
+    url.searchParams.set('next', `/?${RENEWED_PARAM}=1`);
+    target = url.toString();
+  } catch {
+    // عنوانٌ لا يُحلَّل يُفتح كما ورد: يعود إلى الجذر، والقارئ يغلقه بيده.
+  }
+
+  const popup = window.open(target, 'naf-session-renew', 'popup,width=520,height=680');
+  if (!popup) {
+    loginWithReturn(login);
+    return pending();
+  }
+
+  return new Promise<boolean>((resolve) => {
+    const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(RENEWED_CHANNEL) : null;
+    const done = () => {
+      channel?.close();
+      window.removeEventListener('message', onMessage);
+      sessionRestored();
+      resolve(true);
+    };
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin === window.location.origin && e.data === RENEWED_MESSAGE) done();
+    };
+    if (channel) channel.onmessage = (e) => e.data === RENEWED_MESSAGE && done();
+    window.addEventListener('message', onMessage);
+  });
+}
+
+/**
+ * يُستدعى أوّلَ تحميل الواجهة. إن كانت هذه نافذةَ تجديدٍ عادت من الباب أخبرت
+ * صاحبتَها وأغلقت نفسها، وأعادت `true` فلا تُرسم الواجهة فيها.
+ *
+ * وإن لم تُغلق — فُتحت تبويباً عادياً، أو قُطع ما بينها وبين صاحبتها —
+ * أُسقط المعامل من العنوان وتُرسم الواجهة كأيّ تبويب: الجلسة تجدّدت على
+ * كلّ حال، والإشارة وصلت بالقناة.
+ */
+export function finishSessionRenewal(): boolean {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get(RENEWED_PARAM) !== '1') return false;
+
+  if (typeof BroadcastChannel === 'function') {
+    const channel = new BroadcastChannel(RENEWED_CHANNEL);
+    channel.postMessage(RENEWED_MESSAGE);
+    channel.close();
+  }
+  try {
+    window.opener?.postMessage(RENEWED_MESSAGE, window.location.origin);
+  } catch {
+    // قُطع الرابط بالنافذة الأم — القناة أوصلت الإشارة.
+  }
+  window.close();
+  if (window.closed) return true;
+
+  // لم تُغلق: ما فتحها نصٌّ برمجي. تبقى تبويباً عادياً بلا المعامل.
+  url.searchParams.delete(RENEWED_PARAM);
+  window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+  return false;
+}
+
+/** عادت الجلسة: يُنزل الشريط إن كان جَسٌّ في الخلفية قد رفعه. */
+function sessionRestored(): void {
+  if (!lost) return;
+  lost = false;
+  for (const fn of listeners) fn();
+}
+
+/** وعدٌ لا يُحلّ: التحويل جارٍ. */
+function pending<T>(): Promise<T> {
+  return new Promise<T>(() => {});
+}
