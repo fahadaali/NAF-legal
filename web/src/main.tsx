@@ -7,9 +7,13 @@ import './naf/naf-theme.css';
 import './naf/naf-app-shell.css';
 import './naf/naf-safe-area.css';
 import './styles.css';
+import { finishSessionRenewal } from './lib/session';
 
-createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+// نافذةُ تجديد الجلسة تُخبر صاحبتَها وتُغلق نفسها، فلا تُرسم فيها الواجهة.
+if (!finishSessionRenewal()) {
+  createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+}

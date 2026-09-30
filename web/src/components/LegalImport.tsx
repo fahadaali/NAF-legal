@@ -8,7 +8,8 @@
 // في «الإضافة» وحدها، فهي تفرّق المسار عن أخويه عند الاختيار. وتكرارُها هنا
 // يعلو نموذجاً اختير سلفاً — والمختار لا يُعرَّف بنفسه ثانيةً.
 import { useEffect, useRef, useState } from 'react';
-import { api, type LegalImportDiff, type LegalImportRecord, type LegalImportReport } from '../lib/api';
+import { api, SessionExpired, type LegalImportDiff, type LegalImportRecord, type LegalImportReport } from '../lib/api';
+import { renewSessionInWindow } from '../lib/session';
 import { ImportCompare } from './ImportCompare';
 import { formatDate } from '../lib/format';
 import { formatNumber } from '../lib/format';
@@ -21,8 +22,121 @@ import { modalCardProps, useModalDismiss } from '../lib/modal';
  * التقسيم بالأسطر لا بالحجم: سطرٌ = مادة، وقصّ الملف بالبايت يشقّ سطراً في
  * منتصفه فتضيع مادة ويُرفض ما بعدها. والدفعات متتابعة لا متوازية، ليقف
  * استيراد الملف عند أوّل دفعة تُرفَض بدل أن تمضي بقيتها على الخطأ نفسه.
+ *
+ * وكانت خمسمئة، فملفٌّ بحجم ٥٥ م.ب يحتاج مئات الطلبات المتتابعة ويتجاوز عمرَ
+ * رمز الدخول (ربع ساعة) حتماً. وألفان في حدود الخطة المدفوعة بسعة: الجزء يُجمع
+ * بـ`stageChunks` على دفعات من ٢٥ عبارة، فهي قرابة ٨٥ استعلاماً للطلب من ألف.
  */
-const BATCH_LINES = 500;
+const BATCH_LINES = 2000;
+
+/**
+ * وسقفُ حجم الجزء — والقطع بين الأسطر لا في وسطها.
+ *
+ * الأسطر لا تتساوى: مادةٌ بنصّها الكامل وتضمينها قد تبلغ عشرات الكيلوبايت،
+ * فألفا سطرٍ منها طلبٌ ثقيل يقترب من حدّ وقت المعالجة. فيُقفل الجزء عند أيّهما
+ * أسبق: عدد الأسطر أو هذا الحجم. وسطرٌ وحده أكبر منه يُرسل جزءاً وحده.
+ */
+const BATCH_BYTES = 4 * 1024 * 1024;
+
+/** حدود الأجزاء على الأسطر — ثابتة لملفٍّ بعينه، فالإكمال يجد الجزء نفسه. */
+function splitParts(lines: string[]): { start: number; end: number }[] {
+  const encoder = new TextEncoder();
+  const parts: { start: number; end: number }[] = [];
+  let start = 0;
+  let bytes = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const size = encoder.encode(lines[i]).length + 1;
+    if (i > start && (i - start >= BATCH_LINES || bytes + size > BATCH_BYTES)) {
+      parts.push({ start, end: i });
+      start = i;
+      bytes = 0;
+    }
+    bytes += size;
+  }
+  parts.push({ start, end: lines.length });
+  return parts;
+}
+
+/* ============================================================
+   استيرادٌ لم يكتمل — يُحفظ موضعه ليكمل من حيث وقف.
+
+   الأجزاء المرفوعة محفوظةٌ في الخادم يوماً كاملاً (`STAGING_TTL_MS`)، والذي
+   كان يضيع هو علمُ الشاشة بها: معرّفُ الدفعة وآخرُ جزءٍ وصل. فانتهاءُ الجلسة
+   أو إغلاقُ التبويب أو انقطاعُ الشبكة كان يعيد الملف إلى أوّله — وملفٌّ يتجاوز
+   عمرَ الرمز يتجاوزه ثانيةً، فيدور صاحبه في حلقة.
+
+   فيُحفظ الموضع في تخزين المتصفّح بعد كلّ جزء، ويُعرض بعد العودة. والملف لا
+   يُحفظ — يختاره صاحبه ثانيةً، وتُطابَق بصمتُه قبل أن يُكمَل عليه: جزءٌ من
+   ملفٍّ آخر يُلحق بدفعةٍ ليست له فيُكتب نظامٌ من ملفّين.
+   ============================================================ */
+
+const PENDING_KEY = 'naf-legal:import-pending';
+
+interface PendingImport {
+  batchId: string;
+  name: string;
+  size: number;
+  lastModified: number;
+  sha256?: string;
+  options: { buildEmbed: boolean; partial: boolean; correction: boolean };
+  /** الأجزاء التي جُمعت في الخادم، من أصل `parts`. */
+  partsDone: number;
+  parts: number;
+  /** `commit` — جُمع كلُّه وبدأت كتابتُه، وقرارُ الحذف فيه مأخوذ. */
+  phase: 'staging' | 'commit';
+  prune?: boolean;
+  staged?: number;
+  orphansKept?: number;
+  totals: { built: number; skipped: number; withheld: number; amendmentPending: number; unstamped: number };
+  summary: NonNullable<LegalImportReport['error_summary']>;
+}
+
+/* التخزين قد يُمنع — نافذةٌ خاصة أو بياناتٌ ممسوحة. وغيابه لا يوقف الاستيراد:
+   يُفقد الإكمالُ وحده، كما كان قبله. */
+function readPending(): PendingImport | null {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    return raw ? (JSON.parse(raw) as PendingImport) : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePending(record: PendingImport): void {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(record));
+  } catch {
+    // لا تخزين — لا إكمال، والاستيراد ماضٍ.
+  }
+}
+
+function clearPending(): void {
+  try {
+    localStorage.removeItem(PENDING_KEY);
+  } catch {
+    // لا تخزين — لا شيء يُمسح.
+  }
+}
+
+/**
+ * هل هو الملف نفسه؟ بالبصمة إن حُسبت، وإلا بالاسم والحجم وتاريخ التعديل.
+ * والبصمة على البايتات كما هي، فتغيّرُ حرفٍ واحد يجعله ملفاً آخر.
+ */
+async function sameFile(file: File, record: PendingImport): Promise<boolean> {
+  if (record.sha256) return (await fileSha256(file)) === record.sha256;
+  return file.name === record.name && file.size === record.size && file.lastModified === record.lastModified;
+}
+
+/** انقطاع الشبكة: `fetch` يرمي `TypeError` ولا يردّ شيئاً. */
+function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError;
+}
+
+/** جملة انقطاع الاتصال — المسجَّلة، وهي في هذه الشاشة منذ قبل. */
+const NETWORK_ERROR = 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة';
+
+/** الجملة حين يُختار للإكمال ملفٌّ غير ملفّه — مسجَّلة تحت «ختامُ دفعة المواد». */
+const RESUME_MISMATCH = 'الملف المختار غير الملف الذي انقطع استيراده';
 
 /** نتيجة ملف واحد من الاختيار. */
 interface FileResult {
@@ -147,6 +261,31 @@ export function LegalImport() {
     { filename: string; count: number; decide: (apply: boolean) => void } | null
   >(null);
   const input = useRef<HTMLInputElement>(null);
+  /* انتهت الجلسة في منتصف الاستيراد: الحلقة واقفةٌ على وعدٍ يُحلّه تجديدُها.
+     و`part` من `parts` موضعُ الوقوف في جمع الأجزاء — صفرٌ خارجه. */
+  const [held, setHeld] = useState<{ login: string; part: number; parts: number; resume: () => void } | null>(null);
+  // استيرادٌ لم يكتمل من قبل — يُعرض ليُختار ملفُّه ثانيةً.
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(readPending);
+  const [resumeError, setResumeError] = useState(false);
+  const resumeInput = useRef<HTMLInputElement>(null);
+
+  /**
+   * يُنفّذ النداء، فإن انتهت الجلسة وقف حتى تتجدّد ثم أعاده كما هو.
+   *
+   * الجزء الذي ردّه ٤٠١ لم يبلغ الخادمَ أصلاً — الوسيط ردّه قبله — فإعادتُه
+   * إرسالُه أوّلَ مرّة لا ثانيتَها.
+   */
+  const withSession = async <T,>(call: () => Promise<T>, where = { part: 0, parts: 0 }): Promise<T> => {
+    for (;;) {
+      try {
+        return await call();
+      } catch (e) {
+        if (!(e instanceof SessionExpired)) throw e;
+        await new Promise<void>((resume) => setHeld({ login: e.login, ...where, resume }));
+        setHeld(null);
+      }
+    }
+  };
 
   /* سجلّ الاستيراد وحده يُقرأ هنا: حالُ المتن وحالُ الفهرس وزرُّ «تضمين الآن»
      انتقلت إلى شريط حال قاعدة المعرفة وقسم «المحتوى». وكانت هذه الشاشة تعرض
@@ -158,132 +297,217 @@ export function LegalImport() {
   useEffect(loadHistory, []);
 
   /**
-   * يستورد ملفاً واحداً.
+   * يستورد ملفاً واحداً — من أوّله، أو من موضعٍ محفوظ إن جاء `resume`.
    *
    * وحدة «الكل أو لا شيء» هي الملف لا الاختيار كلّه: نظامٌ نصفه مستورد أسوأ
    * من نظام لم يُستورَد، أما نظامٌ سليم بجانب نظامٍ مرفوض فلا ضرر فيه. فيمضي
    * الاستيراد إلى الملف التالي ويُذكر لكلٍّ حالُه.
    */
-  const importFile = async (file: File, index: number, count: number): Promise<FileResult> => {
+  const importFile = async (file: File, index: number, count: number, resume?: PendingImport): Promise<FileResult> => {
     const text = await file.text();
     const lines = text.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
     if (!lines.length) {
       return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: 'لا سطور في الملف' } };
     }
+    const parts = splitParts(lines);
+    const options = resume?.options ?? { buildEmbed, partial, correction };
 
-    /* مقارنةٌ قبل الكتابة، بالملف كاملاً لا مقطّعاً: «الغائب عن الملف»
-       يُحسب على مستوى النظام، ودفعةٌ من خمسمئة سطر تجعل سائره غائباً.
-       وإن رُفض الملف في المقارنة لم نسأل شيئاً: الاستيراد التالي يردّ
-       التقرير نفسه، ورسالةُ الرفض تُقال مرّة لا مرّتين. */
-    setNow({ name: file.name, file: index + 1, files: count, batch: 0, batches: 0 });
-    const preview = await api.importLegal(lines, file.name, { buildEmbed, partial, dryRun: true });
-    /* والوضعُ الصارم صارمٌ على الملف كلِّه لا على جزئه (§4-٦): المقارنة قرأت
-       الأسطر كلَّها، فإن رُفض منها سطرٌ لم يُكتب شيء. وكان الجزءُ الذي يحمله
-       يُرفض وما قبله مكتوب — نظامٌ نصفُه مستورد، وهو ما وُضع الصارم لمنعه.
-       وأرقامُ الأسطر هنا من الملف كاملاً، فلا تُزاح. */
-    if (!partial && preview.ok && (preview.failed ?? 0) > 0) {
-      return {
-        name: file.name, ok: false, inserted: 0, updated: 0,
-        report: { ...preview, ok: false, error: 'أسطر غير صالحة — لم يُكتب شيء' },
-      };
-    }
-    const diff = preview.ok ? preview.diff : undefined;
-    if (diff && (diff.changed > 0 || diff.unchanged > 0)) {
-      const apply = await new Promise<boolean>((decide) => setConflict({ filename: file.name, diff, decide }));
-      setConflict(null);
-      if (!apply) {
-        return { name: file.name, ok: true, cancelled: true, inserted: 0, updated: 0 };
+    let record: PendingImport;
+    if (resume) {
+      // المقارنة وقرارها وقعا قبل الانقطاع، فلا يُسأل عنهما ثانيةً.
+      record = resume;
+    } else {
+      /* مقارنةٌ قبل الكتابة، بالملف كاملاً لا مقطّعاً: «الغائب عن الملف»
+         يُحسب على مستوى النظام، ودفعةٌ من ألفي سطر تجعل سائره غائباً.
+         وإن رُفض الملف في المقارنة لم نسأل شيئاً: الاستيراد التالي يردّ
+         التقرير نفسه، ورسالةُ الرفض تُقال مرّة لا مرّتين. */
+      setNow({ name: file.name, file: index + 1, files: count, batch: 0, batches: 0 });
+      const preview = await withSession(() =>
+        api.importLegal(lines, file.name, { buildEmbed: options.buildEmbed, partial: options.partial, dryRun: true })
+      );
+      /* والوضعُ الصارم صارمٌ على الملف كلِّه لا على جزئه (§4-٦): المقارنة قرأت
+         الأسطر كلَّها، فإن رُفض منها سطرٌ لم يُكتب شيء. وكان الجزءُ الذي يحمله
+         يُرفض وما قبله مكتوب — نظامٌ نصفُه مستورد، وهو ما وُضع الصارم لمنعه.
+         وأرقامُ الأسطر هنا من الملف كاملاً، فلا تُزاح. */
+      if (!options.partial && preview.ok && (preview.failed ?? 0) > 0) {
+        return {
+          name: file.name, ok: false, inserted: 0, updated: 0,
+          report: { ...preview, ok: false, error: 'أسطر غير صالحة — لم يُكتب شيء' },
+        };
       }
-    }
+      const diff = preview.ok ? preview.diff : undefined;
+      if (diff && (diff.changed > 0 || diff.unchanged > 0)) {
+        const apply = await new Promise<boolean>((decide) => setConflict({ filename: file.name, diff, decide }));
+        setConflict(null);
+        if (!apply) {
+          return { name: file.name, ok: true, cancelled: true, inserted: 0, updated: 0 };
+        }
+      }
 
-    /* معرّفٌ واحد لأجزاء الملف كلّها، وبصمتُه معها. بهما يُجمع الملف جانباً، ويُقرأ
-       في السجلّ سطراً واحداً، وتُؤخذ صورُ ما يُكتب فوقه. */
-    const batchId = newBatchId();
-    const sha256 = await fileSha256(file);
-    const parts = Math.ceil(lines.length / BATCH_LINES);
-    let built = 0;
-    let skipped = 0;
-    let withheld = 0;
-    let amendmentPending = 0;
-    let unstamped = 0;
-    const summary: NonNullable<LegalImportReport['error_summary']> = [];
+      /* معرّفٌ واحد لأجزاء الملف كلّها، وبصمتُه معها. بهما يُجمع الملف جانباً، ويُقرأ
+         في السجلّ سطراً واحداً، وتُؤخذ صورُ ما يُكتب فوقه. ويُحفظ الموضع قبل أوّل
+         جزء: انقطاعٌ فيه يُكمَل من الجزء الأوّل بلا مقارنةٍ ثانية. */
+      record = {
+        batchId: newBatchId(),
+        name: file.name,
+        size: file.size,
+        lastModified: file.lastModified,
+        sha256: await fileSha256(file),
+        options,
+        partsDone: 0,
+        parts: parts.length,
+        phase: 'staging',
+        totals: { built: 0, skipped: 0, withheld: 0, amendmentPending: 0, unstamped: 0 },
+        summary: [],
+      };
+      savePending(record);
+    }
+    const { batchId, sha256, totals, summary } = record;
 
     /* ١) الأجزاء تُجمع جانباً ولا يمسّ القاعدةَ منها شيء حتى يكتمل الملف (§4-٦).
-       فانقطاعٌ هنا لا يترك أثراً: يُلغى ما جُمع، ويُقال إن شيئاً لم يُكتب. */
-    try {
-      for (let start = 0; start < lines.length; start += BATCH_LINES) {
-        setNow({ name: file.name, file: index + 1, files: count, batch: Math.floor(start / BATCH_LINES) + 1, batches: parts });
-        const part = await api.importLegal(lines.slice(start, start + BATCH_LINES), file.name, {
-          buildEmbed, partial, correction, batch: batchId, sha256, stage: true,
-        });
-        if (!part.ok) {
-          await api.legalAbort(batchId).catch(() => {});
-          // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل جزءٍ لا
-          // يدلّ صاحبَ الملف على شيء.
-          return {
-            name: file.name,
-            ok: false,
-            inserted: 0,
-            updated: 0,
-            report: {
-              ...part,
-              errors: (part.errors ?? []).map((e) => ({ ...e, line: start + e.line })),
-              error_summary: (part.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })),
-            },
-          };
+       فرفضٌ هنا لا يترك أثراً: يُلغى ما جُمع، ويُقال إن شيئاً لم يُكتب. وانقطاعُ
+       الشبكة لا يُلغي: ما جُمع يبقى في الخادم، والموضع محفوظ ليكمل منه. */
+    if (record.phase === 'staging') {
+      try {
+        for (let p = record.partsDone; p < parts.length; p++) {
+          const { start, end } = parts[p];
+          setNow({ name: file.name, file: index + 1, files: count, batch: p + 1, batches: parts.length });
+          const part = await withSession(
+            () =>
+              api.importLegal(lines.slice(start, end), file.name, {
+                ...options, batch: batchId, sha256, stage: true,
+              }),
+            { part: p + 1, parts: parts.length }
+          );
+          if (!part.ok) {
+            await api.legalAbort(batchId).catch(() => {});
+            clearPending();
+            // أرقام الأسطر تُردّ إلى مواضعها في الملف الأصلي: رقمٌ داخل جزءٍ لا
+            // يدلّ صاحبَ الملف على شيء.
+            return {
+              name: file.name,
+              ok: false,
+              inserted: 0,
+              updated: 0,
+              report: {
+                ...part,
+                errors: (part.errors ?? []).map((e) => ({ ...e, line: start + e.line })),
+                error_summary: (part.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })),
+              },
+            };
+          }
+          totals.built += part.embed_text_built ?? 0;
+          totals.withheld += part.needs_review ?? 0;
+          totals.amendmentPending += part.amendment_pending ?? 0;
+          totals.unstamped += part.unstamped ?? 0;
+          // في وضع «ما صحّ»: الجزء يُقبل ومعه أسطرٌ متخطّاة. تُجمع أسبابها ليُقال ما
+          // فات، فتخطٍّ صامت يجعل نظاماً ناقصاً يبدو تامّاً.
+          if (part.failed) {
+            totals.skipped += part.failed;
+            summary.push(...(part.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })));
+          }
+          record.partsDone = p + 1;
+          savePending(record);
         }
-        built += part.embed_text_built ?? 0;
-        withheld += part.needs_review ?? 0;
-        amendmentPending += part.amendment_pending ?? 0;
-        unstamped += part.unstamped ?? 0;
-        // في وضع «ما صحّ»: الجزء يُقبل ومعه أسطرٌ متخطّاة. تُجمع أسبابها ليُقال ما
-        // فات، فتخطٍّ صامت يجعل نظاماً ناقصاً يبدو تامّاً.
-        if (part.failed) {
-          skipped += part.failed;
-          summary.push(...(part.error_summary ?? []).map((g) => ({ ...g, lines: g.lines.map((l) => start + l) })));
+      } catch (e) {
+        if (isNetworkError(e)) {
+          return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: NETWORK_ERROR } };
         }
+        await api.legalAbort(batchId).catch(() => {});
+        clearPending();
+        return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: STAGE_INTERRUPTED } };
       }
-    } catch {
-      await api.legalAbort(batchId).catch(() => {});
-      return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: STAGE_INTERRUPTED } };
     }
 
-    /* ٢) ما سيقع، ومنه سؤالُ الحذف قبل الكتابة (§8) — والحذفُ يقع مع كل نظامٍ وهو
-       مجمَّد، فلا يُقرأ نظامٌ حُذف بعضُه. ولا يُعرض على ملفٍّ تُخطّيت منه أسطر:
-       السطر المتخطّى غائبٌ عن الملف وحاضرٌ في القاعدة، وتُقال الجملة التي تقول لماذا. */
-    let prune = false;
-    let orphansKept = 0;
     try {
-      const plan = await api.legalCommit(batchId);
-      if (plan.orphans > 0 && plan.failed > 0) {
-        orphansKept = plan.orphans;
-      } else if (plan.orphans > 0) {
-        prune = await new Promise<boolean>((decide) => setOrphans({ filename: file.name, count: plan.orphans, decide }));
-        setOrphans(null);
+      /* ٢) ما سيقع، ومنه سؤالُ الحذف قبل الكتابة (§8) — والحذفُ يقع مع كل نظامٍ وهو
+         مجمَّد، فلا يُقرأ نظامٌ حُذف بعضُه. ولا يُعرض على ملفٍّ تُخطّيت منه أسطر:
+         السطر المتخطّى غائبٌ عن الملف وحاضرٌ في القاعدة، وتُقال الجملة التي تقول لماذا.
+         ويُسأل مرّةً: الإكمالُ بعد بدء الكتابة يحمل الجواب في الموضع المحفوظ. */
+      if (record.phase === 'staging') {
+        const plan = await withSession(() => api.legalCommit(batchId));
+        let prune = false;
+        let orphansKept = 0;
+        if (plan.orphans > 0 && plan.failed > 0) {
+          orphansKept = plan.orphans;
+        } else if (plan.orphans > 0) {
+          prune = await new Promise<boolean>((decide) => setOrphans({ filename: file.name, count: plan.orphans, decide }));
+          setOrphans(null);
+        }
+        record.phase = 'commit';
+        record.prune = prune;
+        record.staged = plan.staged;
+        record.orphansKept = orphansKept;
+        savePending(record);
       }
+      const prune = record.prune ?? false;
+      const staged = record.staged ?? 0;
 
       /* ٣) الكتابةُ خطوةً خطوة حتى تتمّ: نظاماً نظاماً، وكلُّ نظامٍ يغيب عن البحث وهو
          يُكتب ويعود كاملاً. وما تعذّر يُردّ في الخادم كلُّه ويرمي بجملته. */
-      let progress = await api.legalCommit(batchId, { apply: true, prune });
+      let progress = await withSession(() => api.legalCommit(batchId, { apply: true, prune }));
       while (!progress.done) {
-        setNow({ name: file.name, file: index + 1, files: count, batch: plan.staged - progress.remaining, batches: plan.staged });
-        progress = await api.legalCommit(batchId, { apply: true, prune });
+        setNow({ name: file.name, file: index + 1, files: count, batch: staged - progress.remaining, batches: staged });
+        progress = await withSession(() => api.legalCommit(batchId, { apply: true, prune }));
       }
+      clearPending();
       return {
         name: file.name, ok: true,
         inserted: progress.inserted, updated: progress.updated, archived: progress.archived, deleted: progress.deleted,
-        built, skipped, withheld, amendmentPending, unstamped, orphansKept,
-        report: skipped ? { ok: true, error_summary: summary } : undefined,
+        ...totals, orphansKept: record.orphansKept ?? 0,
+        report: totals.skipped ? { ok: true, error_summary: summary } : undefined,
       };
     } catch (e: any) {
-      /* الخادم ردّ ما كتب وقال جملته. وإن انقطع الاتصال فالإلغاءُ يردّه الآن، وإلا
-         ردّه المؤقّت بعد دقائق — ولا يُقال «أُعيدت» عن ردٍّ لم يتحقّق. */
+      /* انقطعت الشبكة: الموضع محفوظ، والإكمالُ يعيد الخطوة نفسها. وإن طال الانقطاع
+         على دفعةٍ بدأت كتابتُها ردّها المؤقّت، والإكمالُ يقول ذلك بجملة الخادم. */
+      if (isNetworkError(e)) {
+        return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: NETWORK_ERROR } };
+      }
+      /* الخادم ردّ ما كتب وقال جملته. وإن تعذّر الإلغاء فالمؤقّت يردّه بعد دقائق —
+         ولا يُقال «أُعيدت» عن ردٍّ لم يتحقّق. */
       const aborted = await api.legalAbort(batchId).then(() => true).catch(() => false);
-      const error = e instanceof Error && e.message && !/fetch|network/i.test(e.message)
-        ? e.message
-        : aborted ? STAGE_INTERRUPTED : 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة';
+      clearPending();
+      const error = e instanceof Error && e.message ? e.message : aborted ? STAGE_INTERRUPTED : NETWORK_ERROR;
       return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error } };
     }
+  };
+
+  /**
+   * إكمالُ استيرادٍ لم يكتمل، على ملفٍّ اختاره صاحبه ثانيةً.
+   *
+   * يُطابَق قبل أن يُمسّ شيء: جزءٌ من ملفٍّ آخر يُلحق بدفعةٍ ليست له.
+   */
+  const resumeWith = async (file: File) => {
+    const record = readPending();
+    if (!record) return;
+    setBusy(true);
+    setResults([]);
+    try {
+      if (!(await sameFile(file, record))) {
+        setResumeError(true);
+        return;
+      }
+      setResumeError(false);
+      try {
+        setResults([await importFile(file, 0, 1, record)]);
+      } catch (e: any) {
+        setResults([{ name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error: e?.message ?? NETWORK_ERROR } }]);
+      }
+    } finally {
+      setBusy(false);
+      setNow(null);
+      setPendingImport(readPending());
+      loadHistory();
+    }
+  };
+
+  /** تركُ الاستيراد الذي لم يكتمل: ما جُمع منه في الخادم يُسقط، والموضع يُمسح. */
+  const discardPending = async () => {
+    const record = readPending();
+    if (record) await api.legalAbort(record.batchId).catch(() => {});
+    clearPending();
+    setPendingImport(null);
+    setResumeError(false);
   };
 
   const run = async (files: FileList | null) => {
@@ -295,7 +519,16 @@ export function LegalImport() {
     try {
       for (let i = 0; i < chosen.length; i++) {
         try {
-          done.push(await importFile(chosen[i], i, chosen.length));
+          /* ملفٌّ له استيرادٌ لم يكتمل يُكمَل ولا يُعاد من أوّله — ولو اختير من
+             منطقة الإفلات لا من زرّ الإكمال. وغيرُه يبدأ دفعةً جديدة، فما جُمع
+             للقديم يُسقط: موضعٌ واحد يُحفظ، والدفعة التي لا موضع لها لا تُكمَل. */
+          const record = readPending();
+          const resume = record && (await sameFile(chosen[i], record)) ? record : undefined;
+          if (record && !resume) {
+            await api.legalAbort(record.batchId).catch(() => {});
+            clearPending();
+          }
+          done.push(await importFile(chosen[i], i, chosen.length, resume));
         } catch (e: any) {
           done.push({
             name: chosen[i].name,
@@ -306,10 +539,13 @@ export function LegalImport() {
           });
         }
         setResults([...done]);
+        // انقطعت الشبكة وبقي موضعُ هذا الملف محفوظاً: الملف التالي يمحوه، فيُوقف هنا.
+        if (readPending()) break;
       }
     } finally {
       setBusy(false);
       setNow(null);
+      setPendingImport(readPending());
       loadHistory();
     }
   };
@@ -336,6 +572,53 @@ export function LegalImport() {
           onCancel={() => orphans.decide(false)}
         />
       ) : null}
+
+      {/* الجلسة انتهت والاستيراد واقف: الضغطة تفتح الباب في نافذةٍ جانبية — والضغطةُ
+          شرطُها، فالمتصفّح يحجب نافذةً لم تسبقها — وعودتُها تُكمل الحلقة. وخارج جمع
+          الأجزاء لا موضعَ يُسمّى، فتُقال جملةُ انتهاء الجلسة المسجّلة وحدها. */}
+      {held ? (
+        <div className="import-held" role="alert">
+          <Icon.failed size={ICON_SM} aria-hidden />
+          <span>
+            {held.parts ? (
+              <>
+                انتهت جلسة دخولك، والاستيراد متوقف عند الجزء <bdi>{formatNumber(held.part)}</bdi> من{' '}
+                <bdi>{formatNumber(held.parts)}</bdi>. سجّل الدخول ويكمل من حيث توقف.
+              </>
+            ) : (
+              'انتهت جلسة دخولك. سجّل الدخول من جديد'
+            )}
+          </span>
+          <button className="btn-sm" onClick={() => renewSessionInWindow(held.login).then(held.resume)}>
+            تسجيل الدخول
+          </button>
+        </div>
+      ) : null}
+
+      {/* استيرادٌ سابق لم يكتمل — والملف يُختار ثانيةً، فالمتصفّح لا يحفظ ملفاً. */}
+      {!busy && pendingImport ? (
+        <div className="import-held" role="status">
+          <span>
+            لم يكتمل استيراد <bdi>{pendingImport.name}</bdi>: رُفع <bdi>{formatNumber(pendingImport.partsDone)}</bdi> من{' '}
+            <bdi>{formatNumber(pendingImport.parts)}</bdi> جزءاً. اختر الملف نفسه ليكمل من حيث توقف.
+          </span>
+          <button className="btn-sm" onClick={() => resumeInput.current?.click()}>إكمال الاستيراد</button>
+          <button className="btn-sm" onClick={discardPending}>إلغاء</button>
+          {resumeError ? <span className="import-held-error">{RESUME_MISMATCH}</span> : null}
+        </div>
+      ) : null}
+
+      <input
+        ref={resumeInput}
+        type="file"
+        hidden
+        accept=".jsonl,.ndjson"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) resumeWith(file);
+          e.target.value = '';
+        }}
+      />
 
       <input
         ref={input}

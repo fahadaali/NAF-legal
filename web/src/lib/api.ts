@@ -245,6 +245,28 @@ function handleAuthRedirect(res: Response, data: unknown, background = false): b
   return false;
 }
 
+/**
+ * انتهت الجلسة في منتصف فعلٍ طويل — يُرمى ولا يُحوَّل.
+ *
+ * الاستيراد يتجاوز عمر الرمز حتماً، وتحويلُه يُفقده موضعَه فيبدأ من الصفر
+ * ويتجاوز الرمز ثانيةً. فيُرمى هذا ليقف الفعل عنده، ويُجدِّد القارئ جلسته
+ * في نافذةٍ جانبية (`renewSessionInWindow`)، ثم يُعاد النداء نفسه.
+ */
+export class SessionExpired extends Error {
+  constructor(public login: string) {
+    super('session expired');
+  }
+}
+
+/** يرمي `SessionExpired` عند ٤٠١ بدل التحويل — للفعل الطويل وحده. */
+function throwIfSessionExpired(res: Response, data: unknown): void {
+  const body = (data ?? {}) as { login?: string };
+  if (res.status === 401 && body.login) {
+    rememberLoginUrl(body.login);
+    throw new SessionExpired(body.login);
+  }
+}
+
 /** وعدٌ لا يُحلّ: التحويل جارٍ، فلا نتيجة بعده ولا خطأ. */
 function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
@@ -784,6 +806,20 @@ async function req<T>(path: string, opts: RequestInit = {}, background = false):
   return data as T;
 }
 
+/** كـ`req`، إلا أن انتهاء الجلسة يُرمى `SessionExpired` ولا يُحوِّل — للاستيراد. */
+async function reqHeld<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...opts,
+    headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
+    credentials: 'same-origin',
+  });
+  const data = await res.json().catch(() => ({}));
+  throwIfSessionExpired(res, data);
+  if (handleAuthRedirect(res, data)) return pending<T>();
+  if (!res.ok) throw new Error((data as any).error ?? 'خطأ في الاتصال');
+  return data as T;
+}
+
 export const api = {
   // المصادقة — قراءةُ الحساب وخروجٌ يُحوَّل، ولا شيء غيرهما.
   // وكان هنا `login` و`register`: مساراهما خلف وسيط الدخول الموحّد فلا
@@ -978,10 +1014,10 @@ export const api = {
   /**
    * إتمامُ دفعةٍ جُمعت: بلا `apply` يُردّ ما سيقع (ومنه عدُّ الغائب لسؤال الحذف)،
    * وبه تُكتب خطوة — ويُنادى حتى يعود `done`. وما تعذّر يُردّ في الخادم كلُّه،
-   * ويرمي بجملته.
+   * ويرمي بجملته. وانتهاءُ الجلسة يُرمى `SessionExpired` — انظر `reqHeld`.
    */
   legalCommit: (batch: string, opts: { apply?: boolean; prune?: boolean } = {}) =>
-    req<LegalCommitPlan & LegalCommitProgress>(
+    reqHeld<LegalCommitPlan & LegalCommitProgress>(
       `/legal/commit?${new URLSearchParams({
         batch,
         ...(opts.apply ? { apply: '1' } : {}),
@@ -1029,7 +1065,8 @@ export const api = {
    * يستورد دفعة أسطر JSONL.
    *
    * لا يرمي عند الرفض: تقرير الدفعة المرفوضة هو المطلوب عرضُه — أرقام
-   * الأسطر وأسبابها — ورميُ رسالةٍ واحدة يضيّعه.
+   * الأسطر وأسبابها — ورميُ رسالةٍ واحدة يضيّعه. ويرمي `SessionExpired`
+   * وحده: الجلسة انتهت، والجزء لم يُقرأ أصلاً فيُعاد كما هو.
    */
   importLegal: async (
     lines: string[],
@@ -1064,6 +1101,8 @@ export const api = {
       credentials: 'same-origin',
     });
     const data = await res.json().catch(() => ({}));
+    // انتهاء الجلسة يُرمى ولا يُحوِّل: الاستيراد يقف عنده ويكمل بعد التجديد.
+    throwIfSessionExpired(res, data);
     if (handleAuthRedirect(res, data)) return pending<LegalImportReport>();
     return { ...(data as LegalImportReport), ok: res.ok };
   },
