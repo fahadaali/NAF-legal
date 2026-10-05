@@ -212,6 +212,7 @@ strong { font-weight: 600; }
 a { color: ${ACCENT}; text-decoration: none; }
 code { font-family: ui-monospace, "Courier New", monospace; font-size: 0.92em; }
 hr { border: 0; border-block-start: 1px solid ${RULE}; margin: 1.2em 0; }
+blockquote { margin: 0 0 0.7em; padding-inline-start: 1em; border-inline-start: 2px solid ${RULE}; }
 table {
   border-collapse: collapse;
   width: 100%;

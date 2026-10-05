@@ -4,6 +4,7 @@ import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { extractText } from '../lib/extract';
 import { buildDocx, annotateDates } from '../lib/docx';
+import { splitDocTitle, toPlainText } from '../lib/draftText';
 import { loadDocTemplate, loadLetterhead, LETTERHEAD_KEY } from '../lib/docTemplate';
 import { toHijri } from '../lib/hijri';
 import type { Env, Variables } from '../types';
@@ -258,7 +259,9 @@ app.get('/export/:messageId', async (c) => {
   const title = msg.title || 'مسودّة مستشار ناف';
 
   if (format === 'txt') {
-    const body = `${title}\n\n${msg.content}`;
+    // نصٌّ مجرّد لا Markdown: لا `#` ولا `**` ولا أسطر فارغة متتالية.
+    const split = splitDocTitle(msg.content);
+    const body = `${split.title ?? title}\n\n${toPlainText(split.body)}\n`;
     return new Response(body, {
       headers: {
         'content-type': 'text/plain; charset=utf-8',

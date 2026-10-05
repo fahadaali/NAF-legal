@@ -3,7 +3,15 @@ import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { runTrackingScan, runNewsDigest } from '../cron';
 import { ingestDocument } from '../ingest';
-import { getAllEffectiveConfigs, getEffectiveConfig, defaultConfig } from '../lib/consultationConfig';
+import {
+  getAllEffectiveConfigs,
+  getEffectiveConfig,
+  defaultConfig,
+  storedConfig,
+  loadOutputStyleTemplate,
+  OUTPUT_STYLE_KEY,
+} from '../lib/consultationConfig';
+import { DEFAULT_OUTPUT_STYLE, FIRM_TOKEN } from '../lib/prompts';
 import { callClaude } from '../lib/claude';
 import {
   DOC_TEMPLATE_KEYS,
@@ -339,13 +347,14 @@ app.put('/consultation-configs/:key', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   // نبني إعدادًا كاملًا فوق الافتراضي لضمان الحقول الأساسية
   const merged = { ...defaultConfig(key), ...body, key };
+  // البرومبت الافتراضي لا يُحفظ معه — ليتبع الافتراضيَّ إذا تحسّن (`storedConfig`).
   await c.env.DB.prepare(
     'INSERT INTO consultation_configs (key, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at'
   )
-    .bind(key, JSON.stringify(merged), Date.now())
+    .bind(key, JSON.stringify(await storedConfig(key, merged)), Date.now())
     .run();
   await audit(c, 'consultation_config.update', key, {});
-  return c.json({ ok: true, config: merged });
+  return c.json({ ok: true, config: await getEffectiveConfig(c.env, key) });
 });
 
 // إعادة نوع استشارة إلى الافتراضي
@@ -354,6 +363,36 @@ app.delete('/consultation-configs/:key', async (c) => {
   await c.env.DB.prepare('DELETE FROM consultation_configs WHERE key = ?').bind(key).run();
   await audit(c, 'consultation_config.reset', key, {});
   return c.json({ ok: true, config: await getEffectiveConfig(c.env, key) });
+});
+
+// ── أسلوب المخرَج وتنسيقه: يُلحق بتوجيه كل الأنواع ──
+// يُحفظ ما خالف الافتراضي وحده؛ والمطابقُ أو الفارغ يعيده إلى الافتراضي.
+app.get('/output-style', async (c) => {
+  const custom = await loadOutputStyleTemplate(c.env);
+  return c.json({ prompt: custom ?? DEFAULT_OUTPUT_STYLE, customized: !!custom, firm_token: FIRM_TOKEN });
+});
+
+app.put('/output-style', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const text = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+  if (!text || text === DEFAULT_OUTPUT_STYLE.trim()) {
+    await c.env.DB.prepare('DELETE FROM app_settings WHERE key = ?').bind(OUTPUT_STYLE_KEY).run();
+  } else {
+    await c.env.DB.prepare(
+      'INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+    )
+      .bind(OUTPUT_STYLE_KEY, text, Date.now())
+      .run();
+  }
+  await audit(c, 'output_style.update', OUTPUT_STYLE_KEY, {});
+  const custom = await loadOutputStyleTemplate(c.env);
+  return c.json({ ok: true, prompt: custom ?? DEFAULT_OUTPUT_STYLE, customized: !!custom, firm_token: FIRM_TOKEN });
+});
+
+app.delete('/output-style', async (c) => {
+  await c.env.DB.prepare('DELETE FROM app_settings WHERE key = ?').bind(OUTPUT_STYLE_KEY).run();
+  await audit(c, 'output_style.reset', OUTPUT_STYLE_KEY, {});
+  return c.json({ ok: true, prompt: DEFAULT_OUTPUT_STYLE, customized: false, firm_token: FIRM_TOKEN });
 });
 
 // ── المصادر الخارجية (خوادم MCP) ──

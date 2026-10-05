@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, Message, Attachment, Folder, ConsultConfig, type Citation, type Highlight } from '../lib/api';
 import { CONSULTATIONS, labelFor } from '../lib/consultations';
-import { renderMarkdown } from '../lib/markdown';
+import { renderMarkdown, splitDocTitle, copyDraft } from '../lib/markdown';
 import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
 import {
   clearChatStream,
@@ -727,9 +727,11 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     } catch {
       // إعدادٌ لم يُجلب لا يمنع طباعة مسودّة — تخرج بقالب المنصة الافتراضي.
     }
+    // عنوانٌ كتبه المحامي في أوّل المستند يتقدّم على عنوان المحادثة — كما في Word.
+    const split = splitDocTitle(m.content);
     printDocument({
-      title: convTitle || labelFor(convType),
-      html: renderMarkdown(m.content),
+      title: split.title ?? (convTitle || labelFor(convType)),
+      html: renderMarkdown(split.body),
       template,
       letterheadUrl,
       disclaimer: 'هذا المحتوى مسودّة مساعِدة تتطلّب مراجعة محامٍ مختصّ قبل الاعتماد.',
@@ -951,7 +953,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                     <a href={api.exportUrl(m.id, 'txt')} download>
                       <button><Icon.download size={ICON_SM} aria-hidden /> نص</button>
                     </a>
-                    <button onClick={() => navigator.clipboard.writeText(m.content)}>نسخ</button>
+                    <button onClick={() => copyDraft(m.content)}>نسخ</button>
                     <button onClick={() => setEditing({ id: m.id, title: labelFor(convType) })}><Icon.edit size={ICON_SM} aria-hidden /> تعديل واعتماد</button>
                     <button onClick={() => shareDraft(m)}><Icon.share size={ICON_SM} aria-hidden /> مشاركة للمراجعة</button>
                     <button className={feedback[m.id] === 1 ? 'fb-on' : ''} onClick={() => sendFeedback(m, 1)} title="مفيد"><Icon.helpful size={ICON_SM} aria-hidden /></button>
