@@ -79,6 +79,22 @@ export async function loadDocTemplate(env: Env): Promise<DocTemplate> {
 }
 
 /**
+ * اسم الشركة كما ضُبط في الإعدادات — يوقَّع به ما يُقدَّم إلى العميل.
+ * تعذُّر القراءة أو غيابُ القيمة يعني الاسم الافتراضي في `outputStyleInstruction`.
+ */
+export async function loadFirmName(env: Env): Promise<string | undefined> {
+  try {
+    const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'firm_name'").first<{
+      value: string;
+    }>();
+    return row?.value?.trim() || undefined;
+  } catch (e: any) {
+    console.error('firm name load failed:', e?.message ?? e);
+    return undefined;
+  }
+}
+
+/**
  * سلّم العناوين مشتقٌّ من حجم العنوان الرئيس، ولا ينزل تحت المتن.
  * أربع درجات: `#` إلى `####`.
  */

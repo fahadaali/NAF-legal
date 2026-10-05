@@ -2,7 +2,8 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { callClaude } from '../lib/claude';
-import { COMPARE_SYSTEM, DEADLINE_SYSTEM } from '../lib/prompts';
+import { COMPARE_SYSTEM, DEADLINE_SYSTEM, outputStyleInstruction } from '../lib/prompts';
+import { loadFirmName } from '../lib/docTemplate';
 import { logUsage, usageFromRaw } from '../lib/usage';
 import type { Env, Variables } from '../types';
 
@@ -28,7 +29,7 @@ app.post('/compare', async (c) => {
 
   const { text, raw } = await callClaude(c.env, {
     model: c.env.GENERATION_MODEL,
-    system: COMPARE_SYSTEM,
+    system: COMPARE_SYSTEM + outputStyleInstruction(await loadFirmName(c.env)),
     messages: [
       {
         role: 'user',
@@ -57,7 +58,7 @@ app.post('/deadlines', async (c) => {
 
   const { text, raw } = await callClaude(c.env, {
     model: c.env.GENERATION_MODEL,
-    system: DEADLINE_SYSTEM,
+    system: DEADLINE_SYSTEM + outputStyleInstruction(await loadFirmName(c.env)),
     messages: [{ role: 'user', content: prompt }],
     max_tokens: 8000,
   });

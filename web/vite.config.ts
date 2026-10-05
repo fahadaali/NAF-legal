@@ -18,6 +18,10 @@ export default defineConfig({
   optimizeDeps: { exclude: ['mupdf'] },
   server: {
     port: 5173,
+    /* قارئ المسودّة ملفٌّ واحد يستورده الخادم والواجهة (`src/lib/draftText.ts`
+       في جذر المستودع). وخادم التطوير يمنع ما خارج `web/` افتراضاً، فيُسمح
+       بهذا الملف وحده — لا بالجذر كلّه، وفيه `.dev.vars` بأسراره. */
+    fs: { allow: ['.', '../src/lib/draftText.ts'] },
     proxy: {
       // في التطوير: مرّر طلبات الـ API إلى Worker المحلي (wrangler dev على 8787)
       '/api': 'http://localhost:8787',

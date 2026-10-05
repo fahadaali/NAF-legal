@@ -2,6 +2,7 @@
 // ننشئ حاوية ZIP بإدخالات مخزَّنة (بدون ضغط) مع CRC32.
 import { DISCLAIMER } from './prompts';
 import { zip } from './zip';
+import { parseDraft, splitDocTitle, plain, type Block, type Inline } from './draftText';
 import {
   A4_HEIGHT_MM,
   A4_WIDTH_MM,
@@ -26,13 +27,17 @@ const SVG_EXT_URI = '{96DAC541-7B7A-43D3-8B79-37D633B846F1}';
 const SVG_NS = 'http://schemas.microsoft.com/office/drawing/2016/SVG/main';
 
 const REL_HEADER = 'rIdHdr1';
+const REL_STYLES = 'rIdStyles1';
 const REL_RASTER = 'rIdImg1';
 const REL_SVG = 'rIdImg2';
 
 export function buildDocx(title: string, markdown: string, opts: DocxOptions = {}): Uint8Array {
   const t = opts.template ?? DOC_TEMPLATE_DEFAULTS;
   const lh = opts.letterhead;
-  const body = markdownToDocXml(markdown, t);
+  // عنوانٌ كتبه المحامي في أوّل المستند يتقدّم على عنوان المحادثة — `splitDocTitle`.
+  const split = splitDocTitle(markdown);
+  title = split.title ?? title;
+  const body = markdownToDocXml(split.body, t);
   const sizes = headingSizes(t);
 
   /* نطاق الكتابة يُضبط في `w:pgMar` لا بفقراتٍ فارغة في أوّل الصفحة.
@@ -64,6 +69,7 @@ ${sectPr}
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`,
     'word/document.xml': documentXml,
+    'word/styles.xml': stylesXml(t),
     'word/_rels/document.xml.rels': documentRels(lh),
   };
 
@@ -133,6 +139,7 @@ function contentTypes(lh?: Letterhead): string {
   }
   const overrides = [
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+    '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>',
   ];
   if (lh) {
     overrides.push(
@@ -147,9 +154,11 @@ ${overrides.join('\n')}
 }
 
 function documentRels(lh?: Letterhead): string {
-  const rels = lh
-    ? `<Relationship Id="${REL_HEADER}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>`
-    : '';
+  const rels =
+    `<Relationship Id="${REL_STYLES}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+    (lh
+      ? `\n<Relationship Id="${REL_HEADER}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>`
+      : '');
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${rels}
@@ -174,10 +183,34 @@ const XML_NS = [
   'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"',
 ].join(' ');
 
+/** لغة كل شوط: العربية في الخانات الثلاث — والتدقيق الإملائي في Word يتبعها. */
+const LANG = '<w:lang w:val="ar-SA" w:eastAsia="ar-SA" w:bidi="ar-SA"/>';
+
+/**
+ * الافتراضيات على مستوى المستند: اتجاهٌ من اليمين ولغةٌ عربية لكل فقرة وشوط.
+ *
+ * كل فقرةٍ يكتبها هذا الملف تحمل `bidi` وكل شوطٍ يحمل `rtl` — وهذه لما
+ * يُضاف بعدُ في Word نفسه: فقرةٌ يكتبها المحامي تحت المسودّة تبدأ عربيةً
+ * من اليمين لا لاتينيةً من اليسار.
+ */
+function stylesXml(t: DocTemplate): string {
+  const font = escAttr(t.fontFamily);
+  const half = ptToHalf(t.bodyPt);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:docDefaults>
+<w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:cs="${font}"/><w:sz w:val="${half}"/><w:szCs w:val="${half}"/><w:rtl/>${LANG}</w:rPr></w:rPrDefault>
+<w:pPrDefault><w:pPr><w:bidi/></w:pPr></w:pPrDefault>
+</w:docDefaults>
+</w:styles>`;
+}
+
 /** رماديّ المتن الثانوي — يطابق `--muted-foreground` في الوضع الفاتح (§الطباعة). */
 const MUTED = '646A78';
 /** رماديّ الفواصل — يطابق `--border` في الوضع الفاتح. */
 const RULE = 'D9D9D9';
+/** خلفية صفّ رأس الجدول — تطابق `th` في قالب الطباعة (`web/src/lib/print.ts`). */
+const HEADER_FILL = 'F2F2F2';
 
 // الترقيم القانوني العربي للعناوين من المستوى الثاني: أولًا، ثانيًا…
 const ORDINALS = [
@@ -185,45 +218,62 @@ const ORDINALS = [
   'تاسعًا', 'عاشرًا', 'حادي عشر', 'ثاني عشر', 'ثالث عشر', 'رابع عشر', 'خامس عشر',
 ];
 
-// ── تحويل Markdown مبسّط إلى فقرات WordML ──
+/**
+ * عنوانٌ مرقّمٌ أصلاً لا يُرقَّم ثانية.
+ *
+ * والتنوين يُكتب على الألف أو قبلها («أولاً» و«أولًا») — والتوجيه يطلب من
+ * النموذج أن يرقّم عناوينه بنفسه، فلو لم تُعرف الصيغتان لخرج «أولًا: أولاً:
+ * الوقائع». و«المادة» و«الباب» و«الفصل» و«البند» ترقيمٌ كذلك في العقود واللوائح.
+ */
+const ALREADY_NUMBERED =
+  /^(?:(?:أول|ثاني|ثالث|رابع|خامس|سادس|سابع|ثامن|تاسع|عاشر)(?:اً|ًا|ا)|(?:حادي|ثاني|ثالث|رابع|خامس|سادس|سابع|ثامن|تاسع) عشر|المادة|الباب|الفصل|البند|القسم|[\d٠-٩]+\s*[.):\-–])/;
+
+/**
+ * من الكتل إلى فقرات WordML.
+ *
+ * لا فقرةَ للسطر الفارغ: المسافة بين الفقرات من `w:spacing` في كل فقرة.
+ * وكانت كل فقرةٍ فارغة في النصّ تصير فقرةً فارغة في Word، فيخرج المستند
+ * بفراغاتٍ مضاعفة بين كل فقرتين.
+ */
 function markdownToDocXml(md: string, t: DocTemplate): string {
-  const lines = md.replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
   const sizes = headingSizes(t);
   let sectionIndex = 0; // لترقيم عناوين المستوى الثاني قانونيًا
 
-  for (const raw of lines) {
-    const line = raw.trimEnd();
-    if (!line.trim()) {
-      out.push(para('', t, {}));
-      continue;
-    }
-    const h = line.match(/^(#{1,4})\s+(.*)$/);
-    if (h) {
-      const level = h[1].length;
-      let text = inlineText(h[2]);
-      // نُرقّم عناوين المستوى الثاني إن لم تكن مرقّمة أصلًا
-      if (level === 2) {
-        // نتقدّم في العدّاد مع كل عنوان من المستوى الثاني حتى لا يتكرّر ترتيب مع العناوين المرقّمة مسبقًا
-        const already = /^(أولًا|ثانيًا|ثالثًا|رابعًا|خامسًا|سادسًا|سابعًا|ثامنًا|تاسعًا|عاشرًا|\d+[.)])/.test(text);
-        const ord = ORDINALS[sectionIndex] ?? `${sectionIndex + 1}`;
-        if (!already) text = `${ord}: ${text}`;
-        sectionIndex++;
+  for (const b of parseDraft(md)) {
+    switch (b.kind) {
+      case 'heading': {
+        let inl = b.inl;
+        // نُرقّم عناوين المستوى الثاني إن لم تكن مرقّمة أصلًا، ونتقدّم في
+        // العدّاد مع كل عنوان منها حتى لا يتكرّر ترتيب مع المرقّمة مسبقًا
+        if (b.level === 2) {
+          if (!ALREADY_NUMBERED.test(plain(inl))) {
+            const ord = ORDINALS[sectionIndex] ?? `${sectionIndex + 1}`;
+            inl = [{ text: `${ord}: ` }, ...inl];
+          }
+          sectionIndex++;
+        }
+        out.push(headingPara(inl, sizes[b.level - 1], t));
+        break;
       }
-      out.push(headingPara(text, sizes[level - 1], t));
-      continue;
+      case 'item': {
+        const marker: Inline = { text: `${b.marker} ` };
+        out.push(para([marker, ...b.inl], t, { indent: 400 * (b.depth + 1) }));
+        break;
+      }
+      case 'quote':
+        out.push(para(b.inl, t, { indent: 400 }));
+        break;
+      case 'table':
+        out.push(tableXml(b, t));
+        break;
+      case 'rule':
+        // الخطّ الفاصل خطٌّ رفيع في Word كما في الطباعة — لا ثلاث شرطات.
+        out.push(dividerPara());
+        break;
+      default:
+        out.push(para(b.inl, t, {}));
     }
-    const li = line.match(/^\s*[-*•]\s+(.*)$/);
-    if (li) {
-      out.push(para('• ' + inlineText(li[1]), t, { indent: 400 }));
-      continue;
-    }
-    const num = line.match(/^\s*(\d+[.)])\s+(.*)$/);
-    if (num) {
-      out.push(para(num[1] + ' ' + inlineText(num[2]), t, { indent: 400 }));
-      continue;
-    }
-    out.push(para(inlineText(line), t, {}));
   }
   return out.join('\n');
 }
@@ -237,9 +287,6 @@ export function annotateDates(text: string, toHijriFn: (d: string) => string): s
   });
 }
 
-function inlineText(s: string): string {
-  return s.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
-}
 
 interface RunOpts {
   /** بالنقاط لا بأنصافها — التحويل في `runProps`. */
@@ -264,13 +311,71 @@ interface RunOpts {
  * متلاصقة. والمنخفض دون المتوسط والعالي: المدّ الطويل يشتّت في مستندٍ
  * قانوني يُقرأ سطراً سطراً.
  */
-function para(text: string, t: DocTemplate, o: RunOpts): string {
+function para(content: string | Inline[], t: DocTemplate, o: RunOpts): string {
   const ind = o.indent ? `<w:ind w:right="${o.indent}"/>` : '';
   // سطرٌ ونصف: العربية تحتاج فراغاً رأسياً للحركات والنقاط تحت السطر.
-  return `<w:p><w:pPr><w:bidi/><w:spacing w:after="120" w:line="360" w:lineRule="auto"/>${ind}<w:jc w:val="lowKashida"/></w:pPr><w:r>${runProps(
+  return `<w:p><w:pPr><w:bidi/><w:spacing w:after="120" w:line="360" w:lineRule="auto"/>${ind}<w:jc w:val="lowKashida"/></w:pPr>${runs(
+    content,
     t,
     o
-  )}<w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;
+  )}</w:p>`;
+}
+
+/**
+ * مقاطع السطر أشواطاً: المغلَّظ شوطٌ مغلَّظ، لا نصٌّ تُحذف نجومه فيضيع توكيده.
+ * والرابط نصُّه وحده — المستند يُطبع ويُقدَّم، والعنوان الإلكتروني فيه لا يُنقر.
+ */
+function runs(content: string | Inline[], t: DocTemplate, o: RunOpts): string {
+  const list: Inline[] = typeof content === 'string' ? [{ text: content }] : content;
+  return list
+    .map(
+      (x) =>
+        `<w:r>${runProps(t, { ...o, bold: o.bold || x.bold })}<w:t xml:space="preserve">${esc(x.text)}</w:t></w:r>`
+    )
+    .join('');
+}
+
+/**
+ * الجدول جدولُ Word بخلاياه وحدوده، لا أسطرٌ من `|`.
+ *
+ * `bidiVisual` يجعل أوّل عمود على اليمين كما يُقرأ الجدول العربي، وصفُّ
+ * الرأس يتكرّر في أعلى كل صفحة إن انقسم الجدول (`tblHeader`). والعرض موزّعٌ
+ * بالتساوي على نطاق الكتابة، فلا يخرج الجدول عن الهامش في أيّ قالب.
+ */
+function tableXml(b: Extract<Block, { kind: 'table' }>, t: DocTemplate): string {
+  const cols = Math.max(1, (b.header ?? b.rows[0] ?? []).length);
+  const width = mmToTwips(A4_WIDTH_MM - 2 * t.marginSideMm);
+  const colW = Math.floor(width / cols);
+  const border = (side: string) => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="${RULE}"/>`;
+  const borders = ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('');
+  const size = Math.max(8, t.bodyPt - 1);
+
+  const cell = (inl: Inline[], header: boolean) =>
+    `<w:tc><w:tcPr><w:tcW w:w="${colW}" w:type="dxa"/>${
+      header ? `<w:shd w:val="clear" w:color="auto" w:fill="${HEADER_FILL}"/>` : ''
+    }</w:tcPr><w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="0" w:line="300" w:lineRule="auto"/></w:pPr>${runs(
+      inl.length ? inl : [{ text: '' }],
+      t,
+      { size, bold: header }
+    )}</w:p></w:tc>`;
+  const row = (cells: Inline[][], header: boolean) =>
+    `<w:tr>${header ? '<w:trPr><w:tblHeader/></w:trPr>' : '<w:trPr><w:cantSplit/></w:trPr>'}${cells
+      .map((c) => cell(c, header))
+      .join('')}</w:tr>`;
+
+  return `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="${colW * cols}" w:type="dxa"/><w:tblBorders>${borders}</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="60" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="60" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${Array.from(
+    { length: cols },
+    () => `<w:gridCol w:w="${colW}"/>`
+  ).join('')}</w:tblGrid>${b.header ? row(b.header, true) : ''}${b.rows.map((r) => row(r, false)).join('')}</w:tbl>
+${spacerPara()}`;
+}
+
+/**
+ * فقرةٌ بلا ارتفاعٍ يُذكر بعد الجدول: Word يلصق الفقرة التالية بحدّه السفلي،
+ * وجدولان متتاليان بلا فقرةٍ بينهما يندمجان جدولاً واحداً.
+ */
+function spacerPara(): string {
+  return '<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="120" w:line="240" w:lineRule="auto"/></w:pPr></w:p>';
 }
 
 /**
@@ -279,15 +384,21 @@ function para(text: string, t: DocTemplate, o: RunOpts): string {
  * طرفاه مع ما حوله، والقصيرُ سطرٌ أخير فيبقى على جهة البداية. وعنوانٌ
  * متوسّطٌ في كل قسم يُفقد القارئَ خيط التسلسل، فلا يُعمَّم التوسيط.
  */
-function headingPara(text: string, sizePt: number, t: DocTemplate, o: { center?: boolean } = {}): string {
+function headingPara(
+  content: string | Inline[],
+  sizePt: number,
+  t: DocTemplate,
+  o: { center?: boolean } = {}
+): string {
   const jc = o.center ? 'center' : 'lowKashida';
   const spacing = o.center
     ? '<w:spacing w:before="0" w:after="360" w:line="300" w:lineRule="auto"/>'
     : '<w:spacing w:before="240" w:after="120" w:line="300" w:lineRule="auto"/>';
-  return `<w:p><w:pPr><w:bidi/>${spacing}<w:jc w:val="${jc}"/></w:pPr><w:r>${runProps(
-    t,
-    { size: sizePt, bold: true }
-  )}<w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;
+  // `keepNext`: العنوان لا يبقى وحده في ذيل صفحةٍ وقسمُه في التي تليها.
+  return `<w:p><w:pPr><w:keepNext/><w:bidi/>${spacing}<w:jc w:val="${jc}"/></w:pPr>${runs(content, t, {
+    size: sizePt,
+    bold: true,
+  })}</w:p>`;
 }
 
 function dividerPara(): string {
@@ -298,13 +409,14 @@ function runProps(t: DocTemplate, o: RunOpts): string {
   const half = ptToHalf(o.size ?? t.bodyPt);
   const font = escAttr(t.fontFamily);
   const parts = [
-    `<w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:cs="${font}" w:hint="cs"/>`,
+    // العائلة واحدة في الخانات الثلاث، فلا حاجة إلى `w:hint` — وقيمته `cs` يردّها مدقّق المخطَّط.
+    `<w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:cs="${font}"/>`,
     o.bold ? '<w:b/><w:bCs/>' : '',
     o.italic ? '<w:i/><w:iCs/>' : '',
     o.color ? `<w:color w:val="${o.color}"/>` : '',
     `<w:sz w:val="${half}"/><w:szCs w:val="${half}"/>`,
     '<w:rtl/>',
-    '<w:lang w:bidi="ar-SA"/>',
+    LANG,
   ];
   return `<w:rPr>${parts.join('')}</w:rPr>`;
 }
