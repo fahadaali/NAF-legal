@@ -40,9 +40,16 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
  * مصفَّرٌ بالهجرة `0010`، ولا مسار يرفعه بعد اليوم. ويبقى الحقل في الردّ
  * لأن `User` في عميل الواجهة يعلنه — وإسقاطه من الجانبين معاً تنظيفٌ لا
  * يستحقّ كسرَ عقدٍ قائم.
+ *
+ * و`center` عنوانُ مركز الهوية كما تعرفه المنصة (`AUTH_ISSUER`) — منه يُبنى
+ * زرّ «كل المنصات» في الترويسة، فلا يُكتب العنوان في الواجهة. و`null` حيث
+ * لا مركز (خادم محلي)، فلا يُعرض الزرّ.
  */
 app.get('/me', requireAuth, (c) => {
-  return c.json({ user: { ...c.get('user'), must_change_password: false } });
+  return c.json({
+    user: { ...c.get('user'), must_change_password: false },
+    center: c.env.AUTH_ISSUER ?? null,
+  });
 });
 
 export default app;

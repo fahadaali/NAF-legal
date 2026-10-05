@@ -807,30 +807,32 @@ function TrackingTab() {
       {data.needs_update.length === 0 ? (
         <div className="empty-state">لا تنبيهات جديدة. كل الأنظمة محدَّثة.</div>
       ) : (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>النظام</th>
-              <th>ملخّص التغيير المكتشَف</th>
-              <th>آخر فحص</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.needs_update.map((t) => (
-              <tr key={t.id}>
-                <td style={{ fontWeight: 600 }}>{t.title}</td>
-                <td>{t.change_summary}</td>
-                <td>{t.last_checked ? <bdi>{formatDate(t.last_checked)}</bdi> : '—'}</td>
-                <td>
-                  <button className="btn-sm" onClick={() => api.resolveTracking(t.id).then(load)}>
-                    اعتمدت المراجعة
-                  </button>
-                </td>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>النظام</th>
+                <th>ملخّص التغيير المكتشَف</th>
+                <th>آخر فحص</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.needs_update.map((t) => (
+                <tr key={t.id}>
+                  <td style={{ fontWeight: 600 }}>{t.title}</td>
+                  <td>{t.change_summary}</td>
+                  <td>{t.last_checked ? <bdi>{formatDate(t.last_checked)}</bdi> : '—'}</td>
+                  <td>
+                    <button className="btn-sm" onClick={() => api.resolveTracking(t.id).then(load)}>
+                      اعتمدت المراجعة
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginTop: 16 }}>
         الأنظمة واللوائح الجديدة تُرصد في تبويب «خلاصة الأخبار» من المصادر الرسمية.
@@ -869,28 +871,30 @@ function UsersTab() {
         الأعضاء يصلون من مركز الهوية، ولا تُنشأ الحسابات من هنا. والصلاحيات في شاشة «الأعضاء».
       </p>
       <div className="section-title">المستخدمون</div>
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>الاسم</th>
-            <th>البريد</th>
-            <th>تاريخ الإنشاء</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id}>
-              <td>{u.name ?? '—'}</td>
-              <td dir="ltr" style={{ textAlign: 'end' }}>{u.email}</td>
-              <td><bdi>{formatDate(u.created_at)}</bdi></td>
-              <td style={{ whiteSpace: 'nowrap' }}>
-                <button className="btn-sm" onClick={() => del(u.id)}>حذف</button>
-              </td>
+      <div className="table-scroll">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>الاسم</th>
+              <th>البريد</th>
+              <th>تاريخ الإنشاء</th>
+              <th></th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id}>
+                <td>{u.name ?? '—'}</td>
+                <td dir="ltr" style={{ textAlign: 'end' }}>{u.email}</td>
+                <td><bdi>{formatDate(u.created_at)}</bdi></td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button className="btn-sm" onClick={() => del(u.id)}>حذف</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -980,19 +984,21 @@ function NewsTab() {
       {news.length === 0 ? (
         <div className="empty-state">لا عناصر خلاصة بعد. شغّل الرصد لجلب أحدث الأنظمة والتعديلات.</div>
       ) : (
-        <table className="data-table">
-          <thead><tr><th>العنوان</th><th>الملخّص</th><th>النوع</th><th></th></tr></thead>
-          <tbody>
-            {news.map((n) => (
-              <tr key={n.id}>
-                <td style={{ fontWeight: 600 }}>{n.url ? <a href={n.url} target="_blank" rel="noopener">{n.title}</a> : n.title}</td>
-                <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{n.summary}</td>
-                <td>{n.kind === 'new_regulation' ? 'نظام جديد' : n.kind === 'amendment' ? 'تعديل' : 'أخرى'}</td>
-                <td><button className="btn-sm" onClick={() => api.ingestNews(n.id).then(() => alert('تمت الإضافة إلى قاعدة المعرفة كمقترَح.'))}>استيعاب</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead><tr><th>العنوان</th><th>الملخّص</th><th>النوع</th><th></th></tr></thead>
+            <tbody>
+              {news.map((n) => (
+                <tr key={n.id}>
+                  <td style={{ fontWeight: 600 }}>{n.url ? <a href={n.url} target="_blank" rel="noopener">{n.title}</a> : n.title}</td>
+                  <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{n.summary}</td>
+                  <td>{n.kind === 'new_regulation' ? 'نظام جديد' : n.kind === 'amendment' ? 'تعديل' : 'أخرى'}</td>
+                  <td><button className="btn-sm" onClick={() => api.ingestNews(n.id).then(() => alert('تمت الإضافة إلى قاعدة المعرفة كمقترَح.'))}>استيعاب</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -1206,33 +1212,39 @@ function AnalyticsTab() {
       {/* المفاتيح مخزَّنة بالإنجليزية وتُعرض بألفاظها المسجَّلة. وما لا لفظ له
           يُعرض بمفتاحه ليُرى فيُسجَّل — لا يُنسب إلى أقرب المسجَّل شكلاً. */}
       <div className="section-title">حسب نوع العملية</div>
-      <table className="data-table">
-        <thead><tr><th>العملية</th><th>العدد</th><th>التكلفة</th></tr></thead>
-        <tbody>{(data.by_kind ?? []).map((k: any) => (
-          <tr key={k.kind}><td>{usageKindLabel(k.kind)}</td><td><bdi>{formatNumber(Number(k.n) || 0)}</bdi></td><td><bdi>{usd(k.cost)}</bdi></td></tr>
-        ))}</tbody>
-      </table>
+      <div className="table-scroll">
+        <table className="data-table">
+          <thead><tr><th>العملية</th><th>العدد</th><th>التكلفة</th></tr></thead>
+          <tbody>{(data.by_kind ?? []).map((k: any) => (
+            <tr key={k.kind}><td>{usageKindLabel(k.kind)}</td><td><bdi>{formatNumber(Number(k.n) || 0)}</bdi></td><td><bdi>{usd(k.cost)}</bdi></td></tr>
+          ))}</tbody>
+        </table>
+      </div>
 
       {/* الأدوات تُنفق على النموذج ولا تُنشئ محادثة، فتقع في هذا العمود مع
           الاستشارات — ولذلك «النوع» لا «نوع الاستشارة». */}
       <div className="section-title">أكثر أنواع الاستشارات طلبًا</div>
-      <table className="data-table">
-        <thead><tr><th>النوع</th><th>العدد</th></tr></thead>
-        <tbody>{(data.by_type ?? []).map((k: any) => (
-          <tr key={k.consultation_type ?? 'none'}>
-            <td>{spendTypeLabel(k.consultation_type, labelIfKnown)}</td>
-            <td><bdi>{formatNumber(Number(k.n) || 0)}</bdi></td>
-          </tr>
-        ))}</tbody>
-      </table>
+      <div className="table-scroll">
+        <table className="data-table">
+          <thead><tr><th>النوع</th><th>العدد</th></tr></thead>
+          <tbody>{(data.by_type ?? []).map((k: any) => (
+            <tr key={k.consultation_type ?? 'none'}>
+              <td>{spendTypeLabel(k.consultation_type, labelIfKnown)}</td>
+              <td><bdi>{formatNumber(Number(k.n) || 0)}</bdi></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
 
       <div className="section-title">الاستهلاك حسب المستخدم</div>
-      <table className="data-table">
-        <thead><tr><th>المستخدم</th><th>العمليات</th><th>التكلفة</th></tr></thead>
-        <tbody>{(data.by_user ?? []).map((u: any, i: number) => (
-          <tr key={i}><td dir="ltr" style={{ textAlign: 'end' }}>{u.email ?? '—'}</td><td><bdi>{formatNumber(Number(u.n) || 0)}</bdi></td><td><bdi>{usd(u.cost)}</bdi></td></tr>
-        ))}</tbody>
-      </table>
+      <div className="table-scroll">
+        <table className="data-table">
+          <thead><tr><th>المستخدم</th><th>العمليات</th><th>التكلفة</th></tr></thead>
+          <tbody>{(data.by_user ?? []).map((u: any, i: number) => (
+            <tr key={i}><td dir="ltr" style={{ textAlign: 'end' }}>{u.email ?? '—'}</td><td><bdi>{formatNumber(Number(u.n) || 0)}</bdi></td><td><bdi>{usd(u.cost)}</bdi></td></tr>
+          ))}</tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1562,26 +1574,28 @@ function AuditTab() {
   }, []);
 
   return (
-    <table className="data-table">
-      <thead>
-        <tr>
-          <th>الفاعل</th>
-          <th>الفعل</th>
-          <th>الهدف</th>
-          <th>الوقت</th>
-        </tr>
-      </thead>
-      <tbody>
-        {entries.map((e) => (
-          <tr key={e.id}>
-            <td dir="ltr" style={{ textAlign: 'end' }}>{e.actor_email ?? e.actor_id ?? '—'}</td>
-            <td><code>{e.action}</code></td>
-            <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{e.target}</td>
-            <td><bdi>{formatDate(e.created_at)} {formatTime(e.created_at)}</bdi></td>
+    <div className="table-scroll">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>الفاعل</th>
+            <th>الفعل</th>
+            <th>الهدف</th>
+            <th>الوقت</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {entries.map((e) => (
+            <tr key={e.id}>
+              <td dir="ltr" style={{ textAlign: 'end' }}>{e.actor_email ?? e.actor_id ?? '—'}</td>
+              <td><code>{e.action}</code></td>
+              <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{e.target}</td>
+              <td><bdi>{formatDate(e.created_at)} {formatTime(e.created_at)}</bdi></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

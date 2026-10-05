@@ -9,6 +9,7 @@ export default function NotificationBell() {
   const [items, setItems] = useState<any[]>([]);
   const [unread, setUnread] = useState(0);
   const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
 
   const load = () =>
     api.notifications().then((r) => {
@@ -26,8 +27,19 @@ export default function NotificationBell() {
     const onClick = (e: MouseEvent) => {
       if (open && wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
     };
+    // Esc يغلق اللوحة ويعيد التركيز إلى الجرس — وإلا ضاع التركيز في أوّل
+    // الصفحة بعد الإغلاق بلوحة المفاتيح. كما تفعل قائمة الحساب في السجلّ.
+    const onKey = (e: KeyboardEvent) => {
+      if (!open || e.key !== 'Escape') return;
+      setOpen(false);
+      trigger.current?.focus();
+    };
     document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   const toggle = async () => {
@@ -40,13 +52,25 @@ export default function NotificationBell() {
     }
   };
 
+  /* الحاضن بلا position عمداً: اللوحة `.naf-header-panel` تُثبَّت إلى
+     الترويسة نفسها لا إلى الجرس — فتنسدل تحتها وتبقى داخل الشاشة على 375.
+     كانت تنمو إلى الأعلى من الجرس بعرضٍ ثابت فتخرج عن الشاشة. */
   return (
     <div className="notif-wrap" ref={wrap}>
-      <button className="theme-toggle" onClick={toggle} title="الإشعارات">
+      <button
+        ref={trigger}
+        type="button"
+        className="theme-toggle"
+        onClick={toggle}
+        title="الإشعارات"
+        aria-label="الإشعارات"
+        aria-haspopup="true"
+        aria-expanded={open}
+      >
         <Icon.notifications size={ICON_MD} aria-hidden />{unread > 0 && <span className="notif-badge">{unread > 9 ? '9+' : unread}</span>}
       </button>
       {open && (
-        <div className="notif-panel">
+        <div className="naf-header-panel">
           <div className="notif-head">الإشعارات</div>
           {items.length === 0 ? (
             <div className="empty-state" style={{ padding: 24, fontSize: '0.875rem' }}>لا إشعارات جديدة.</div>
