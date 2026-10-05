@@ -67,37 +67,39 @@ export default function Deadlines() {
         {items.length === 0 ? (
           <div className="empty-state">لم تُضِف أي موعد بعد. ابدأ بإضافة أول موعد.</div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr><th>العنوان</th><th>النوع</th><th>الاستحقاق</th><th>المتبقّي</th><th>القضية</th><th></th></tr>
-            </thead>
-            <tbody>
-              {items.map((d) => {
-                const left = daysLeft(d.due_date);
-                return (
-                  <tr key={d.id}>
-                    <td style={{ fontWeight: 600 }}>{d.title}</td>
-                    <td>{d.kind ?? '—'}</td>
-                    <td dir="auto">{d.due_date}{d.due_hijri ? ` (${d.due_hijri})` : ''}</td>
-                    <td>
-                      {d.status !== 'open' ? <span className="pill pending">—</span>
-                        : left < 0 ? <span className="pill error">فات بـ {Math.abs(left)} يوم</span>
-                        : left === 0 ? <span className="pill warn">اليوم</span>
-                        : left <= 3 ? <span className="pill warn">{left} يوم</span>
-                        : <span className="pill ready">{left} يوم</span>}
-                    </td>
-                    <td>{d.folder_name ?? '—'}</td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {d.status === 'open' && (
-                        <button className="btn-sm" onClick={() => api.setDeadlineStatus(d.id, 'done').then(load)}>إنجاز</button>
-                      )}{' '}
-                      <button className="btn-sm" onClick={() => confirm('حذف الموعد؟') && api.deleteDeadline(d.id).then(load)}>حذف</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr><th>العنوان</th><th>النوع</th><th>الاستحقاق</th><th>المتبقّي</th><th>القضية</th><th></th></tr>
+              </thead>
+              <tbody>
+                {items.map((d) => {
+                  const left = daysLeft(d.due_date);
+                  return (
+                    <tr key={d.id}>
+                      <td style={{ fontWeight: 600 }}>{d.title}</td>
+                      <td>{d.kind ?? '—'}</td>
+                      <td dir="auto">{d.due_date}{d.due_hijri ? ` (${d.due_hijri})` : ''}</td>
+                      <td>
+                        {d.status !== 'open' ? <span className="pill pending">—</span>
+                          : left < 0 ? <span className="pill error">فات بـ {Math.abs(left)} يوم</span>
+                          : left === 0 ? <span className="pill warn">اليوم</span>
+                          : left <= 3 ? <span className="pill warn">{left} يوم</span>
+                          : <span className="pill ready">{left} يوم</span>}
+                      </td>
+                      <td>{d.folder_name ?? '—'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {d.status === 'open' && (
+                          <button className="btn-sm" onClick={() => api.setDeadlineStatus(d.id, 'done').then(load)}>إنجاز</button>
+                        )}{' '}
+                        <button className="btn-sm" onClick={() => confirm('حذف الموعد؟') && api.deleteDeadline(d.id).then(load)}>حذف</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

@@ -56,30 +56,32 @@ function Shares() {
 
   if (shares.length === 0) return <div className="empty-state">لم تُنشئ روابط مراجعة بعد. استخدم «<Icon.share size={ICON_SM} aria-hidden /> مشاركة للمراجعة» أسفل أي مسودّة.</div>;
   return (
-    <table className="data-table">
-      <thead>
-        <tr><th>المحادثة</th><th>المراجِع</th><th>الحالة</th><th>التعليقات</th><th>التاريخ</th><th></th></tr>
-      </thead>
-      <tbody>
-        {shares.map((s) => (
-          <tr key={s.id}>
-            <td style={{ fontWeight: 600 }}>{s.title}</td>
-            <td>{s.reviewer_label ?? '—'}</td>
-            <td>
-              <span className={`pill ${s.status === 'approved' ? 'active' : s.status === 'pending' ? 'pending' : 'warn'}`}>
-                {statusLabel[s.status]}
-              </span>
-            </td>
-            <td>{s.comment_count}</td>
-            <td><bdi>{formatDate(s.updated_at)}</bdi></td>
-            <td style={{ whiteSpace: 'nowrap' }}>
-              <button className="btn-sm" onClick={() => copyLink(s.token)}>نسخ الرابط</button>{' '}
-              <button className="btn-sm" onClick={() => del(s.id)}>حذف</button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="table-scroll">
+      <table className="data-table">
+        <thead>
+          <tr><th>المحادثة</th><th>المراجِع</th><th>الحالة</th><th>التعليقات</th><th>التاريخ</th><th></th></tr>
+        </thead>
+        <tbody>
+          {shares.map((s) => (
+            <tr key={s.id}>
+              <td style={{ fontWeight: 600 }}>{s.title}</td>
+              <td>{s.reviewer_label ?? '—'}</td>
+              <td>
+                <span className={`pill ${s.status === 'approved' ? 'active' : s.status === 'pending' ? 'pending' : 'warn'}`}>
+                  {statusLabel[s.status]}
+                </span>
+              </td>
+              <td>{s.comment_count}</td>
+              <td><bdi>{formatDate(s.updated_at)}</bdi></td>
+              <td style={{ whiteSpace: 'nowrap' }}>
+                <button className="btn-sm" onClick={() => copyLink(s.token)}>نسخ الرابط</button>{' '}
+                <button className="btn-sm" onClick={() => del(s.id)}>حذف</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

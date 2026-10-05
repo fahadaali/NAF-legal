@@ -196,8 +196,11 @@ a { color: var(--primary); }
 .appearance-toggle button.on { background: var(--primary); color: var(--primary-foreground); }
 .appearance-toggle.floating { position: fixed; top: 18px; inset-inline-start: 18px; z-index: 50; }
 
-/* زرّ أيقونة مفرد في الشريط الجانبي (الإشعارات) */
+/* زرّ أيقونة مفرد في الترويسة (جرس الإشعارات). `position: relative` له لا
+   لحاضنه: شارة العدّ تُثبَّت إليه، وحاضنه يبقى بلا position لتُثبَّت لوحة
+   الإشعارات إلى الترويسة (`.naf-header-panel`). */
 .theme-toggle {
+  position: relative;
   width: 32px; height: 32px; border-radius: var(--radius-lg); border: 1px solid var(--border);
   background: var(--muted); color: var(--foreground); display: grid; place-items: center;
   font-size: var(--text-base); line-height: var(--text-base--line-height); transition: 0.2s ease-out;
@@ -674,8 +677,11 @@ a { color: var(--primary); }
   display: grid; place-items: center; padding: var(--space-6); animation: fadeIn 0.15s ease-out;
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+/* العرض من حاضنها لا من الشاشة: `96vw` داخل حجابٍ محشوّ يتجاوزه بمقدار
+   حشوته فتخرج البطاقة عن الشاشة على 375. و`100%` هنا مساحةُ الحجاب بعد
+   حشوته. والقاعدة نفسها في `.source-card` و`.intake` و`.confirm-card`. */
 .modal-card {
-  width: min(920px, 96vw); height: min(86vh, 900px); display: flex; flex-direction: column;
+  width: min(920px, 100%); height: min(86vh, 900px); display: flex; flex-direction: column;
   background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-xl);
   box-shadow: var(--shadow-xl); overflow: hidden;
 }
@@ -746,14 +752,14 @@ a { color: var(--primary); }
 
 /* نافذة المصدر — تأتي بعد `.modal-card` عمداً: تلك تفرض `height` ثابتاً
    لعارض المستندات، وهذه تُلغيه. وقاعدتان بالوزن نفسه تحسمهما الأخيرة. */
-.modal-card.source-card { height: auto; max-height: min(86vh, 900px); width: min(46rem, 96vw); }
+.modal-card.source-card { height: auto; max-height: min(86vh, 900px); width: min(46rem, 100%); }
 .source-body { padding: var(--space-4); }
 .source-body .law-head { margin-top: 0; }
 .source-body .legal-article:last-child { border-bottom: 0; }
 .source-body .legal-article:first-of-type { padding-top: 0; }
 
 /* نافذة الإدخال الأولي */
-.modal-card.intake { height: auto; max-height: 92vh; width: min(680px, 96vw); }
+.modal-card.intake { height: auto; max-height: 92vh; width: min(680px, 100%); }
 .modal-body.intake-body { padding: var(--space-5) var(--space-6); }
 .intake-textarea {
   width: 100%; min-height: 84px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -777,20 +783,16 @@ a { color: var(--primary); }
 }
 
 /* جرس الإشعارات */
-.notif-wrap { position: relative; }
+/* الحاضن بلا position: اللوحة `.naf-header-panel` (من السجلّ) تُثبَّت إلى
+   الترويسة، فتنسدل تحتها بعرضٍ وارتفاعٍ تحدّهما الشاشة وتمرّر داخلها. */
 .notif-badge {
   position: absolute; top: -4px; inset-inline-end: -4px; min-width: 16px; height: 16px; padding: 0 var(--space-1);
   border-radius: var(--radius-sm); background: var(--destructive); color: var(--destructive-foreground); font-size: var(--text-sm); font-weight: 700;
   display: grid; place-items: center; line-height: 1;
 }
-.notif-panel {
-  position: absolute; bottom: 42px; inset-inline-start: 0; width: 320px; max-height: 380px; overflow-y: auto;
-  background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xl); z-index: 60;
-}
 .notif-head {
   padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); font-weight: 700; font-size: var(--text-sm); line-height: var(--text-sm--line-height);
-  color: var(--foreground); position: sticky; top: 0; background: var(--card);
+  color: var(--popover-foreground); position: sticky; top: 0; background: var(--popover);
 }
 .notif-item { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
 .notif-item.unread { background: var(--muted); }
@@ -1122,7 +1124,7 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
 .data-table tr.row-open > td { background: var(--muted); }
 /* نافذة التأكيد: نصٌّ قصير وزرّان. و`.modal-card` مبنيّةٌ لعارض المستندات
    بارتفاعٍ ثابت `86vh` — فسؤالٌ من سطرين فيها بطاقةٌ فارغة تملأ الشاشة. */
-.confirm-card { width: min(32rem, 96vw); height: auto; max-height: 86vh; }
+.confirm-card { width: min(32rem, 100%); height: auto; max-height: 86vh; }
 .confirm-body { padding: var(--space-4); line-height: var(--leading-relaxed, 1.9); }
 .confirm-body p { margin: 0; }
 /* جملةٌ ثانية في السؤال تُفصل عن أولاها: «منها كذا لم تظهر على الشاشة» خبرٌ

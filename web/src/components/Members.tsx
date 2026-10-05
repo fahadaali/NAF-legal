@@ -193,71 +193,73 @@ export default function Members() {
         <p style={{ color: 'var(--muted-foreground)', fontSize: 'var(--text-sm)', marginTop: 0 }}>
           «مسؤول» يملك كل الصلاحيات · «محرّر» يعمل دون إدارة الأعضاء · «مستخدم (اطّلاع)» يطّلع فقط.
         </p>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>الاسم</th>
-              <th>البريد الإلكتروني</th>
-              <th>الصلاحية</th>
-              <th>الحالة</th>
-              <th>آخر نشاط</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {members.map((m) => (
-              <tr key={m.user_id}>
-                <td>{m.display_name ?? '—'}</td>
-                {/* البريد لاتيني داخل صفحة عربية — يُعزل أو انقلب ترتيبه */}
-                <td>
-                  <bdi>{m.email ?? '—'}</bdi>
-                </td>
-                <td>
-                  <select
-                    className="folder-select"
-                    value={m.role}
-                    disabled={busy === m.user_id || m.is_self}
-                    onChange={(e) => changeRole(m, e.target.value as PlatformRole)}
-                    aria-label="الصلاحية"
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {ROLE_LABELS[r]}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  {/* أيقونة ونصّ — لا حالة تُبلَّغ باللون وحده */}
-                  {m.is_active ? (
-                    <span className="pill ready">
-                      <Icon.enabled size={ICON_SM} aria-hidden /> مفعّل
-                    </span>
-                  ) : (
-                    <span className="pill pending">
-                      <Icon.disabled size={ICON_SM} aria-hidden /> معطّل
-                    </span>
-                  )}
-                </td>
-                <td>{m.last_seen_at ? <bdi>{formatDate(m.last_seen_at)}</bdi> : '—'}</td>
-                <td>
-                  {!m.is_self && (
-                    <button
-                      className="btn-sm"
-                      disabled={busy === m.user_id}
-                      onClick={() => (m.is_active ? setPendingRevoke(m) : toggleActive(m))}
-                    >
-                      {/* «منح» و«سحب» لا أيقونة لهما في naf-icons.md، فلا
-                          تُختار لهما واحدة بالشبه. النصّ وحده — والشارة
-                          المجاورة تحمل حالةَ العضو بأيقونتها المسجّلة. */}
-                      {m.is_active ? 'سحب' : 'منح'}
-                    </button>
-                  )}
-                </td>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>الاسم</th>
+                <th>البريد الإلكتروني</th>
+                <th>الصلاحية</th>
+                <th>الحالة</th>
+                <th>آخر نشاط</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {members.map((m) => (
+                <tr key={m.user_id}>
+                  <td>{m.display_name ?? '—'}</td>
+                  {/* البريد لاتيني داخل صفحة عربية — يُعزل أو انقلب ترتيبه */}
+                  <td>
+                    <bdi>{m.email ?? '—'}</bdi>
+                  </td>
+                  <td>
+                    <select
+                      className="folder-select"
+                      value={m.role}
+                      disabled={busy === m.user_id || m.is_self}
+                      onChange={(e) => changeRole(m, e.target.value as PlatformRole)}
+                      aria-label="الصلاحية"
+                    >
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {ROLE_LABELS[r]}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    {/* أيقونة ونصّ — لا حالة تُبلَّغ باللون وحده */}
+                    {m.is_active ? (
+                      <span className="pill ready">
+                        <Icon.enabled size={ICON_SM} aria-hidden /> مفعّل
+                      </span>
+                    ) : (
+                      <span className="pill pending">
+                        <Icon.disabled size={ICON_SM} aria-hidden /> معطّل
+                      </span>
+                    )}
+                  </td>
+                  <td>{m.last_seen_at ? <bdi>{formatDate(m.last_seen_at)}</bdi> : '—'}</td>
+                  <td>
+                    {!m.is_self && (
+                      <button
+                        className="btn-sm"
+                        disabled={busy === m.user_id}
+                        onClick={() => (m.is_active ? setPendingRevoke(m) : toggleActive(m))}
+                      >
+                        {/* «منح» و«سحب» لا أيقونة لهما في naf-icons.md، فلا
+                            تُختار لهما واحدة بالشبه. النصّ وحده — والشارة
+                            المجاورة تحمل حالةَ العضو بأيقونتها المسجّلة. */}
+                        {m.is_active ? 'سحب' : 'منح'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         </>
       )}
     </div>

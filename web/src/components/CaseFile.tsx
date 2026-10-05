@@ -61,71 +61,79 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
                 {data.deadlines.length === 0 ? (
                   <div className="empty-state" style={{ padding: 20 }}>لا مواعيد مرتبطة بهذه القضية. أضف أول موعد.</div>
                 ) : (
-                  <table className="data-table">
-                    <tbody>
-                      {data.deadlines.map((d: any) => (
-                        <tr key={d.id}>
-                          <td style={{ fontWeight: 600 }}>{d.title}</td>
-                          <td>{d.kind ?? '—'}</td>
-                          <td dir="auto">{d.due_date}{d.due_hijri ? ` (${d.due_hijri})` : ''}</td>
-                          <td><span className={`pill ${d.status === 'open' ? 'warn' : 'ready'}`}>{d.status === 'open' ? 'مفتوح' : 'منجز'}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="table-scroll">
+                    <table className="data-table">
+                      <tbody>
+                        {data.deadlines.map((d: any) => (
+                          <tr key={d.id}>
+                            <td style={{ fontWeight: 600 }}>{d.title}</td>
+                            <td>{d.kind ?? '—'}</td>
+                            <td dir="auto">{d.due_date}{d.due_hijri ? ` (${d.due_hijri})` : ''}</td>
+                            <td><span className={`pill ${d.status === 'open' ? 'warn' : 'ready'}`}>{d.status === 'open' ? 'مفتوح' : 'منجز'}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
 
                 <div className="section-title">المحادثات</div>
                 {data.conversations.length === 0 ? (
                   <div className="empty-state" style={{ padding: 20 }}>لا محادثات مرتبطة بهذه القضية. اربط أول محادثة من الشريط الجانبي.</div>
                 ) : (
-                  <table className="data-table">
-                    <tbody>
-                      {data.conversations.map((cv: any) => (
-                        <tr key={cv.id}>
-                          <td style={{ fontWeight: 600 }}>{cv.title}</td>
-                          <td>{labelFor(cv.consultation_type)}</td>
-                          <td><bdi>{formatDate(cv.updated_at)}</bdi></td>
-                          <td><button className="btn-sm" onClick={() => onOpenConversation(cv.id)}>فتح</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="table-scroll">
+                    <table className="data-table">
+                      <tbody>
+                        {data.conversations.map((cv: any) => (
+                          <tr key={cv.id}>
+                            <td style={{ fontWeight: 600 }}>{cv.title}</td>
+                            <td>{labelFor(cv.consultation_type)}</td>
+                            <td><bdi>{formatDate(cv.updated_at)}</bdi></td>
+                            <td><button className="btn-sm" onClick={() => onOpenConversation(cv.id)}>فتح</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
 
                 <div className="section-title">المسوّدات</div>
                 {data.drafts.length === 0 ? (
                   <div className="empty-state" style={{ padding: 20 }}>لا مسوّدات في هذه القضية بعد. ابدأ بإنشاء أول مسودّة.</div>
                 ) : (
-                  <table className="data-table">
-                    <tbody>
-                      {data.drafts.map((d: any) => (
-                        <tr key={d.id}>
-                          <td>{labelFor(d.consultation_type)}</td>
-                          <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{d.excerpt}…</td>
-                          <td>{d.approved_at ? <span className="pill ready">معتمَدة</span> : <span className="pill pending">مسودّة</span>}</td>
-                          <td><a href={api.exportUrl(d.id, 'docx')} download><button className="btn-sm">Word</button></a></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="table-scroll">
+                    <table className="data-table">
+                      <tbody>
+                        {data.drafts.map((d: any) => (
+                          <tr key={d.id}>
+                            <td>{labelFor(d.consultation_type)}</td>
+                            <td style={{ fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>{d.excerpt}…</td>
+                            <td>{d.approved_at ? <span className="pill ready">معتمَدة</span> : <span className="pill pending">مسودّة</span>}</td>
+                            <td><a href={api.exportUrl(d.id, 'docx')} download><button className="btn-sm">Word</button></a></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
 
                 <div className="section-title">المرفقات</div>
                 {data.attachments.length === 0 ? (
                   <div className="empty-state" style={{ padding: 20 }}>لا مرفقات في هذا الملف. أضف أول مرفق.</div>
                 ) : (
-                  <table className="data-table">
-                    <tbody>
-                      {data.attachments.map((a: any) => (
-                        <tr key={a.id}>
-                          <td><Icon.attachment size={ICON_SM} aria-hidden /> <bdi>{a.filename}</bdi></td>
-                          <td>{Math.round((a.size ?? 0) / 1024)} كيلوبايت</td>
-                          <td><bdi>{formatDate(a.created_at)}</bdi></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="table-scroll">
+                    <table className="data-table">
+                      <tbody>
+                        {data.attachments.map((a: any) => (
+                          <tr key={a.id}>
+                            <td><Icon.attachment size={ICON_SM} aria-hidden /> <bdi>{a.filename}</bdi></td>
+                            <td>{Math.round((a.size ?? 0) / 1024)} كيلوبايت</td>
+                            <td><bdi>{formatDate(a.created_at)}</bdi></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </>
             )}
