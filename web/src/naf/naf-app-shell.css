@@ -272,6 +272,60 @@
   display: none;
 }
 
+/* ── كل المنصات ──
+   الزرّ الوحيد في الترويسة بخلفية اللون الأساسي: هو الطريق من المنصة إلى
+   أخواتها، فيُرى من أوّل نظرة. وارتفاعه درجة `sm` من سلّم الأزرار. */
+
+.naf-platforms-link {
+  height: var(--space-8);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background-color 0.12s;
+}
+
+.naf-platforms-link:hover {
+  background: color-mix(in oklab, var(--primary) 90%, transparent);
+}
+
+.naf-platforms-link > svg {
+  flex-shrink: 0;
+}
+
+/* ── لوحة تنسدل من الترويسة ──
+   الإشعارات وما يشبهها. تُثبَّت إلى الترويسة نفسها لا إلى زرّها: الزرّ
+   ليس على حافة الترويسة (قائمة الحساب بعده)، فلوحةٌ تنمو من حافته بعرضٍ
+   ثابت تخرج عن الشاشة على 375. والترويسة sticky فهي حاضنة الموضع.
+
+   لذلك يبقى حاضن الزرّ بلا position — ويُعطى الزرّ نفسه relative إن حمل
+   شارة عدّ. والارتفاع من الشاشة الظاهرة لا رقماً: ما يزيد يُمرَّر داخلها. */
+
+.naf-header-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  inset-inline-end: var(--space-4);
+  width: min(var(--page-narrow), calc(100% - var(--space-8)));
+  max-height: calc(100dvh - var(--shell-header) - env(safe-area-inset-top) - var(--space-6));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 30;
+}
+
 /* ── قائمة الحساب ── */
 
 .naf-account-wrap {
@@ -474,6 +528,7 @@
 
 .naf-nav-link:focus-visible,
 .naf-icon-btn:focus-visible,
+.naf-platforms-link:focus-visible,
 .naf-account:focus-visible,
 .naf-account-menu-item:focus-visible,
 .naf-crumb:focus-visible {
@@ -530,6 +585,17 @@
   .naf-content {
     padding: var(--space-4) var(--space-3);
   }
+
+  /* دون نقطة الانكسار: الأيقونة وحدها، والاسم باقٍ تسميةً وتلميحاً */
+  .naf-platforms-link {
+    width: var(--space-8);
+    padding: 0;
+    justify-content: center;
+  }
+
+  .naf-platforms-link-label {
+    display: none;
+  }
 }
 
 @media (width >= 900px) {
@@ -575,6 +641,7 @@
   .naf-account-chevron,
   .naf-nav-link,
   .naf-icon-btn,
+  .naf-platforms-link,
   .naf-account,
   .naf-account-menu-item {
     transition: none;

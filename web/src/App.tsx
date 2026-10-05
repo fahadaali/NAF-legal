@@ -22,6 +22,7 @@ import {
   HeaderEnd,
   HeaderStart,
   MenuButton,
+  PlatformsLink,
   ShellBackdrop,
   useShell,
 } from './naf/ui/app-shell';
@@ -66,6 +67,8 @@ export default function App() {
 
   const [theme, setTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
+  // عنوان مركز الهوية من الخادم (`AUTH_ISSUER`) — لا يُكتب في الواجهة.
+  const [center, setCenter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   /* ══ الموضع في العنوان لا في الحالة وحدها ══
    *
@@ -90,7 +93,10 @@ export default function App() {
   useEffect(() => {
     api
       .me()
-      .then((r) => setUser(r.user))
+      .then((r) => {
+        setUser(r.user);
+        setCenter(r.center ?? null);
+      })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
@@ -163,6 +169,7 @@ export default function App() {
     <AppShell fixed>
       <AppBody
         user={user}
+        center={center}
         theme={theme}
         setTheme={setTheme}
         view={view}
@@ -183,6 +190,8 @@ export default function App() {
 
 interface BodyProps {
   user: User;
+  /** عنوان مركز الهوية — `null` يُخفي زرّ «كل المنصات». */
+  center: string | null;
   theme: ThemeChoice;
   setTheme: (c: ThemeChoice) => void;
   view: View;
@@ -200,7 +209,7 @@ interface BodyProps {
 
 /** جسمُ الهيكل — داخل `AppShell` ليقرأ حالة الدرج منه. */
 function AppBody({
-  user, theme, setTheme, view, setView, activeConv, setActiveConv,
+  user, center, theme, setTheme, view, setView, activeConv, setActiveConv,
   searchQuery, setSearchQuery, pendingInitial, setPendingInitial,
   refreshKey, refreshConversations, onLogout,
 }: BodyProps) {
@@ -257,6 +266,9 @@ function AppBody({
           </HeaderStart>
           <HeaderEnd>
             <NotificationBell />
+            {/* إلى شبكة المنصات في المركز — قبل قائمة الحساب مباشرةً،
+                وفي اللسان نفسه. لا مركز، لا زرّ. */}
+            <PlatformsLink href={center ? `${center}/` : null} />
             <AccountMenu user={user} theme={theme} onThemeChange={setTheme} onLogout={onLogout} />
           </HeaderEnd>
         </AppHeader>
