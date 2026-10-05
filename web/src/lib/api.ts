@@ -78,6 +78,13 @@ export interface ConsultConfig {
   fields: FieldDef[];
 }
 
+/** أسلوب المخرَج: النصّ الساري، وهل عدّلته الإدارة، وموضعُ اسم الشركة فيه. */
+export interface OutputStyle {
+  prompt: string;
+  customized: boolean;
+  firm_token: string;
+}
+
 // طلب إضافة نظام غير موجود في قاعدة المعرفة
 export type RegulationRequestStatus = 'pending' | 'approved' | 'rejected';
 
@@ -1254,6 +1261,11 @@ export const api = {
     req<{ config: ConsultConfig }>(`/admin/consultation-configs/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(config) }),
   resetConsultationConfig: (key: string) =>
     req<{ config: ConsultConfig }>(`/admin/consultation-configs/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+  // أسلوب المخرَج وتنسيقه — تعليمةٌ واحدة تُلحق بتوجيه كل الأنواع
+  adminOutputStyle: () => req<OutputStyle>('/admin/output-style'),
+  saveOutputStyle: (prompt: string) =>
+    req<OutputStyle>('/admin/output-style', { method: 'PUT', body: JSON.stringify({ prompt }) }),
+  resetOutputStyle: () => req<OutputStyle>('/admin/output-style', { method: 'DELETE' }),
 
   // الأدوات القانونية
   compare: (text_a: string, text_b: string) =>

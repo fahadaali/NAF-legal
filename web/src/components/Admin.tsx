@@ -1113,7 +1113,65 @@ function FormsTab() {
         <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
         <button className="btn-sm" onClick={reset}>إعادة للافتراضي</button>
       </div>
+
+      <OutputStyleSection />
     </div>
+  );
+}
+
+/**
+ * أسلوب المخرَج وتنسيقه — تعليمةٌ واحدة تُلحق بعد توجيه كل نوع.
+ *
+ * كانت تُلحق في الخادم ولا تظهر هنا، فيقرأ المسؤول توجيه النوع ويظنّه كلَّ
+ * ما يُرسَل. وموضعها تحت توجيه النوع لأنها تأتي بعده في الإرسال.
+ */
+function OutputStyleSection() {
+  const [text, setText] = useState<string | null>(null);
+  const [token, setToken] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.adminOutputStyle().then((r) => { setText(r.prompt); setToken(r.firm_token); }).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (text === null) return;
+    setSaving(true);
+    try {
+      const r = await api.saveOutputStyle(text);
+      setText(r.prompt);
+      alert('تم حفظ الإعداد.');
+    } catch (e: any) {
+      alert(e.message ?? 'فشل الحفظ');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = async () => {
+    if (!confirm('إعادة أسلوب المخرَج إلى الإعداد الافتراضي؟')) return;
+    try {
+      const r = await api.resetOutputStyle();
+      setText(r.prompt);
+    } catch (e: any) {
+      alert(e.message ?? 'فشل الحفظ');
+    }
+  };
+
+  if (text === null) return null;
+
+  return (
+    <>
+      <div className="section-title">أسلوب المخرَج وتنسيقه (يُلحق بتوجيه كل الأنواع)</div>
+      <p className="muted-line">
+        <span><bdi>{token}</bdi> يُستبدل باسم الشركة من الإعدادات.</span>
+      </p>
+      <textarea className="cfg-prompt" value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="admin-actions" style={{ marginTop: 'var(--space-6)' }}>
+        <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
+        <button className="btn-sm" onClick={reset}>إعادة للافتراضي</button>
+      </div>
+    </>
   );
 }
 

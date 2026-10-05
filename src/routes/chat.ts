@@ -19,9 +19,8 @@ import {
   type StreamOutcome,
 } from '../lib/claude';
 import { needsGeneratedTitle, generateTitle } from '../lib/title';
-import { BILINGUAL_INSTRUCTION, lengthInstructionFor, outputStyleInstruction } from '../lib/prompts';
-import { loadFirmName } from '../lib/docTemplate';
-import { getEffectiveConfig } from '../lib/consultationConfig';
+import { BILINGUAL_INSTRUCTION, lengthInstructionFor } from '../lib/prompts';
+import { getEffectiveConfig, getOutputStyle } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
 import { findMissingRegulations, mentionedInAnswer } from '../lib/regulations';
@@ -236,7 +235,7 @@ app.post('/:conversationId', async (c) => {
   if (bilingual) system += BILINGUAL_INSTRUCTION;
   /* أسلوب المخرَج وتنسيقه بعد برومبت الإدارة لا فيه: تعديلُ البرومبت من
      لوحة الإدارة لا يُعيد مقدّمات المساعد وعلامات Markdown إلى المستند. */
-  system += outputStyleInstruction(await loadFirmName(c.env));
+  system += await getOutputStyle(c.env);
   /* درجة الطول تُلحق بعد برومبت الإدارة لا قبله، كالتعليمة ثنائية اللغة سواء:
      البرومبت يصف **ما يُكتب**، وهذه تصف **كم يُكتب منه**، فتأتي أخيراً حتى
      لا يسبقها في السياق ما يناقضها. و`effort` و`max_tokens` في `ATTEMPTS`
