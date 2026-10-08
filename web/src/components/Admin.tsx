@@ -12,6 +12,7 @@ import { Icon, ICON_MD, ICON_SM } from '../lib/icons';
 import { ScrollBoxProvider, useScrollReset } from '../lib/scrollBox';
 import { spendTypeLabel, usageKindLabel } from '../lib/labels';
 import { labelIfKnown } from '../lib/consultations';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../naf/ui/dialog';
 
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
@@ -1010,6 +1011,8 @@ function FormsTab() {
   const [key, setKey] = useState<string>('');
   const [draft, setDraft] = useState<ConsultConfig | null>(null);
   const [saving, setSaving] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [status, setStatus] = useState('');
 
   const load = () =>
     api.adminConsultationConfigs().then((r) => {
@@ -1023,6 +1026,7 @@ function FormsTab() {
 
   const select = (k: string) => {
     setKey(k);
+    setStatus('');
     const c = configs.find((x) => x.key === k);
     if (c) setDraft(structuredClone(c));
   };
@@ -1030,22 +1034,29 @@ function FormsTab() {
   const save = async () => {
     if (!draft) return;
     setSaving(true);
+    setStatus('');
     try {
       const r = await api.saveConsultationConfig(draft.key, draft);
       setConfigs((cs) => cs.map((c) => (c.key === draft.key ? r.config : c)));
-      alert('تم حفظ الإعداد.');
+      setStatus('تم الحفظ');
     } catch (e: any) {
-      alert(e.message ?? 'فشل الحفظ');
+      setStatus(e.message ?? SAVE_FAILED);
     } finally {
       setSaving(false);
     }
   };
 
   const reset = async () => {
-    if (!draft || !confirm('إعادة هذا النوع إلى الإعداد الافتراضي؟')) return;
-    const r = await api.resetConsultationConfig(draft.key);
-    setDraft(structuredClone(r.config));
-    setConfigs((cs) => cs.map((c) => (c.key === draft.key ? r.config : c)));
+    setConfirmReset(false);
+    if (!draft) return;
+    try {
+      const r = await api.resetConsultationConfig(draft.key);
+      setDraft(structuredClone(r.config));
+      setConfigs((cs) => cs.map((c) => (c.key === draft.key ? r.config : c)));
+      setStatus('تمت إعادة الافتراضي');
+    } catch (e: any) {
+      setStatus(e.message ?? SAVE_FAILED);
+    }
   };
 
   const setField = (i: number, patch: Partial<FieldDef>) => {
@@ -1081,7 +1092,7 @@ function FormsTab() {
         </select>
       </div>
 
-      <div className="section-title">توجيه النظام (البرومبت المُرسَل إلى Claude)</div>
+      <div className="section-title">توجيه النوع</div>
       <textarea className="cfg-prompt" value={draft.system_prompt ?? ''} onChange={(e) => setDraft({ ...draft, system_prompt: e.target.value })} />
 
       <div className="section-title">طلب الملف</div>
@@ -1091,7 +1102,7 @@ function FormsTab() {
           <>
             <input placeholder="اسم المطالبة (مثال: صك الحكم)" value={draft.file.label} onChange={(e) => setDraft({ ...draft, file: { ...draft.file, label: e.target.value } })} style={{ minWidth: 240 }} />
             <label><input type="checkbox" checked={draft.file.required} onChange={(e) => setDraft({ ...draft, file: { ...draft.file, required: e.target.checked } })} /> إلزامي</label>
-            <label><input type="checkbox" checked={draft.file.allow_text} onChange={(e) => setDraft({ ...draft, file: { ...draft.file, allow_text: e.target.checked } })} /> السماح بلصق النص بدلًا من الملف</label>
+            <label><input type="checkbox" checked={draft.file.allow_text} onChange={(e) => setDraft({ ...draft, file: { ...draft.file, allow_text: e.target.checked } })} /> السماح بلصق النص بدلاً من الملف</label>
           </>
         )}
       </div>
@@ -1103,7 +1114,7 @@ function FormsTab() {
           <select value={f.type} onChange={(e) => setField(i, { type: e.target.value as FieldType })}>
             <option value="text">نص قصير</option>
             <option value="number">رقم</option>
-            <option value="textarea">فقرة طويلة (تتمدّد)</option>
+            <option value="textarea">فقرة طويلة</option>
           </select>
           <label><input type="checkbox" checked={!!f.required} onChange={(e) => setField(i, { required: e.target.checked })} /> إلزامي</label>
           <button className="btn-sm" onClick={() => move(i, -1)} title="أعلى"><Icon.moveUp size={ICON_SM} aria-hidden /></button>
@@ -1117,8 +1128,15 @@ function FormsTab() {
 
       <div className="admin-actions" style={{ marginTop: 24 }}>
         <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
-        <button className="btn-sm" onClick={reset}>إعادة للافتراضي</button>
+        <button className="btn-sm" onClick={() => setConfirmReset(true)}>إعادة الافتراضي</button>
+        <span className="muted-line" role="status">{status}</span>
       </div>
+      <ResetDefaultDialog
+        open={confirmReset}
+        description="يعود توجيه هذا النوع وحقوله وطلب الملف إلى الإعداد الافتراضي، ويُحذف ما عُدِّل فيها."
+        onCancel={() => setConfirmReset(false)}
+        onConfirm={reset}
+      />
 
       <OutputStyleSection />
     </div>
@@ -1135,6 +1153,8 @@ function OutputStyleSection() {
   const [text, setText] = useState<string | null>(null);
   const [token, setToken] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [status, setStatus] = useState('');
 
   useEffect(() => {
     api.adminOutputStyle().then((r) => { setText(r.prompt); setToken(r.firm_token); }).catch(() => {});
@@ -1143,24 +1163,26 @@ function OutputStyleSection() {
   const save = async () => {
     if (text === null) return;
     setSaving(true);
+    setStatus('');
     try {
       const r = await api.saveOutputStyle(text);
       setText(r.prompt);
-      alert('تم حفظ الإعداد.');
+      setStatus('تم الحفظ');
     } catch (e: any) {
-      alert(e.message ?? 'فشل الحفظ');
+      setStatus(e.message ?? SAVE_FAILED);
     } finally {
       setSaving(false);
     }
   };
 
   const reset = async () => {
-    if (!confirm('إعادة أسلوب المخرَج إلى الإعداد الافتراضي؟')) return;
+    setConfirmReset(false);
     try {
       const r = await api.resetOutputStyle();
       setText(r.prompt);
+      setStatus('تمت إعادة الافتراضي');
     } catch (e: any) {
-      alert(e.message ?? 'فشل الحفظ');
+      setStatus(e.message ?? SAVE_FAILED);
     }
   };
 
@@ -1168,16 +1190,59 @@ function OutputStyleSection() {
 
   return (
     <>
-      <div className="section-title">أسلوب المخرَج وتنسيقه (يُلحق بتوجيه كل الأنواع)</div>
+      <div className="section-title">أسلوب المخرَج وتنسيقه</div>
+      <p className="muted-line">يُلحق بتوجيه كل الأنواع</p>
       <p className="muted-line">
-        <span><bdi>{token}</bdi> يُستبدل باسم الشركة من الإعدادات.</span>
+        <span><bdi>{token}</bdi> يُستبدل باسم الشركة من الإعدادات</span>
       </p>
       <textarea className="cfg-prompt" value={text} onChange={(e) => setText(e.target.value)} />
       <div className="admin-actions" style={{ marginTop: 'var(--space-6)' }}>
         <button className="btn-sm primary" onClick={save} disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</button>
-        <button className="btn-sm" onClick={reset}>إعادة للافتراضي</button>
+        <button className="btn-sm" onClick={() => setConfirmReset(true)}>إعادة الافتراضي</button>
+        <span className="muted-line" role="status">{status}</span>
       </div>
+      <ResetDefaultDialog
+        open={confirmReset}
+        description="يعود أسلوب المخرَج إلى نصّه الافتراضي، ويُحذف ما عُدِّل فيه."
+        onCancel={() => setConfirmReset(false)}
+        onConfirm={reset}
+      />
     </>
+  );
+}
+
+/** رسالة تعذّر الحفظ حين لا يقول الخادم سببه — من «نماذج الاستشارات» في `naf-terms.md`. */
+const SAVE_FAILED = 'تعذّر الحفظ. تحقّق من الاتصال وأعد المحاولة';
+
+/**
+ * تأكيد «إعادة الافتراضي» في نافذة المنصة لا في مربّع المتصفح (§٤ من المصطلحات):
+ * عنوانٌ باسم الفعل، ووصفٌ يقول ما يُعاد وما يُحذف، وزرٌّ يحمل اسم الفعل لا «نعم».
+ * النافذة من السجلّ (`naf/ui/dialog`)، فالتركيز والهروب والإغلاق منه.
+ */
+function ResetDefaultDialog({
+  open,
+  description,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  description: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>إعادة الافتراضي</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <button className="btn-sm" onClick={onCancel}>إلغاء</button>
+          <button className="btn-sm primary" onClick={onConfirm}>إعادة الافتراضي</button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
