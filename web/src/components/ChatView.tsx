@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, Message, Attachment, Folder, ConsultConfig, type Citation, type Highlight } from '../lib/api';
 import { CONSULTATIONS, labelFor } from '../lib/consultations';
-import { renderMarkdown, splitDocTitle, copyDraft } from '../lib/markdown';
+import { renderMarkdown, splitDocTitle, stripLawyerNotes, copyDraft } from '../lib/markdown';
 import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
 import {
   clearChatStream,
@@ -727,8 +727,9 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     } catch {
       // إعدادٌ لم يُجلب لا يمنع طباعة مسودّة — تخرج بقالب المنصة الافتراضي.
     }
-    // عنوانٌ كتبه المحامي في أوّل المستند يتقدّم على عنوان المحادثة — كما في Word.
-    const split = splitDocTitle(m.content);
+    // عنوانٌ كتبه المحامي في أوّل المستند يتقدّم على عنوان المحادثة — كما في Word،
+    // و«ملاحظات للمحامي» لا تُطبع.
+    const split = splitDocTitle(stripLawyerNotes(m.content));
     printDocument({
       title: split.title ?? (convTitle || labelFor(convType)),
       html: renderMarkdown(split.body),
