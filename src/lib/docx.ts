@@ -2,7 +2,7 @@
 // ننشئ حاوية ZIP بإدخالات مخزَّنة (بدون ضغط) مع CRC32.
 import { DISCLAIMER } from './prompts';
 import { zip } from './zip';
-import { parseDraft, splitDocTitle, plain, type Block, type Inline } from './draftText';
+import { parseDraft, splitDocTitle, stripLawyerNotes, plain, type Block, type Inline } from './draftText';
 import {
   A4_HEIGHT_MM,
   A4_WIDTH_MM,
@@ -35,7 +35,8 @@ export function buildDocx(title: string, markdown: string, opts: DocxOptions = {
   const t = opts.template ?? DOC_TEMPLATE_DEFAULTS;
   const lh = opts.letterhead;
   // عنوانٌ كتبه المحامي في أوّل المستند يتقدّم على عنوان المحادثة — `splitDocTitle`.
-  const split = splitDocTitle(markdown);
+  // و«ملاحظات للمحامي» لا تُصدَّر: هنا لا عند كل مستدعٍ، فحزمة القضية تُحذف منها أيضاً.
+  const split = splitDocTitle(stripLawyerNotes(markdown));
   title = split.title ?? title;
   const body = markdownToDocXml(split.body, t);
   const sizes = headingSizes(t);

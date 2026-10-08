@@ -3,9 +3,17 @@
 // القراءة في `src/lib/draftText.ts`، ملفٌّ واحد يستورده الخادم والواجهة: ما يراه
 // المحامي في المحادثة وما يُطبع PDF وما يُصدَّر Word مستندٌ واحد، ولا تظهر في
 // أحدها علامةٌ (`###`، `**`) فهمها الآخر.
-import { parseDraft, splitDocTitle, toPlainText, type Block, type Inline } from '../../../src/lib/draftText';
+import {
+  parseDraft,
+  splitDocTitle,
+  stripLawyerNotes,
+  toPlainText,
+  isLawyerNotesHeading,
+  type Block,
+  type Inline,
+} from '../../../src/lib/draftText';
 
-export { splitDocTitle, toPlainText };
+export { splitDocTitle, stripLawyerNotes, toPlainText };
 
 export function renderMarkdown(md: string): string {
   /* كل وسمٍ في سطرٍ مستقل، كما كان العارض السابق يكتبه: التظليل المحفوظ
@@ -22,9 +30,28 @@ export function renderMarkdown(md: string): string {
     while (open.length && open[open.length - 1].depth > depth) closeTop();
   };
 
+  // «ملاحظات للمحامي» تُلفّ في إطارٍ وتحت عنوانها سطرٌ يقول إنها لا تُصدَّر —
+  // فلا يبحث المحامي في ملف Word عن ملاحظةٍ قرأها هنا (`stripLawyerNotes`).
+  let notesLevel = 0;
+  const closeNotes = () => {
+    if (!notesLevel) return;
+    out.push('</section>');
+    notesLevel = 0;
+  };
+
   for (const b of parseDraft(md)) {
     if (b.kind !== 'item') {
       closeDeeperThan(-1);
+      if (b.kind === 'heading') {
+        if (notesLevel && b.level <= notesLevel) closeNotes();
+        if (!notesLevel && isLawyerNotesHeading(b.inl.map((x) => x.text).join(''))) {
+          out.push('<section class="lawyer-notes">');
+          out.push(block(b));
+          out.push('<p class="lawyer-notes-hint">لا يُصدَّر هذا القسم مع المستند</p>');
+          notesLevel = b.level;
+          continue;
+        }
+      }
       out.push(block(b));
       continue;
     }
@@ -44,6 +71,7 @@ export function renderMarkdown(md: string): string {
     open.push({ tag, depth: b.depth });
   }
   closeDeeperThan(-1);
+  closeNotes();
   return out.join('\n');
 }
 
@@ -55,7 +83,9 @@ export function renderMarkdown(md: string): string {
  * البريد بعناوينه وتغليظه، ونصٌّ مجرّد لما لا يقرأ إلا النصّ. وحيث لا يُتاح
  * `ClipboardItem` يُنسخ النصّ المجرّد وحده.
  */
-export async function copyDraft(md: string): Promise<void> {
+export async function copyDraft(source: string): Promise<void> {
+  // النسخ تصديرٌ كغيره: يُلصق في مستندٍ أو بريدٍ إلى العميل، فلا «ملاحظات للمحامي».
+  const md = stripLawyerNotes(source);
   const text = toPlainText(md);
   try {
     if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {

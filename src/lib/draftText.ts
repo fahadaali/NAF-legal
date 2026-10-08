@@ -58,6 +58,54 @@ export function splitDocTitle(md: string): { title: string | null; body: string 
   return { title, body: lines.slice(first + 1).join('\n') };
 }
 
+/* ══ «ملاحظات للمحامي» — قسمٌ يُقرأ في المحادثة ولا يُصدَّر ══
+ *
+ * المساعد يكتب فيه للمحامي ما لا يُكتب للعميل ولا للدائرة: بندٌ عالي المخاطر،
+ * وبندٌ ناقص، ودفعٌ متوقَّع. والعنوان مسجّلٌ بحرفه في `naf-terms.md`، لأنه عقدٌ
+ * بين التوجيه (`outputStyleInstruction`) وهذا الملف: لفظٌ آخر يعني قسماً يبقى
+ * في Word ويصل إلى العميل.
+ *
+ * والتعرّف متسامحٌ مع ما يضيفه النموذج حول العنوان — ترتيبٌ قبله («خامساً:»)،
+ * أو تغليظ، أو نقطتان بعده — لأن الخطأ في هذا الاتجاه هو المكلف. */
+export const LAWYER_NOTES_HEADING = 'ملاحظات للمحامي';
+
+export function isLawyerNotesHeading(text: string): boolean {
+  const t = text.replace(/[*_`]/g, '').replace(/[:：.]\s*$/, '').trim();
+  if (t === LAWYER_NOTES_HEADING) return true;
+  const i = t.indexOf(LAWYER_NOTES_HEADING);
+  // ترتيبٌ قصير ثم فاصل ثم العنوان، ولا شيء بعده.
+  return i > 0 && i + LAWYER_NOTES_HEADING.length === t.length && /^[^\n]{1,20}[:.)\-–]\s*$/.test(t.slice(0, i));
+}
+
+/**
+ * المسودّة بلا «ملاحظات للمحامي» — لكل ما يخرج من المنصة: Word وPDF والنصّ والنسخ.
+ *
+ * يُحذف القسم من عنوانه إلى أوّل عنوانٍ في مستواه أو أعلى، أو إلى آخر النصّ.
+ * فلو وضعه النموذج في غير آخر المستند لم يُحذف ما بعده من المتن.
+ */
+export function stripLawyerNotes(md: string): string {
+  const lines = normalize(md).split('\n');
+  const out: string[] = [];
+  let skipLevel = 0;
+  let inFence = false;
+  for (const line of lines) {
+    if (FENCE.test(line)) inFence = !inFence;
+    const h = inFence ? null : line.match(HEADING);
+    if (h) {
+      const level = h[1].length;
+      if (skipLevel && level <= skipLevel) skipLevel = 0;
+      if (!skipLevel && isLawyerNotesHeading(h[2])) {
+        skipLevel = level;
+        continue;
+      }
+    }
+    if (!skipLevel) out.push(line);
+  }
+  // ما قبل القسم قد ينتهي بخطٍّ فاصل وأسطرٍ فارغة كانت تفصله عنه.
+  while (out.length && (!out[out.length - 1].trim() || RULE.test(out[out.length - 1]))) out.pop();
+  return out.join('\n');
+}
+
 export function parseDraft(md: string): Block[] {
   const lines = normalize(md).split('\n');
   const out: Block[] = [];

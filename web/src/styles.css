@@ -278,6 +278,10 @@ a { color: var(--primary); }
 .msg-content h2 { font-size: var(--text-lg); line-height: var(--text-lg--line-height); }
 .msg-content h3 { font-size: var(--text-base); line-height: var(--text-base--line-height); }
 .msg-content h4 { font-size: var(--text-base); line-height: var(--text-base--line-height); color: var(--muted-foreground); }
+/* «ملاحظات للمحامي»: قسمٌ يُقرأ هنا ولا يُصدَّر، فيُفصل عن المستند بإطارٍ هادئ
+   لا بلون تمييز — ليس حالاً ولا تنبيهاً، وإنما موضعٌ آخر للقراءة. */
+.msg-content .lawyer-notes { margin: var(--space-4) 0 var(--space-2); padding: var(--space-1) var(--space-4); border-inline-start: 2px solid var(--border); background: var(--muted); border-radius: var(--radius-sm); }
+.msg-content .lawyer-notes-hint { margin-top: 0; color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); }
 .msg-content blockquote { margin: var(--space-2) 0; padding-inline-start: var(--space-4); border-inline-start: 2px solid var(--border); color: var(--muted-foreground); }
 .msg-content p { margin: var(--space-2) 0; }
 /* إعادة تمكين نقاط القوائم: تهيئة Tailwind تُلغي list-style افتراضياً،
