@@ -2843,6 +2843,31 @@ await check('٢٩ · فحصُ الملف قبل رفعه يعدّ أصناف ا�
   assert.match(bad.stdout, /✗ `source_pages` صفحةٌ أو مدىً/);
 });
 
+await check('٢٩ · الجدولُ داخل النص (« | ») يُعرض جدولاً رأسُه أوّلُ صفوفه — والنصُّ نفسه لا يُمسّ', async () => {
+  const esbuild = await import('esbuild');
+  const built = await esbuild.build({
+    entryPoints: [path.join(ROOT, 'web', 'src', 'lib', 'legalText.ts')],
+    bundle: true, format: 'esm', platform: 'neutral', write: false,
+  });
+  const out = path.join(ROOT, 'node_modules', '.cache', 'naf-legal-text.mjs');
+  await writeFile(out, built.outputFiles[0].text);
+  const { splitLegalText } = await import(pathToFileURL(out).href);
+  const blocks = splitLegalText('تُفرض الرسوم الآتية:\nالفئة | الرسم | المدة\nالأولى | 100 | سنة\nالثانية | 200\nوتُحصَّل سنوياً.');
+  assert.deepEqual(blocks.map((b) => b.kind), ['text', 'table', 'text']);
+  assert.deepEqual(blocks[1].head, ['الفئة', 'الرسم', 'المدة']);
+  assert.deepEqual(blocks[1].rows, [['الأولى', '100', 'سنة'], ['الثانية', '200', '']], 'الصفّ القصير لم يُكمَّل');
+  // سطرٌ واحد فيه الفاصل جملةٌ لا جدول، والنصّ بلا فاصلٍ فقرةٌ واحدة كما هو.
+  assert.deepEqual(splitLegalText('سطرٌ فيه a | b وحده.').map((b) => b.kind), ['text']);
+  assert.deepEqual(splitLegalText('سطرٌ\nوسطرٌ ثانٍ'), [{ kind: 'text', text: 'سطرٌ\nوسطرٌ ثانٍ' }]);
+  // ويُعرض حيث يُعرض نصُّ المادة: البطاقة وجزؤها ومرفقها، والبحث، وصفحة النظام.
+  const card = readFileSync(path.join(ROOT, 'web', 'src', 'components', 'LegalArticleView.tsx'), 'utf8');
+  assert.match(card, /<LegalText key=\{part\.id\} text=\{part\.text\}/, 'بطاقةُ المادة تعرض الجدول أسطراً');
+  assert.match(card, /<LegalText text=\{att\.text\}/, 'المرفق يعرض الجدول أسطراً');
+  for (const f of ['SearchPage.tsx', 'LegalLaws.tsx']) {
+    assert.match(readFileSync(path.join(ROOT, 'web', 'src', 'components', f), 'utf8'), /<LegalText /, `${f} يعرض الجدول أسطراً`);
+  }
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

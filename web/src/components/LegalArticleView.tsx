@@ -11,6 +11,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { api, type LegalAmendment, type LegalArticle } from '../lib/api';
 import { DiffText } from '../lib/diff';
 import { formatDualDate, formatNumber } from '../lib/format';
+import { splitLegalText } from '../lib/legalText';
 import { Icon, ICON_SM } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
 
@@ -67,6 +68,50 @@ export function ArticleName({ a }: { a: LegalArticle }) {
     </>
   ) : (
     <bdi>{a.id}</bdi>
+  );
+}
+
+/**
+ * نصُّ المادة — وجداولُه جداولَ (§3-13، §7-2).
+ *
+ * الأسطر المتتالية التي فيها « | » جدولٌ أوّلُ صفوفه رأسُه، يتبع اتجاه الصفحة
+ * من اليمين لليسار. وما سواها فقراتٌ بأسطرها كما وردت: التعداد جزءٌ من المعنى
+ * النظامي. والخلايا معزولةُ الاتجاه — فيها أرقامٌ ومبالغ تنقلب بجوار العربية.
+ */
+export function LegalText({ text, className }: { text: string; className?: string }) {
+  const blocks = splitLegalText(text);
+  if (!blocks.some((b) => b.kind === 'table')) return <p className={className}>{text}</p>;
+  return (
+    <>
+      {blocks.map((b, i) =>
+        b.kind === 'text' ? (
+          <p key={i} className={className}>{b.text}</p>
+        ) : (
+          <div key={i} className="table-scroll legal-table">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  {b.head.map((c, k) => (
+                    <th key={k} scope="col"><bdi>{c}</bdi></th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {b.rows.map((row, r) => (
+                  <tr key={r}>
+                    {/* الخلية التي هي كلمةٌ واحدة — مبلغٌ أو رقمُ قضيةٍ أو تاريخ —
+                        لا تنكسر: «2291/ت/1447» مشطوراً عند الخط المائل يُقرأ رقمين. */}
+                    {row.map((c, k) => (
+                      <td key={k} className={/\s/.test(c) ? undefined : 'legal-cell-token'}><bdi>{c}</bdi></td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </>
   );
 }
 
@@ -538,7 +583,7 @@ function VersionTimeline({ versions }: { versions: LegalAmendment['versions'] })
           <DiffText from={previous.text} to={shown.text} />
         </>
       ) : (
-        <p className="legal-text">{shown.text}</p>
+        <LegalText text={shown.text} className="legal-text" />
       )}
     </>
   );
@@ -552,7 +597,7 @@ function OriginalTab({ data }: { data: LegalAmendment }) {
       {original ? (
         <>
           <div className="compare-label">الأصل</div>
-          <p className="legal-text">{original}</p>
+          <LegalText text={original} className="legal-text" />
         </>
       ) : (
         <p className="legal-notice-meta">لا نصّ أصليّ محفوظ لهذه المادة — لم تُعدَّل</p>
@@ -636,7 +681,7 @@ export function ArticleCard({
       {/* أسطر الفقرات تبقى: التعداد جزءٌ من المعنى النظامي، ودمجُه في فقرةٍ
           واحدة يُفسده — «١ - … ٢ - …» تصير جملةً متّصلة لا تُقرأ حكماً. */}
       {group.map((part) => (
-        <p key={part.id} className="legal-text">{part.text}</p>
+        <LegalText key={part.id} text={part.text} className="legal-text" />
       ))}
       {/* المرفق تحت مادته بعنوانه (§7-2)، مطويّاً إن طال: غالبُ المرفقات جداول
           ونصوصُ موادَّ مستحدثة، وجدولٌ مبسوط يُبعد القارئ عن المادة التي فتحها.
@@ -648,7 +693,7 @@ export function ArticleCard({
             <ArticleFlags a={att} />
           </summary>
           <ArticleNotices a={att} />
-          <p className="legal-text">{att.text}</p>
+          <LegalText text={att.text} className="legal-text" />
         </details>
       ))}
       {children}

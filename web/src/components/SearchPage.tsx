@@ -12,7 +12,7 @@ import { api, type PlatformSearch, type ExternalGroup, type LegalLaw, type Legal
 import { formatDate } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 import { docTypeLabel } from '../lib/labels';
-import { ArticleFlags, ArticleName, ArticleNotices, LawIdentity, LawTags, groupArticleParts } from './LegalArticleView';
+import { ArticleFlags, ArticleName, ArticleNotices, LawIdentity, LawTags, LegalText, groupArticleParts } from './LegalArticleView';
 
 const INTERNAL_SCOPES: [string, string][] = [
   ['all', 'الكل'],
@@ -219,7 +219,7 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
                     أصليّ بلا تنبيهه يُنسخ إلى مذكّرةٍ على أنه الجاري. */}
                 <ArticleNotices a={a} />
                 {[a, ...rest].map((part) => (
-                  <p key={part.id}>{part.text}</p>
+                  <LegalText key={part.id} text={part.text} />
                 ))}
               </article>
             ))}
