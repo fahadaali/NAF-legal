@@ -1858,7 +1858,10 @@ export async function upsertLegalChunks(
     const slice = rows.slice(i, i + DB_BATCH);
     await env.DB.batch(
       slice.map((r) =>
-        env.DB.prepare(UPSERT_SQL).bind(
+        // كلُّ قيمةٍ غائبة تُربط `null`: السطر قد يكون جُمع (`legal_staging`) قبل
+        // ترقيةٍ أضافت حقلاً، فيصل بلا مفتاحه — وD1 يرفض ربط `undefined`، فيتعذّر
+        // الإتمام ويُردّ الملف كلُّه لأجل حقلٍ فارغ.
+        env.DB.prepare(UPSERT_SQL).bind(...[
           r.id, r.law_id, r.parent_law_id, r.doc_type, r.article_no, r.article_no_norm,
           r.article_label, r.article_title, r.book, r.chapter, r.section,
           r.status, r.is_repealed, r.law_title, r.instrument, r.instrument_no, r.authority, r.captured_at,
@@ -1874,8 +1877,8 @@ export async function upsertLegalChunks(
           r.is_attachment, r.attachment_of, r.has_attachment, r.text_from_attachment, r.amend_link,
           r.former_article_no, r.former_article_no_norm, r.is_annex, r.is_mukarrar,
           r.source_kind, r.source_pages, r.source_version, r.source_sha256, r.ocr_confidence,
-          r.embed_text, r.text_norm, r.book_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now
-        )
+          r.embed_text, r.text_norm, r.book_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now,
+        ].map((v) => v ?? null))
       )
     );
   }
