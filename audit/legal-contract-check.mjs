@@ -2810,6 +2810,39 @@ await check('٢٩ · وما سبق الهجرة في `meta_json` يُنقل إل
   sqlite.prepare("DELETE FROM legal_chunks WHERE id = 'قبل-الهجرة/1'").run();
 });
 
+await check('٢٩ · فحصُ الملف قبل رفعه يعدّ أصناف الإصدار الثامن، ويرفض جزءاً غائباً وصفحاتٍ معيبة', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = path.join(ROOT, 'node_modules', '.cache');
+  const run = async (name, rows) => {
+    const file = path.join(dir, name);
+    await writeFile(file, rows.map((o) => JSON.stringify({ ...o, text_versions: [{ seq: 0, text: o.text, current: true }] })).join('\n') + '\n');
+    return spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'verify-legal.mjs'), '--file', file], { encoding: 'utf8' });
+  };
+  const base = { ...PARTS_BASE, article_label: 'المادة', embed_text: 'نصّ' };
+  const good = await run('verify-v8-good.jsonl', [
+    { ...base, id: 'ثامنة/art-001#a', article_no: 1, part: 1, parts_total: 2, text: 'الجزء الأول.' },
+    { ...base, id: 'ثامنة/art-001#b', article_no: 1, part: 2, parts_total: 2, text: 'الجزء الثاني.' },
+    { ...base, id: 'ثامنة/art-015-mukarrar#a', article_no: 15, part: 1, parts_total: 1, text: 'مكرر في جزء.' },
+    { ...base, id: 'ثامنة/art-002', article_no: 2, source_kind: 'مسح-ضوئي', source_pages: [14],
+      text: 'الفئة | الرسم\nالأولى | 100' },
+    { ...base, id: 'ثامنة/art-003', article_no: 3, text: '(محذوفة)', is_repealed: true, retrieval_status: 'ملغى' },
+  ]);
+  assert.equal(good.status, 0, 'الفحص رفض ملفاً سليماً من الإصدار الثامن:\n' + good.stdout.slice(-1200));
+  for (const [label, n] of [['أجزاء موادّ مقسّمة', 3], ['مواد «مكرر»', 1], ['مقروءة من صورة', 1], ['فيها جدول « | »', 1], ['محذوفة', 1]]) {
+    assert.match(good.stdout, new RegExp(`${label}\\s+${n}\\n`), `البيان لا يعدّ «${label}»`);
+  }
+  assert.match(good.stdout, /ثامنة\/art-001%23a/, 'عيّنةُ المادة المقسّمة بلا رابطها المرمَّز');
+
+  const bad = await run('verify-v8-bad.jsonl', [
+    { ...base, id: 'ثامنة/art-001#a', article_no: 1, part: 1, parts_total: 3, text: 'جزءٌ من ثلاثة.' },
+    { ...base, id: 'ثامنة/art-001#c', article_no: 1, part: 3, parts_total: 3, text: 'وغاب الثاني.' },
+    { ...base, id: 'ثامنة/art-004', article_no: 4, source_pages: [15, 14], text: 'صفحاتٌ مقلوبة.' },
+  ]);
+  assert.equal(bad.status, 1, 'الفحص قبل جزءاً غائباً وصفحاتٍ مقلوبة');
+  assert.match(bad.stdout, /✗ أجزاءُ كل مادةٍ مقسّمة كاملةٌ متّسقة/);
+  assert.match(bad.stdout, /✗ `source_pages` صفحةٌ أو مدىً/);
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

@@ -5,7 +5,8 @@
 //
 // والشروط تسعةٌ من وثيقة الاستيراد، وزِيد عليها اثنان من إصدارها السادس: ختمُ
 // الحالة، وصيغةُ التاريخين اللذين يُقارَنان بتاريخ الخادم. «صالح للرفع» من
-// فحص البنية وحده لا يعني صحّة الحالات — فملفٌّ فاته الختم كان يجتازه.
+// فحص البنية وحده لا يعني صحّة الحالات — فملفٌّ فاته الختم كان يجتازه. واثنان
+// من إصدارها الثامن: أجزاءُ المادة المقسّمة كاملة، وصفحاتُ المصدر صالحة.
 //
 // التشغيل:
 //   npm run verify:legal -- --file ./data/all-articles.jsonl
@@ -178,6 +179,46 @@ cond('`law_effective_from` و`scheduled_repeal_from` ميلاديّان `YYYY-MM
     .filter((k) => o[k] !== undefined && o[k] !== null && o[k] !== '' && !ISO.test(String(o[k])))
     .map((k) => `سطر ${n} (${o.id}): ${k} = «${o[k]}»`)));
 
+// أجزاءُ المادة (§3-2): المادة المقسّمة تصل بأجزائها كلِّها — `part` من 1 إلى
+// `parts_total` بلا ثغرةٍ ولا تكرار، وبرقم المادة نفسه. والمنصة تعرض ما وصل منها
+// متّصلاً، فجزءٌ غائب يُقرأ مادةً تامّة وهي ناقصة.
+//
+// والمعرّف قبل `#` معرّفُ المادة، ومنه تُقرأ لاحقاتها (`-mukarrar` و`-attach`)
+// كما يقرؤها الاستيراد في `src/lib/legal.ts`.
+const baseId = (o) => String(o.id ?? '').split('#')[0];
+const partGroups = new Map();
+for (const { n, o } of rows) {
+  if (!String(o.id ?? '').includes('#')) continue;
+  const b = baseId(o);
+  if (!partGroups.has(b)) partGroups.set(b, []);
+  partGroups.get(b).push({ n, o });
+}
+const partsBad = [];
+for (const [b, list] of partGroups) {
+  const totals = new Set(list.map(({ o }) => Number(o.parts_total)));
+  const total = Number(list[0].o.parts_total);
+  const parts = list.map(({ o }) => Number(o.part)).sort((x, y) => x - y);
+  if (totals.size !== 1 || !Number.isInteger(total) || total < 1) {
+    partsBad.push(`${b}: \`parts_total\` غائبٌ أو غير متّفق بين الأجزاء (سطر ${list[0].n})`);
+  } else if (parts.length !== total || parts.some((p, i) => p !== i + 1)) {
+    partsBad.push(`${b}: الأجزاء ${parts.join('، ')} من ${total} (سطر ${list[0].n})`);
+  }
+  if (new Set(list.map(({ o }) => String(o.article_no))).size !== 1) {
+    partsBad.push(`${b}: الأجزاء بأرقام موادّ مختلفة (سطر ${list[0].n})`);
+  }
+}
+cond('أجزاءُ كل مادةٍ مقسّمة كاملةٌ متّسقة (`part` من 1 إلى `parts_total`)', partsBad);
+
+// صفحاتُ المصدر (§3-13) يُستشهد بها: صفحةٌ `[14]` أو مدىً `[14, 15]` بأعدادٍ
+// صحيحة موجبة. والمنصة تُسقط المعيب منها ولا ترفض السطر — فيصل السجل بلا
+// صفحته ويُستشهد به بلا موضع. وهذا يقوله قبل الرفع.
+const pagesOk = (p) =>
+  Array.isArray(p) && p.length >= 1 && p.length <= 2 &&
+  p.every((x) => Number.isInteger(x) && x > 0) && (p.length === 1 || p[0] <= p[1]);
+cond('`source_pages` صفحةٌ أو مدىً `[من, إلى]` بأعدادٍ صحيحة',
+  rows.filter(({ o }) => o.source_pages !== undefined && o.source_pages !== null && !pagesOk(o.source_pages))
+      .map(({ n, o }) => `سطر ${n} (${o.id}): ${JSON.stringify(o.source_pages)}`));
+
 // ── الأرقام ──
 const laws = new Map();
 const byStatus = new Map();
@@ -196,9 +237,7 @@ for (const { o } of rows) {
   const st = String(o.status ?? '—');
   byLawStatus.set(st, (byLawStatus.get(st) ?? 0) + 1);
 }
-// ولاحقةُ المعرّف تُقرأ قبل `#`: جزءُ المادة المقسّمة (§3-2) يحمل لاحقةَ مادته ثم
-// `#a` — كما يقرؤها الاستيراد في `src/lib/legal.ts`.
-const baseId = (o) => String(o.id ?? '').split('#')[0];
+// ولاحقةُ المعرّف تُقرأ قبل `#` (`baseId` أعلاه) — كما يقرؤها الاستيراد.
 const isAnnex = (o) => !!o.is_annex || /\/annex-\d+$/.test(baseId(o));
 const isAttachment = (o) => !!o.is_attachment || /-attach\d*$/.test(baseId(o));
 const isMukarrar = (o) => /-mukarrar\d*(?:--dup\d+)?$/.test(baseId(o));
@@ -211,6 +250,12 @@ const kinds = [
   ['مستبقاة بعد إلغاء نظامها', (o) => !!o.kept_after_repeal],
   ['من نظامٍ لم يبدأ العمل به', (o) => !!o.law_pending],
   ['مجدولٌ إلغاؤها', (o) => !!o.scheduled_repeal_from],
+  // وأصنافُ الإصدار الثامن (§3-2، §3-13).
+  ['أجزاء موادّ مقسّمة', (o) => String(o.id ?? '').includes('#')],
+  ['من خارج البوابة', (o) => !!o.source_kind],
+  ['مقروءة من صورة', (o) => o.source_kind === 'مسح-ضوئي'],
+  ['فيها جدول « | »', (o) => / \| /.test(String(o.text ?? ''))],
+  ['محذوفة', (o) => String(o.text ?? '').trim() === '(محذوفة)'],
 ];
 
 const nf = new Intl.NumberFormat('en-US');
@@ -269,7 +314,10 @@ if (!withHistory.length) console.log('  (لا مادة لها أكثر من نس
 console.log('\nعيّناتٌ لقائمة التحقّق:');
 for (const [label, test] of kinds) {
   const hit = rows.find(({ o }) => test(o));
-  if (hit) console.log(`  ${label.padEnd(26)} ${hit.o.id}${hit.o.former_article_no ? `   (السابق ${hit.o.former_article_no})` : ''}`);
+  if (!hit) continue;
+  // والمعرّف المقسّم يُفتح رابطاً بـ`%23` لا بـ`#` (§3-2): المتصفّح يقطع عندها.
+  const link = hit.o.id.includes('#') ? `   (في الرابط: ${hit.o.id.replace(/#/g, '%23')})` : '';
+  console.log(`  ${label.padEnd(26)} ${hit.o.id}${hit.o.former_article_no ? `   (السابق ${hit.o.former_article_no})` : ''}${link}`);
 }
 const titles = new Map();
 for (const { o } of rows) {
