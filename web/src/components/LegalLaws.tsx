@@ -19,6 +19,7 @@ import {
   ArticleNotices,
   LawIdentity,
   LawTags,
+  LegalText,
   groupWithAttachments,
 } from './LegalArticleView';
 
@@ -116,7 +117,7 @@ export function LegalLaws({ stats }: { stats?: LegalStats | null }) {
                   كما تُنسخ من صفحة النظام، ونصٌّ أصليّ بلا تنبيهه يُستشهد به
                   على أنه الجاري. */}
               <ArticleNotices a={a} />
-              <p>{a.text}</p>
+              <LegalText text={a.text} />
             </article>
           ))}
         </>

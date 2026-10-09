@@ -925,6 +925,10 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
   font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 500;
 }
 .legal-attachment > * + * { margin-top: var(--space-2); }
+/* الجدول داخل نصّ المادة (§3-13): بين فقراتها بفراغها، ويتمرّر أفقياً وحده على
+   الشاشة الضيّقة فلا تتجاوز الصفحةُ عرضها. */
+.legal-table { margin-block: var(--space-3); }
+.legal-table .legal-cell-token { white-space: nowrap; }
 /* رابطُ المصدر في ذيل البطاقة — سطرٌ بمقاس الشارة لا بمقاس المتن. */
 .legal-source { margin-top: var(--space-2); font-size: var(--text-sm); line-height: var(--text-sm--line-height); }
 .legal-source a { display: inline-flex; align-items: center; gap: var(--space-1); }

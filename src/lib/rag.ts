@@ -11,6 +11,7 @@
 // الواجهة. فأيّ مسار: محادثة أو تقرير أو أتمتة أو واجهة برمجية، يمرّ بها.
 import {
   searchLegal,
+  articleBaseId,
   AMENDMENT_NOTICE,
   DEFERRED_NOTICE,
   EFFECTIVE_STATUSES,
@@ -96,6 +97,10 @@ export interface RagResult {
    * بتاريخ نفاذه والنافذ قبله (§5-5).
    */
   retrievalWarning?: string;
+  /** صفحاتُ السجل في ملف الجهة — للائحة من خارج البوابة (§3-13). */
+  sourcePages?: [number, number];
+  /** نسخةُ الجهة كما في ملفها. */
+  sourceVersion?: string;
 }
 
 /** ثابت دمج الرتب — كما في `lib/legal.ts`. */
@@ -125,7 +130,7 @@ export async function retrieve(env: Env, queries: string[], topK = 5): Promise<R
     // المقاطع المستوردة — بحث هجين، والتصفية على السريان داخله.
     try {
       const legal = await searchLegal(env, q, { limit: topK, queryVector });
-      if (legal.length) lists.push(legal.map(fromLegalHit));
+      if (legal.length) lists.push(joinArticleParts(legal).map(fromLegalHit));
     } catch {
       // جدول المقاطع غير مهيّأ بعد (هجرة لم تُطبَّق) — نتابع بالوثائق وحدها.
     }
@@ -154,6 +159,48 @@ export async function retrieve(env: Env, queries: string[], topK = 5): Promise<R
     .slice(0, topK);
 }
 
+/**
+ * أجزاءُ المادة المقسّمة مقطعٌ واحد في السياق (§5-8).
+ *
+ * طبقةُ الاسترجاع تردّها متتابعةً مرتّبة، وتركُها نتائجَ مستقلّة يجعل الدمجَ
+ * بالرتب والسقفَ بعده يقطعان المادة بين جزأيها — فيصل إلى المساعد نصفُ حكمٍ
+ * على أنه الحكم. فتُجمع هنا نصّاً واحداً بأسطرها، ويبقى المعرّفُ معرّفَ أوّل
+ * جزء: استدعاؤه يفتح المادة بأجزائها كلِّها.
+ */
+function joinArticleParts(hits: LegalHit[]): LegalHit[] {
+  const out: LegalHit[] = [];
+  for (const h of hits) {
+    const last = out[out.length - 1];
+    if (last && h.part && last.part && h.id.includes('#') && articleBaseId(last.id) === articleBaseId(h.id)) {
+      // وتحذيرُ أيِّ جزءٍ تحذيرٌ للمادة: جزءٌ عليه تعديلٌ لم يُدمج لا يصل
+      // سياقَ المساعد بلا تنبيهه لأن جزءاً قبله سليم.
+      const warned = last.retrievalStatus !== RETRIEVAL_WARNING && h.retrievalStatus === RETRIEVAL_WARNING;
+      out[out.length - 1] = {
+        ...last,
+        ...(warned
+          ? {
+              retrievalStatus: h.retrievalStatus,
+              retrievalWarning: h.retrievalWarning,
+              hasAmendments: h.hasAmendments,
+              amendmentApplied: h.amendmentApplied,
+              amendmentInstrument: h.amendmentInstrument,
+              amendedOn: h.amendedOn,
+            }
+          : {}),
+        text: `${last.text}\n${h.text}`,
+        // وصفحاتُ المادة من أوّل جزءٍ إلى آخره: الاستشهاد بها لا بصفحة جزئها الأوّل.
+        sourcePages:
+          last.sourcePages && h.sourcePages
+            ? [Math.min(last.sourcePages[0], h.sourcePages[0]), Math.max(last.sourcePages[1], h.sourcePages[1])]
+            : (last.sourcePages ?? h.sourcePages),
+      };
+    } else {
+      out.push(h);
+    }
+  }
+  return out;
+}
+
 function fromLegalHit(h: LegalHit): RagResult {
   return {
     // `text` وحده. ولو وُضع `embed_text` هنا لتلوّث الاستشهاد بسياق زائد.
@@ -162,7 +209,8 @@ function fromLegalHit(h: LegalHit): RagResult {
     documentId: h.id,
     title: h.lawTitle || h.lawId || 'نظام',
     articleRef: articleRefOf(h),
-    key: `legal:${h.id}`,
+    // بمعرّف المادة لا الجزء: المادة الواحدة لا تُعدّ في الدمج مرّتين.
+    key: `legal:${articleBaseId(h.id)}`,
     source: 'legal',
     lawId: h.lawId ?? undefined,
     docType: h.docType ?? undefined,
@@ -181,6 +229,8 @@ function fromLegalHit(h: LegalHit): RagResult {
     effectiveFrom: h.effectiveFrom ?? h.effectiveFromHijri ?? undefined,
     retrievalWarning:
       h.retrievalStatus === RETRIEVAL_WARNING ? (h.retrievalWarning ?? AMENDMENT_NOTICE) : undefined,
+    sourcePages: h.sourcePages ?? undefined,
+    sourceVersion: h.sourceVersion ?? undefined,
   };
 }
 
@@ -279,7 +329,7 @@ export function formatRagContext(results: RagResult[]): string {
   const blocks = results
     .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`)
     .join('\n\n---\n\n');
-  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا حاشيةٌ عليه — انقله في متن الإجابة مع الاستشهاد لا في حاشيتها. وما نبّه التنبيه أن نصَّه أصليٌّ لم يُدمج تعديلُه فلا تصغ نصَّه النافذ من عندك: قل صراحةً إن النصّ النافذ غير متاح في قاعدة المعرفة، وأحِل إلى سجل التعديلات.\n\n${blocks}\n</سياق_نظامي>`;
+  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس، وما حمل سطرُ مصدره صفحةً أو نسخةً فاذكرهما في الاستشهاد كما وردا. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا حاشيةٌ عليه — انقله في متن الإجابة مع الاستشهاد لا في حاشيتها. وما نبّه التنبيه أن نصَّه أصليٌّ لم يُدمج تعديلُه فلا تصغ نصَّه النافذ من عندك: قل صراحةً إن النصّ النافذ غير متاح في قاعدة المعرفة، وأحِل إلى سجل التعديلات.\n\n${blocks}\n</سياق_نظامي>`;
 }
 
 /**
@@ -309,13 +359,21 @@ function noticeLines(r: RagResult): string {
 }
 
 /**
- * سطر الإسناد: اسم النظام، ثم المادة، ثم رقم الأداة، ثم تاريخ الإصدار.
+ * سطر الإسناد: اسم النظام، ثم المادة، ثم صفحتها ونسخة الجهة إن جاءت من ملفّ
+ * جهة، ثم رقم الأداة، ثم تاريخ الإصدار.
  *
  * التاريخ ميلاديّ يتبعه الهجريّ بين قوسين — تاريخ أداةٍ نظامية يُستشهد به.
  */
 function citationLine(r: RagResult): string {
   const parts = [r.title];
   if (r.articleRef) parts.push(r.articleRef);
+  /* واللائحةُ من خارج البوابة يُستشهد بصفحتها في ملف الجهة ونسختها (§6-4):
+   * «المادة 12، ص 14، نسخة 2025-04». النسخةُ تقول أيَّ ملفٍّ، والصفحةُ أين فيه. */
+  if (r.sourcePages) {
+    const [from, to] = r.sourcePages;
+    parts.push(from === to ? `ص ${from}` : `ص ${from}–${to}`);
+  }
+  if (r.sourceVersion) parts.push(`نسخة ${r.sourceVersion}`);
   if (r.instrumentNo) parts.push(r.instrumentNo);
   if (r.issueDate) parts.push(r.issueDateHijri ? `${r.issueDate} (${r.issueDateHijri})` : r.issueDate);
   else if (r.issueDateHijri) parts.push(r.issueDateHijri);

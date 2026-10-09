@@ -97,6 +97,12 @@ const LAW_CARD_FIELDS = [
   'scheduled_repeal_from', 'kept_after_repeal', 'published_hijri', 'published_gregorian', 'instruments',
 ] as const;
 
+/**
+ * مصدرُ السجل — اللوائح من خارج البوابة (§3-13). غائبةٌ في سجلات البوابة،
+ * و`ocr_confidence` منها للتدقيق وحده.
+ */
+const SOURCE_FIELDS = ['source_kind', 'source_pages', 'source_version', 'source_sha256', 'ocr_confidence'] as const;
+
 /** حالاتٌ لا تكون إلا حالَ نظام — لا يعرفها المعنى القديم لـ`status`. */
 const LAW_ONLY_STATUSES = new Set(['لم يبدأ العمل به', 'جاري العمل على النظام'].map((s) => normalizeArabic(s)));
 
@@ -248,6 +254,7 @@ const HIT_COLUMNS = `c.seq, c.id, c.law_id, c.parent_law_id, c.doc_type, c.artic
     c.scheduled_repeal_from, c.kept_after_repeal,
     c.is_attachment, c.attachment_of, c.has_attachment, c.text_from_attachment,
     c.former_article_no, c.former_article_no_norm, c.is_annex, c.is_mukarrar,
+    c.source_kind, c.source_pages, c.source_version,
     c.meta_json`;
 
 /** سقف طول مدخل التضمين. تجاوزُه يقصّ **مدخل المتجه وحده** ولا يقسم المقطع. */
@@ -378,6 +385,13 @@ export interface LegalHit {
   isAnnex: boolean;
   /** مادة «مكرر» — مستقلّة برقم المادة الأصل. */
   isMukarrar: boolean;
+  // ── مصدرُ السجل — §3-13 ──
+  /** صفحة · ملف-نصي · مسح-ضوئي — وفارغٌ في سجلات البوابة. */
+  sourceKind: string | null;
+  /** صفحاتُ السجل في ملف الجهة `[من, إلى]` — يُستشهد بها. */
+  sourcePages: [number, number] | null;
+  /** نسخةُ الجهة كما في ملفها — تُعرض بجوار النص. */
+  sourceVersion: string | null;
   meta: Record<string, unknown> | null;
   score: number;
   /** الإشارات التي رشّحت هذه النتيجة: دلالي، لفظي، مطابقة رقم مادة. */
@@ -467,6 +481,17 @@ export interface PreparedChunk {
   // ── الملاحق ومواد «مكرر» — §3-12 و§3-11 ──
   is_annex: number;
   is_mukarrar: number;
+  // ── مصدرُ السجل — §3-13 ──
+  /** صفحة · ملف-نصي · مسح-ضوئي — وغائبٌ في سجلات البوابة. */
+  source_kind: string | null;
+  /** `[من, إلى]` نصّاً — صفحاتُ السجل في ملف الجهة، يُستشهد بها. */
+  source_pages: string | null;
+  /** نسخةُ الجهة كما في ملفها — تُعرض بجوار النص. */
+  source_version: string | null;
+  /** بصمةُ ملف الجهة — للتدقيق. */
+  source_sha256: string | null;
+  /** للتدقيق وحده: لا يُبنى عليه عرضٌ ولا حجبٌ ولا تحذير. */
+  ocr_confidence: number | null;
   embed_text: string;
   text_norm: string;
   /** الباب مطبَّعاً — للترشيح به. */
@@ -693,6 +718,19 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string, opts: Impor
 const MAX_ID_LEN = 200;
 const MAX_TEXT_LEN = 200_000;
 
+/**
+ * معرّفُ المادة بلا لاحقة جزئها: `…/art-001#a` ← `…/art-001` (§3-2).
+ *
+ * المادة الطويلة تُقسَّم سجلاتٍ بلاحقة `#a` ثم `#b`، والأجزاء مادةٌ واحدة لا
+ * موادّ. فكلُّ ما يُقرأ من لاحقة المعرّف — «مكرر» والمرفق والملحق — يُقرأ من
+ * المعرّف قبل `#`، وإلا صار الجزء الأول من مادة «مكرر» مادةً أصلاً تُستدعى برقم
+ * غيرها.
+ */
+export function articleBaseId(id: string): string {
+  const i = id.indexOf('#');
+  return i < 0 ? id : id.slice(0, i);
+}
+
 /** يتحقّق من سطر واحد ويحسب حقوله المشتقّة. يرمي رسالةً عربية عند الخطأ. */
 export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedChunk {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -875,6 +913,7 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     ...LAW_CARD_FIELDS,
     'is_attachment', 'attachment_of', 'has_attachment', 'text_from_attachment', 'amend_link',
     'former_article_no', 'is_annex',
+    ...SOURCE_FIELDS,
   ]);
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) if (!known.has(k)) extra[k] = v;
@@ -883,12 +922,17 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
   // الحقلان الصريحان يُقرآن كما وردا، ولاحقةُ المعرّف تقوم مقامهما حين يغيبان:
   // `-attach` و`annex-01` صيغتان يسمّيهما العقد نفسه (§3-11، §3-12)، فقراءتُهما
   // قراءةٌ للعقد لا تخمين. ومادة «مكرر» لا حقلَ لها غيرُ لاحقتها.
-  const isAttachment = explicitOr(o.is_attachment, /-attach\d*$/.test(id)) ? 1 : 0;
+  //
+  // واللاحقة تُقرأ من المعرّف قبل `#`: جزءُ المادة المقسّمة (§3-2) يحمل لاحقةَ
+  // مادته ثم `#a`، وقراءتُها من آخر المعرّف كانت تُسقطها عن الجزء.
+  const baseId = articleBaseId(id);
+  const isAttachment = explicitOr(o.is_attachment, /-attach\d*$/.test(baseId)) ? 1 : 0;
   const attachmentOf = str(o.attachment_of) || null;
-  const isAnnex = explicitOr(o.is_annex, /\/annex-\d+$/.test(id)) ? 1 : 0;
-  const isMukarrar = /-mukarrar\d*(?:--dup\d+)?$/.test(id) ? 1 : 0;
+  const isAnnex = explicitOr(o.is_annex, /\/annex-\d+$/.test(baseId)) ? 1 : 0;
+  const isMukarrar = /-mukarrar\d*(?:--dup\d+)?$/.test(baseId) ? 1 : 0;
   // مرفقُ الملحق يحمل رقمه الاصطلاحيّ نفسه (§3-12)، فحكمُه في الرقم حكمُه.
-  const conventionalNo = !!isAnnex || /\/annex-\d+-attach\d*$/.test(id) || /\/annex-\d+$/.test(attachmentOf ?? '');
+  const conventionalNo =
+    !!isAnnex || /\/annex-\d+-attach\d*$/.test(baseId) || /\/annex-\d+$/.test(articleBaseId(attachmentOf ?? ''));
   const formerArticleNo = str(o.former_article_no) || null;
 
   // مقبض المادة: ما يكتبه من يبحث عنها بعينها — اسم النظام ورقمها ورقم أداتها.
@@ -983,6 +1027,11 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     former_article_no_norm: normalizeArticleNo(formerArticleNo),
     is_annex: isAnnex,
     is_mukarrar: isMukarrar,
+    source_kind: str(o.source_kind) || null,
+    source_pages: parseSourcePages(o.source_pages),
+    source_version: str(o.source_version) || null,
+    source_sha256: str(o.source_sha256) || null,
+    ocr_confidence: num(o.ocr_confidence),
     embed_text: embedText,
     text_norm: normalizeArabic(text),
     book_norm: normalizeArabic(str(o.book)) || null,
@@ -1041,6 +1090,21 @@ function gregorianOnly(v: unknown, field: string): string | null {
  * أدوات الإصدار كلُّها — مرسومٌ وقرارُ مجلس وزراء معاً. للعرض وحده، فما لم
  * يكن مصفوفةً يُترك ولا يُرفض لأجله سطر.
  */
+/**
+ * صفحاتُ السجل في ملف الجهة (§3-13): `[من, إلى]` نصّاً، أو `null`.
+ *
+ * عددان صحيحان موجبان، والأوّل لا يزيد على الثاني؛ وصفحةٌ واحدة `[14]` تُقرأ
+ * `[14, 14]`. وما خالف ذلك يُردّ `null` ولا يُرفض السطر لأجله — كما في `num`:
+ * صفحةٌ يُستشهد بها خطأً أسوأ من غيابها، وإسقاطُ اللائحة كلِّها لأجلها أسوأ منهما.
+ */
+function parseSourcePages(v: unknown): string | null {
+  if (!Array.isArray(v) || v.length < 1 || v.length > 2) return null;
+  const pages = v.map(num);
+  if (!pages.every((n): n is number => n !== null && Number.isInteger(n) && n > 0)) return null;
+  const [from, to = from] = pages;
+  return from <= to ? JSON.stringify([from, to]) : null;
+}
+
 function parseInstruments(v: unknown): string | null {
   if (!Array.isArray(v) || !v.length) return null;
   const out = v
@@ -1559,8 +1623,9 @@ const UPSERT_SQL = `
     scheduled_repeal_from, kept_after_repeal, published_hijri, published_gregorian, instruments,
     is_attachment, attachment_of, has_attachment, text_from_attachment, amend_link,
     former_article_no, former_article_no_norm, is_annex, is_mukarrar,
+    source_kind, source_pages, source_version, source_sha256, ocr_confidence,
     embed_text, text_norm, book_norm, handle_norm, meta_json, embed_hash, embedded_at, imported_at, updated_at
-  ) VALUES (${Array(47).fill('?').join(',')},${Array(20).fill('?').join(',')},?,?,?,?,?,?,NULL,?,?)
+  ) VALUES (${Array(47).fill('?').join(',')},${Array(25).fill('?').join(',')},?,?,?,?,?,?,NULL,?,?)
   ON CONFLICT(id) DO UPDATE SET
     law_id = excluded.law_id,
     parent_law_id = excluded.parent_law_id,
@@ -1633,6 +1698,11 @@ const UPSERT_SQL = `
     former_article_no_norm = excluded.former_article_no_norm,
     is_annex = excluded.is_annex,
     is_mukarrar = excluded.is_mukarrar,
+    source_kind = excluded.source_kind,
+    source_pages = excluded.source_pages,
+    source_version = excluded.source_version,
+    source_sha256 = excluded.source_sha256,
+    ocr_confidence = excluded.ocr_confidence,
     embed_text = excluded.embed_text,
     text_norm = excluded.text_norm,
     book_norm = excluded.book_norm,
@@ -1803,6 +1873,7 @@ export async function upsertLegalChunks(
           r.scheduled_repeal_from, r.kept_after_repeal, r.published_hijri, r.published_gregorian, r.instruments,
           r.is_attachment, r.attachment_of, r.has_attachment, r.text_from_attachment, r.amend_link,
           r.former_article_no, r.former_article_no_norm, r.is_annex, r.is_mukarrar,
+          r.source_kind, r.source_pages, r.source_version, r.source_sha256, r.ocr_confidence,
           r.embed_text, r.text_norm, r.book_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now
         )
       )
@@ -3214,6 +3285,76 @@ export async function withAttachments(env: Env, hits: LegalHit[], filters: Legal
   return hits.flatMap((h) => [h, ...(byParent.get(h.id) ?? [])]);
 }
 
+/** جزءٌ من مادةٍ مقسّمة: لاحقةُ `#` في المعرّف ورقمُ جزءٍ معه (§3-2). */
+function isArticlePart(h: LegalHit): boolean {
+  return !!h.part && h.id.includes('#');
+}
+
+/**
+ * ترتيب أجزاء المادة بـ`part` (§5-8) — عدداً إن كان عدداً، فـ`10` بعد `9` لا
+ * قبل `2`. وما تساوى فيه يُرتَّب بترتيب الملف.
+ */
+function byPartOrder(a: LegalHit, b: LegalHit): number {
+  const an = Number(a.part);
+  const bn = Number(b.part);
+  if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
+  if ((a.part ?? '') !== (b.part ?? '')) return (a.part ?? '') < (b.part ?? '') ? -1 : 1;
+  return a.seq - b.seq;
+}
+
+/**
+ * يُتمّ كلَّ جزءٍ جاءت به النتائج بأجزاء مادته كلِّها، مرتّبةً (§5-8).
+ *
+ * الجزء مقطعٌ من مادة لا مادة: بحثٌ أصاب `#b` وحده يعرض نصفَ حكمٍ على أنه
+ * الحكم، واستدعاءُ الرقم بسقفٍ يقطع المادة الطويلة عند جزئها الخامس. فالأجزاء
+ * تُضمّ في طبقة الاسترجاع — والشاشة والمساعد وكل مسارٍ آخر يتلقّاها كاملة.
+ *
+ * والأجزاء تأخذ موضعَ أعلاها في النتائج ودرجتَه: مادةٌ واحدة لا تتفرّق في
+ * الترتيب. والتصفية نفسها تسري على المضموم، فجزءٌ محجوب لا يدخل من هنا — وتقول
+ * الشاشة حينئذٍ أيَّ جزءٍ بين يدي القارئ.
+ *
+ * والبحث عن الأجزاء بمدى المفتاح لا بـ`LIKE`: كلُّ معرّفٍ يبدأ بـ`base#` يقع بين
+ * `base#` و`base$` (`$` تلي `#` في الترميز)، فلا يُهرَّب `%` و`_` في المعرّف
+ * ويُقرأ الفهرس الأساسيّ كما هو.
+ */
+export async function withParts(env: Env, hits: LegalHit[], filters: LegalFilters): Promise<LegalHit[]> {
+  const bases = Array.from(new Set(hits.filter(isArticlePart).map((h) => articleBaseId(h.id))));
+  if (!bases.length) return hits;
+
+  const built = buildFilters({ ...filters, articleNo: null });
+  const byBase = new Map<string, LegalHit[]>();
+  for (let i = 0; i < bases.length; i += DB_BATCH) {
+    const slice = bases.slice(i, i + DB_BATCH);
+    const ranges = slice.map(() => '(c.id >= ? AND c.id < ?)').join(' OR ');
+    const rows = await env.DB.prepare(
+      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE (${ranges})${built.sql}`
+    )
+      .bind(...slice.flatMap((b) => [`${b}#`, `${b}$`]), ...built.binds)
+      .all<HitRow>();
+    for (const r of rows.results ?? []) {
+      const base = articleBaseId(r.id);
+      byBase.set(base, [...(byBase.get(base) ?? []), toHit(r)]);
+    }
+  }
+
+  const out: LegalHit[] = [];
+  const done = new Set<string>();
+  for (const h of hits) {
+    if (!isArticlePart(h)) {
+      out.push(h);
+      continue;
+    }
+    const base = articleBaseId(h.id);
+    if (done.has(base)) continue;
+    done.add(base);
+    // ما جاءت به النتائج يبقى بدرجته وإشاراته، وما ضُمّ يأخذهما من أعلاه.
+    const group = new Map((byBase.get(base) ?? []).map((p) => [p.id, { ...p, score: h.score, signals: [...h.signals] }]));
+    for (const x of hits) if (isArticlePart(x) && articleBaseId(x.id) === base) group.set(x.id, x);
+    out.push(...Array.from(group.values()).sort(byPartOrder));
+  }
+  return out;
+}
+
 interface HitRow {
   seq: number; id: string; law_id: string | null; parent_law_id: string | null;
   doc_type: string | null; article_no: string | null; article_no_norm: string | null;
@@ -3236,7 +3377,19 @@ interface HitRow {
   law_effective_from: string | null; scheduled_repeal_from: string | null; kept_after_repeal: number;
   is_attachment: number; attachment_of: string | null; has_attachment: number; text_from_attachment: number;
   former_article_no: string | null; former_article_no_norm: string | null; is_annex: number; is_mukarrar: number;
+  source_kind: string | null; source_pages: string | null; source_version: string | null;
   meta_json: string | null;
+}
+
+/** الصفحاتُ كما خُزِّنت — وما لم يُقرأ منها عددين يُردّ `null` لا يُعرض خطأً. */
+function readSourcePages(v: string | null): [number, number] | null {
+  if (!v) return null;
+  try {
+    const p = JSON.parse(v);
+    return Array.isArray(p) && p.length === 2 && p.every((n) => Number.isInteger(n)) ? [p[0], p[1]] : null;
+  } catch {
+    return null;
+  }
 }
 
 function toHit(r: HitRow): LegalHit {
@@ -3337,6 +3490,9 @@ function toHit(r: HitRow): LegalHit {
     formerArticleNo: r.former_article_no,
     isAnnex: r.is_annex === 1,
     isMukarrar: r.is_mukarrar === 1,
+    sourceKind: r.source_kind,
+    sourcePages: readSourcePages(r.source_pages),
+    sourceVersion: r.source_version,
     meta,
     score: 0,
     signals: [],
@@ -3459,7 +3615,8 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     )
       .bind(...filters.binds, limit)
       .all<HitRow>();
-    return (rows.results ?? []).map((r, i) => ({ ...toHit(r), score: 1 / (RRF_K + i), signals: ['metadata'] }));
+    const hits = (rows.results ?? []).map((r, i) => ({ ...toHit(r), score: 1 / (RRF_K + i), signals: ['metadata'] }));
+    return withParts(env, hits, opts);
   }
 
   const articleInQuery = opts.articleNo ? articleRequest(opts.articleNo) : articleFromQuery(query);
@@ -3523,7 +3680,7 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     const scope = buildFilters({ ...opts, articleNo: null });
     const byNo = articleNoClause(articleInQuery);
     const exact = await env.DB.prepare(
-      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${byNo.sql}${scope.sql} LIMIT 5`
+      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${byNo.sql}${scope.sql} ORDER BY c.seq LIMIT 20`
     )
       .bind(...byNo.binds, ...scope.binds)
       .all<HitRow>();
@@ -3539,7 +3696,8 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     }
   }
 
-  return fuse(lists, articleInQuery, limit);
+  // وجزءُ المادة لا يُعرض وحده (§5-8): يُتمّ بعد الدمج بأجزاء مادته في موضعه.
+  return withParts(env, fuse(lists, articleInQuery, limit), opts);
 }
 
 /** دمج القوائم المرتّبة بـRRF، مع ترجيح مطابقة رقم المادة. */
@@ -3607,7 +3765,8 @@ export async function getArticle(
   // الضمّ بنطاق النظام لا بنطاق الرقم: أخوات المادة قد تحمل أرقاماً مختلفة
   // في `article_no` وتجمعها `duplicate_of` وحدها. ومرفقاتُها معها بعدها.
   const siblings = await expandDuplicates(env, (rows.results ?? []).map(toHit), scope);
-  return withAttachments(env, siblings, scope);
+  // وأجزاءُ المادة المقسّمة كلُّها مرتّبةً بـ`part` (§5-8) — لا ما بلغه السقف.
+  return withAttachments(env, await withParts(env, siblings, scope), scope);
 }
 
 /** مقطع بمعرّفه. التصفية سارية هنا أيضاً — الاستشهاد لا يستثنى من الشرط. */

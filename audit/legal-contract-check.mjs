@@ -2644,6 +2644,230 @@ await check('٢٧ · والمسار يجمع ويُتمّ ويُلغي، وال�
   assert.match(index, /getUTCHours\(\) === 3 && at\.getUTCMinutes\(\) === 0/, 'نبضةُ الليل ليست الثالثة فجراً');
 });
 
+// ── ٢٨ · أجزاءُ المادة مادةٌ واحدة (الإصدار الثامن §3-2، §5-8) ──
+//
+// المادة الطويلة سجلاتٌ بلاحقة `#a` و`#b`، وأجزاؤها تُستدعى معاً مرتّبةً بـ`part`.
+// واثنا عشر جزءاً عمداً: فوق سقف الاستدعاء القديم (خمسة)، وفيها `10` التي
+// تسبق `2` لو رُتّبت نصّاً.
+
+const PARTS_BASE = {
+  law_id: 'parts', law_name: 'نظام الأجزاء', doc_type: 'نظام', law_status_source: 'البوابة',
+  status: 'ساري', has_amendments: false, is_repealed: false, needs_review: false,
+  amendment_events: [], retrieval_status: 'نافذ',
+};
+const partLine = (o) => line({ ...PARTS_BASE, embed_text: `نظام الأجزاء — ${o.text}`, ...o });
+const PART_WORD = (n) => (n === 7 ? 'زبرجد' : `بند${n}`);
+const PARTS_LINES = [
+  ...Array.from({ length: 12 }, (_, i) =>
+    partLine({ id: `أجزاء/art-001#${String.fromCharCode(97 + i)}`, article_no: 1, article_label: 'المادة الأولى',
+      part: i + 1, parts_total: 12, text: `الجزء ${i + 1} من المادة الأولى: ${PART_WORD(i + 1)}.` })),
+  partLine({ id: 'أجزاء/art-015', article_no: 15, article_label: 'المادة الخامسة عشرة', text: 'أصلُ المادة الخامسة عشرة.' }),
+  partLine({ id: 'أجزاء/art-015-mukarrar#a', article_no: 15, article_label: 'المادة الخامسة عشرة مكرر',
+    part: 1, parts_total: 2, text: 'الجزء الأول من المادة المكررة.' }),
+  partLine({ id: 'أجزاء/art-015-mukarrar#b', article_no: 15, article_label: 'المادة الخامسة عشرة مكرر',
+    part: 2, parts_total: 2, text: 'الجزء الثاني من المادة المكررة.' }),
+  partLine({ id: 'أجزاء/annex-01#a', article_no: 1001, article_label: 'جدول الرسوم',
+    part: 1, parts_total: 1, text: 'جدولٌ ملحقٌ مقسّم.' }),
+];
+const partsParsed = lib.parseJsonl(PARTS_LINES.join('\n'));
+const partIds = Array.from({ length: 12 }, (_, i) => `أجزاء/art-001#${String.fromCharCode(97 + i)}`);
+
+await check('٢٨ · لاحقةُ «مكرر» والملحق تُقرأ قبل `#` — الجزء لا يفقد صنف مادته', () => {
+  assert.equal(partsParsed.errors.length, 0, JSON.stringify(partsParsed.errors));
+  const by = Object.fromEntries(partsParsed.rows.map((r) => [r.id, r]));
+  assert.equal(by['أجزاء/art-015-mukarrar#a'].is_mukarrar, 1, 'جزءُ مادة «مكرر» قُرئ مادةً أصلاً');
+  assert.equal(by['أجزاء/art-015'].is_mukarrar, 0);
+  assert.equal(by['أجزاء/annex-01#a'].is_annex, 1, 'جزءُ الملحق قُرئ مادةً برقمٍ اصطلاحيّ');
+  assert.equal(lib.articleBaseId('أجزاء/art-001#b'), 'أجزاء/art-001');
+});
+
+await lib.upsertLegalChunks(env, partsParsed.rows, { importId: 'imp-parts', batchId: 'batch-parts' });
+
+await check('٢٨ · الاستدعاء بالرقم يُرجع الأجزاء كلَّها مرتّبةً بـ`part` — لا ما بلغه السقف', async () => {
+  const direct = await lib.getArticle(env, { lawId: 'parts', articleNo: '1' });
+  assert.deepEqual(direct.map((h) => h.id), partIds);
+  const searched = await lib.searchLegal(env, 'المادة 1', { lawId: 'parts', articleNo: '1', lexicalOnly: true, limit: 3 });
+  const got = searched.filter((h) => h.id.startsWith('أجزاء/art-001#')).map((h) => h.id);
+  assert.deepEqual(got, partIds, 'الاستدعاء في البحث قطع المادة أو بعثر أجزاءها');
+});
+
+await check('٢٨ · وبحثٌ أصاب جزءاً يأتي بالمادة بأجزائها متتابعةً في موضعه', async () => {
+  const hits = await lib.searchLegal(env, 'زبرجد', { lawId: 'parts', lexicalOnly: true, limit: 1 });
+  assert.deepEqual(hits.map((h) => h.id), partIds);
+  assert.ok(hits.every((h) => h.score === hits[6].score), 'الأجزاء المضمومة لم تأخذ درجة ما أصابه البحث');
+});
+
+await check('٢٨ · و«المادة 15» لا تُرجع أجزاء «مكرر»، و«15 مكرر» تُرجعها كلَّها', async () => {
+  const plain = await lib.getArticle(env, { lawId: 'parts', articleNo: '15' });
+  assert.deepEqual(plain.map((h) => h.id), ['أجزاء/art-015']);
+  const muk = await lib.getArticle(env, { lawId: 'parts', articleNo: '15 مكرر' });
+  assert.deepEqual(muk.map((h) => h.id), ['أجزاء/art-015-mukarrar#a', 'أجزاء/art-015-mukarrar#b']);
+});
+
+await check('٢٨ · والمساعد يتلقّى المادة المقسّمة مقطعاً واحداً بنصّها كاملاً', async () => {
+  const results = (await lib.retrieve(env, ['زبرجد'], 5)).filter((r) => r.lawId === 'parts');
+  assert.equal(results.length, 1, 'أجزاء المادة وصلت السياق نتائجَ متفرّقة');
+  assert.equal(results[0].documentId, partIds[0]);
+  assert.match(results[0].text, /الجزء 1 من[\s\S]*زبرجد[\s\S]*الجزء 12 من/);
+});
+
+await check('٢٨ · والاستشهاد بجزءٍ يفتح المادة بأجزائها، والبحث يعرضها بطاقةً واحدة', () => {
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /getChunkById\([\s\S]{0,900}withParts\(c\.env, \[hit\]/, '`/article?id=` لا يُتمّ أجزاء المادة');
+  const page = readFileSync(path.join(ROOT, 'web', 'src', 'components', 'SearchPage.tsx'), 'utf8');
+  assert.match(page, /groupArticleParts\(result\.kb\.articles\)/, 'شاشة البحث تعرض كل جزءٍ بطاقة');
+});
+
+// ── ٢٩ · مصدرُ السجل — اللوائح من خارج البوابة (الإصدار الثامن §3-13، §6-4) ──
+//
+// لائحةٌ من ملفّ جهة يُستشهد بصفحتها ونسختها، ومادةٌ نصّ الملفُّ على حذفها
+// تُرفع «(محذوفة)» ملغاةً تُستدعى برقمها ولا يُرجعها البحث.
+
+const EXT_BASE = {
+  law_id: 'ext-reg', law_name: 'اللائحة الخارجية', doc_type: 'لائحة', parent_law_id: 'parts',
+  law_status_source: 'افتراضي', has_amendments: false, is_repealed: false, needs_review: false,
+  amendment_events: [], source_url: 'https://example.gov.sa/reg.pdf',
+  source_kind: 'مسح-ضوئي', source_version: '2025-04', source_sha256: 'ab'.repeat(32), retrieval_status: 'نافذ',
+};
+const extLine = (o) => line({ ...EXT_BASE, embed_text: `اللائحة الخارجية — ${o.text}`, ...o });
+const EXT_LINES = [
+  extLine({ id: 'خارجية/art-012', article_no: 12, article_label: 'المادة الثانية عشرة',
+    source_pages: [14, 15], ocr_confidence: 0.5, text: 'تُقدَّم طلباتُ الترخيص إلى الجهة إلكترونياً: ياقوت.' }),
+  extLine({ id: 'خارجية/art-013', article_no: 13, article_label: 'المادة الثالثة عشرة',
+    source_pages: [16], text: 'مادةٌ في صفحةٍ واحدة.' }),
+  extLine({ id: 'خارجية/art-014', article_no: 14, article_label: 'المادة الرابعة عشرة',
+    source_pages: ['x', 2], ocr_confidence: 'خشن', text: 'مادةٌ صفحاتُها معيبة في الملف.' }),
+  extLine({ id: 'خارجية/art-015', article_no: 15, article_label: 'المادة الخامسة عشرة', text: '(محذوفة)',
+    is_repealed: true, amendment_kind: 'إلغاء', amendment_instrument: 'قرار وزاري 123', amended_on: '1446/05/01',
+    amend_note: 'حُذفت بالقرار الوزاري 123', retrieval_status: 'ملغى' }),
+];
+const extParsed = lib.parseJsonl(EXT_LINES.join('\n'));
+
+await check('٢٩ · حقولُ المصدر تُقرأ إلى أعمدتها لا `meta_json` — ومعيبُها `null` لا رفضٌ للسطر', () => {
+  assert.equal(extParsed.errors.length, 0, JSON.stringify(extParsed.errors));
+  const by = Object.fromEntries(extParsed.rows.map((r) => [r.id, r]));
+  assert.equal(by['خارجية/art-012'].source_pages, '[14,15]');
+  assert.equal(by['خارجية/art-012'].source_kind, 'مسح-ضوئي');
+  assert.equal(by['خارجية/art-012'].source_version, '2025-04');
+  assert.equal(by['خارجية/art-012'].ocr_confidence, 0.5);
+  assert.equal(by['خارجية/art-013'].source_pages, '[16,16]', 'الصفحة الواحدة لم تُقرأ مدىً');
+  assert.equal(by['خارجية/art-014'].source_pages, null);
+  assert.equal(by['خارجية/art-014'].ocr_confidence, null);
+  for (const r of extParsed.rows) {
+    const meta = r.meta_json ? JSON.parse(r.meta_json) : {};
+    for (const k of ['source_kind', 'source_pages', 'source_version', 'source_sha256', 'ocr_confidence']) {
+      assert.ok(!(k in meta), `«${k}» بقي في meta_json في ${r.id}`);
+    }
+  }
+});
+
+await lib.upsertLegalChunks(env, extParsed.rows, { importId: 'imp-ext', batchId: 'batch-ext' });
+
+await check('٢٩ · والصفحةُ والنسخة تصلان النتيجة، والثقةُ لا تصلها — للتدقيق وحده', async () => {
+  const [hit] = await lib.getArticle(env, { lawId: 'ext-reg', articleNo: '12' });
+  assert.deepEqual(hit.sourcePages, [14, 15]);
+  assert.equal(hit.sourceVersion, '2025-04');
+  assert.equal(hit.sourceKind, 'مسح-ضوئي');
+  assert.ok(!('ocrConfidence' in hit), '`ocr_confidence` يصل طبقة العرض');
+  assert.equal(q("SELECT ocr_confidence FROM legal_chunks WHERE id = 'خارجية/art-012'")[0].ocr_confidence, 0.5);
+});
+
+await check('٢٩ · والمساعد يستشهد بالصفحة ونسخة الجهة (§6-4)', async () => {
+  const results = (await lib.retrieve(env, ['ياقوت'], 5)).filter((r) => r.lawId === 'ext-reg');
+  assert.equal(results.length, 1);
+  const context = lib.formatRagContext(results);
+  assert.match(context, /المادة 12 — ص 14–15 — نسخة 2025-04/);
+  const single = lib.formatRagContext([{ ...results[0], sourcePages: [16, 16] }]);
+  assert.match(single, /— ص 16 —/, 'الصفحة الواحدة كُتبت مدىً');
+});
+
+await check('٢٩ · والمادة «(محذوفة)» ملغاةٌ: لا يُرجعها البحث، وتُستدعى برقمها موسومةً', async () => {
+  const row = q("SELECT retrieval_status, is_repealed FROM legal_chunks WHERE id = 'خارجية/art-015'")[0];
+  assert.equal(row.retrieval_status, lib.RETRIEVAL_REPEALED);
+  assert.equal(row.is_repealed, 1);
+  const searched = await lib.searchLegal(env, 'محذوفة', { lawId: 'ext-reg', lexicalOnly: true });
+  assert.ok(!searched.some((h) => h.id === 'خارجية/art-015'), 'البحث أرجع مادةً محذوفة');
+  assert.deepEqual(await lib.getArticle(env, { lawId: 'ext-reg', articleNo: '15' }), []);
+  const archived = await lib.getArticle(env, { lawId: 'ext-reg', articleNo: '15', includeRepealed: true });
+  assert.equal(archived.length, 1);
+  assert.equal(archived[0].retrievalStatus, lib.RETRIEVAL_REPEALED);
+  assert.equal(archived[0].amendmentInstrument, 'قرار وزاري 123');
+});
+
+await check('٢٩ · وما سبق الهجرة في `meta_json` يُنقل إلى أعمدته ويُرفع من هناك', async () => {
+  sqlite.prepare(`INSERT INTO legal_chunks (id, law_id, text, embed_text, text_norm, handle_norm, embed_hash, meta_json, imported_at, updated_at)
+    VALUES ('قبل-الهجرة/1', 'pre', 'نص', 'نص', 'نص', '', 'h', ?, 0, 0)`).run(JSON.stringify({
+    source_kind: 'ملف-نصي', source_pages: [3, 4], source_version: 'الإصدار الرابع 2022م', ocr_confidence: 1, other: 'يبقى',
+  }));
+  const migration = readFileSync(path.join(ROOT, 'migrations', '0032_legal_source_provenance.sql'), 'utf8');
+  sqlite.exec(migration.slice(migration.indexOf('UPDATE legal_chunks')));
+  const row = q("SELECT source_kind, source_pages, source_version, ocr_confidence, meta_json FROM legal_chunks WHERE id = 'قبل-الهجرة/1'")[0];
+  assert.equal(row.source_kind, 'ملف-نصي');
+  assert.equal(row.source_pages, '[3,4]');
+  assert.equal(row.source_version, 'الإصدار الرابع 2022م');
+  assert.equal(row.ocr_confidence, 1);
+  assert.deepEqual(JSON.parse(row.meta_json), { other: 'يبقى' });
+  sqlite.prepare("DELETE FROM legal_chunks WHERE id = 'قبل-الهجرة/1'").run();
+});
+
+await check('٢٩ · فحصُ الملف قبل رفعه يعدّ أصناف الإصدار الثامن، ويرفض جزءاً غائباً وصفحاتٍ معيبة', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = path.join(ROOT, 'node_modules', '.cache');
+  const run = async (name, rows) => {
+    const file = path.join(dir, name);
+    await writeFile(file, rows.map((o) => JSON.stringify({ ...o, text_versions: [{ seq: 0, text: o.text, current: true }] })).join('\n') + '\n');
+    return spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'verify-legal.mjs'), '--file', file], { encoding: 'utf8' });
+  };
+  const base = { ...PARTS_BASE, article_label: 'المادة', embed_text: 'نصّ' };
+  const good = await run('verify-v8-good.jsonl', [
+    { ...base, id: 'ثامنة/art-001#a', article_no: 1, part: 1, parts_total: 2, text: 'الجزء الأول.' },
+    { ...base, id: 'ثامنة/art-001#b', article_no: 1, part: 2, parts_total: 2, text: 'الجزء الثاني.' },
+    { ...base, id: 'ثامنة/art-015-mukarrar#a', article_no: 15, part: 1, parts_total: 1, text: 'مكرر في جزء.' },
+    { ...base, id: 'ثامنة/art-002', article_no: 2, source_kind: 'مسح-ضوئي', source_pages: [14],
+      text: 'الفئة | الرسم\nالأولى | 100' },
+    { ...base, id: 'ثامنة/art-003', article_no: 3, text: '(محذوفة)', is_repealed: true, retrieval_status: 'ملغى' },
+  ]);
+  assert.equal(good.status, 0, 'الفحص رفض ملفاً سليماً من الإصدار الثامن:\n' + good.stdout.slice(-1200));
+  for (const [label, n] of [['أجزاء موادّ مقسّمة', 3], ['مواد «مكرر»', 1], ['مقروءة من صورة', 1], ['فيها جدول « | »', 1], ['محذوفة', 1]]) {
+    assert.match(good.stdout, new RegExp(`${label}\\s+${n}\\n`), `البيان لا يعدّ «${label}»`);
+  }
+  assert.match(good.stdout, /ثامنة\/art-001%23a/, 'عيّنةُ المادة المقسّمة بلا رابطها المرمَّز');
+
+  const bad = await run('verify-v8-bad.jsonl', [
+    { ...base, id: 'ثامنة/art-001#a', article_no: 1, part: 1, parts_total: 3, text: 'جزءٌ من ثلاثة.' },
+    { ...base, id: 'ثامنة/art-001#c', article_no: 1, part: 3, parts_total: 3, text: 'وغاب الثاني.' },
+    { ...base, id: 'ثامنة/art-004', article_no: 4, source_pages: [15, 14], text: 'صفحاتٌ مقلوبة.' },
+  ]);
+  assert.equal(bad.status, 1, 'الفحص قبل جزءاً غائباً وصفحاتٍ مقلوبة');
+  assert.match(bad.stdout, /✗ أجزاءُ كل مادةٍ مقسّمة كاملةٌ متّسقة/);
+  assert.match(bad.stdout, /✗ `source_pages` صفحةٌ أو مدىً/);
+});
+
+await check('٢٩ · الجدولُ داخل النص (« | ») يُعرض جدولاً رأسُه أوّلُ صفوفه — والنصُّ نفسه لا يُمسّ', async () => {
+  const esbuild = await import('esbuild');
+  const built = await esbuild.build({
+    entryPoints: [path.join(ROOT, 'web', 'src', 'lib', 'legalText.ts')],
+    bundle: true, format: 'esm', platform: 'neutral', write: false,
+  });
+  const out = path.join(ROOT, 'node_modules', '.cache', 'naf-legal-text.mjs');
+  await writeFile(out, built.outputFiles[0].text);
+  const { splitLegalText } = await import(pathToFileURL(out).href);
+  const blocks = splitLegalText('تُفرض الرسوم الآتية:\nالفئة | الرسم | المدة\nالأولى | 100 | سنة\nالثانية | 200\nوتُحصَّل سنوياً.');
+  assert.deepEqual(blocks.map((b) => b.kind), ['text', 'table', 'text']);
+  assert.deepEqual(blocks[1].head, ['الفئة', 'الرسم', 'المدة']);
+  assert.deepEqual(blocks[1].rows, [['الأولى', '100', 'سنة'], ['الثانية', '200', '']], 'الصفّ القصير لم يُكمَّل');
+  // سطرٌ واحد فيه الفاصل جملةٌ لا جدول، والنصّ بلا فاصلٍ فقرةٌ واحدة كما هو.
+  assert.deepEqual(splitLegalText('سطرٌ فيه a | b وحده.').map((b) => b.kind), ['text']);
+  assert.deepEqual(splitLegalText('سطرٌ\nوسطرٌ ثانٍ'), [{ kind: 'text', text: 'سطرٌ\nوسطرٌ ثانٍ' }]);
+  // ويُعرض حيث يُعرض نصُّ المادة: البطاقة وجزؤها ومرفقها، والبحث، وصفحة النظام.
+  const card = readFileSync(path.join(ROOT, 'web', 'src', 'components', 'LegalArticleView.tsx'), 'utf8');
+  assert.match(card, /<LegalText key=\{part\.id\} text=\{part\.text\}/, 'بطاقةُ المادة تعرض الجدول أسطراً');
+  assert.match(card, /<LegalText text=\{att\.text\}/, 'المرفق يعرض الجدول أسطراً');
+  for (const f of ['SearchPage.tsx', 'LegalLaws.tsx']) {
+    assert.match(readFileSync(path.join(ROOT, 'web', 'src', 'components', f), 'utf8'), /<LegalText /, `${f} يعرض الجدول أسطراً`);
+  }
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(
