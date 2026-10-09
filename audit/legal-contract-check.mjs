@@ -2868,6 +2868,39 @@ await check('٢٩ · الجدولُ داخل النص (« | ») يُعرض جد�
   }
 });
 
+// ── ٣٠ · دفعةُ الإصدار الثامن تُجمع وتُكتب كاملةً — وما جُمع قبل ترقية المنصة يُكتب ──
+//
+// الجمعُ يحفظ كل سطرٍ مُعَدّاً (`row_json`) ويبقى يوماً، والكتابة تقع بعده — وقد
+// تفصل بينهما ترقيةٌ أضافت حقولاً. فسطرٌ جُمع قبلها لا يحمل الحقل الجديد، وD1
+// يرفض ربط `undefined`: يتعذّر الإتمام ويُردّ الملف كلُّه.
+
+await check('٣٠ · ملفُّ الإصدار الثامن يُجمع ويُكتب كاملاً: أجزاءٌ ولائحةٌ خارجية ومحذوفة', async () => {
+  const lines = [
+    ...PARTS_LINES.slice(0, 3).map((l) => l.replace(/أجزاء\//g, 'دفعة8/').replace('"parts"', '"batch8"')),
+    ...EXT_LINES.map((l) => l.replace(/خارجية\//g, 'دفعة8-خ/').replace('"ext-reg"', '"batch8-ext"')),
+  ];
+  const parsed8 = lib.parseJsonl(lines.join('\n'));
+  assert.equal(parsed8.errors.length, 0, JSON.stringify(parsed8.errors));
+  await lib.stageChunks(env, 'batch-v8', parsed8.rows, { lines: lines.length, failed: 0 });
+  let p;
+  do p = await lib.commitStep(env, 'batch-v8', { actorId: 'مسؤول', budget: 2 }); while (!p.done);
+  assert.equal((await lib.getBatch(env, 'batch-v8')).state, 'committed');
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_chunks WHERE id LIKE 'دفعة8%'")[0].n, lines.length);
+  assert.equal(q("SELECT source_pages FROM legal_chunks WHERE id = 'دفعة8-خ/art-012'")[0].source_pages, '[14,15]');
+});
+
+await check('٣٠ · وسطرٌ جُمع قبل ترقيةٍ أضافت حقولاً يُكتب بها فارغة — لا يُسقط الدفعة', async () => {
+  const [row] = lib.parseJsonl(partLine({ id: 'قبل-الترقية/art-001', law_id: 'pre-upgrade', article_no: 1,
+    article_label: 'المادة الأولى', text: 'سطرٌ جُمع بمنصةٍ لا تعرف حقول المصدر.' })).rows;
+  for (const k of ['source_kind', 'source_pages', 'source_version', 'source_sha256', 'ocr_confidence']) delete row[k];
+  await lib.stageChunks(env, 'batch-pre-upgrade', [row], { lines: 1, failed: 0 });
+  const p = await lib.commitStep(env, 'batch-pre-upgrade', { actorId: 'مسؤول' });
+  assert.ok(p.done);
+  assert.equal((await lib.getBatch(env, 'batch-pre-upgrade')).state, 'committed');
+  const stored = q("SELECT source_kind, source_pages FROM legal_chunks WHERE id = 'قبل-الترقية/art-001'")[0];
+  assert.deepEqual({ ...stored }, { source_kind: null, source_pages: null });
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(
