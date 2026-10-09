@@ -97,6 +97,12 @@ const LAW_CARD_FIELDS = [
   'scheduled_repeal_from', 'kept_after_repeal', 'published_hijri', 'published_gregorian', 'instruments',
 ] as const;
 
+/**
+ * مصدرُ السجل — اللوائح من خارج البوابة (§3-13). غائبةٌ في سجلات البوابة،
+ * و`ocr_confidence` منها للتدقيق وحده.
+ */
+const SOURCE_FIELDS = ['source_kind', 'source_pages', 'source_version', 'source_sha256', 'ocr_confidence'] as const;
+
 /** حالاتٌ لا تكون إلا حالَ نظام — لا يعرفها المعنى القديم لـ`status`. */
 const LAW_ONLY_STATUSES = new Set(['لم يبدأ العمل به', 'جاري العمل على النظام'].map((s) => normalizeArabic(s)));
 
@@ -248,6 +254,7 @@ const HIT_COLUMNS = `c.seq, c.id, c.law_id, c.parent_law_id, c.doc_type, c.artic
     c.scheduled_repeal_from, c.kept_after_repeal,
     c.is_attachment, c.attachment_of, c.has_attachment, c.text_from_attachment,
     c.former_article_no, c.former_article_no_norm, c.is_annex, c.is_mukarrar,
+    c.source_kind, c.source_pages, c.source_version,
     c.meta_json`;
 
 /** سقف طول مدخل التضمين. تجاوزُه يقصّ **مدخل المتجه وحده** ولا يقسم المقطع. */
@@ -378,6 +385,13 @@ export interface LegalHit {
   isAnnex: boolean;
   /** مادة «مكرر» — مستقلّة برقم المادة الأصل. */
   isMukarrar: boolean;
+  // ── مصدرُ السجل — §3-13 ──
+  /** صفحة · ملف-نصي · مسح-ضوئي — وفارغٌ في سجلات البوابة. */
+  sourceKind: string | null;
+  /** صفحاتُ السجل في ملف الجهة `[من, إلى]` — يُستشهد بها. */
+  sourcePages: [number, number] | null;
+  /** نسخةُ الجهة كما في ملفها — تُعرض بجوار النص. */
+  sourceVersion: string | null;
   meta: Record<string, unknown> | null;
   score: number;
   /** الإشارات التي رشّحت هذه النتيجة: دلالي، لفظي، مطابقة رقم مادة. */
@@ -467,6 +481,17 @@ export interface PreparedChunk {
   // ── الملاحق ومواد «مكرر» — §3-12 و§3-11 ──
   is_annex: number;
   is_mukarrar: number;
+  // ── مصدرُ السجل — §3-13 ──
+  /** صفحة · ملف-نصي · مسح-ضوئي — وغائبٌ في سجلات البوابة. */
+  source_kind: string | null;
+  /** `[من, إلى]` نصّاً — صفحاتُ السجل في ملف الجهة، يُستشهد بها. */
+  source_pages: string | null;
+  /** نسخةُ الجهة كما في ملفها — تُعرض بجوار النص. */
+  source_version: string | null;
+  /** بصمةُ ملف الجهة — للتدقيق. */
+  source_sha256: string | null;
+  /** للتدقيق وحده: لا يُبنى عليه عرضٌ ولا حجبٌ ولا تحذير. */
+  ocr_confidence: number | null;
   embed_text: string;
   text_norm: string;
   /** الباب مطبَّعاً — للترشيح به. */
@@ -888,6 +913,7 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     ...LAW_CARD_FIELDS,
     'is_attachment', 'attachment_of', 'has_attachment', 'text_from_attachment', 'amend_link',
     'former_article_no', 'is_annex',
+    ...SOURCE_FIELDS,
   ]);
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) if (!known.has(k)) extra[k] = v;
@@ -1001,6 +1027,11 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
     former_article_no_norm: normalizeArticleNo(formerArticleNo),
     is_annex: isAnnex,
     is_mukarrar: isMukarrar,
+    source_kind: str(o.source_kind) || null,
+    source_pages: parseSourcePages(o.source_pages),
+    source_version: str(o.source_version) || null,
+    source_sha256: str(o.source_sha256) || null,
+    ocr_confidence: num(o.ocr_confidence),
     embed_text: embedText,
     text_norm: normalizeArabic(text),
     book_norm: normalizeArabic(str(o.book)) || null,
@@ -1059,6 +1090,21 @@ function gregorianOnly(v: unknown, field: string): string | null {
  * أدوات الإصدار كلُّها — مرسومٌ وقرارُ مجلس وزراء معاً. للعرض وحده، فما لم
  * يكن مصفوفةً يُترك ولا يُرفض لأجله سطر.
  */
+/**
+ * صفحاتُ السجل في ملف الجهة (§3-13): `[من, إلى]` نصّاً، أو `null`.
+ *
+ * عددان صحيحان موجبان، والأوّل لا يزيد على الثاني؛ وصفحةٌ واحدة `[14]` تُقرأ
+ * `[14, 14]`. وما خالف ذلك يُردّ `null` ولا يُرفض السطر لأجله — كما في `num`:
+ * صفحةٌ يُستشهد بها خطأً أسوأ من غيابها، وإسقاطُ اللائحة كلِّها لأجلها أسوأ منهما.
+ */
+function parseSourcePages(v: unknown): string | null {
+  if (!Array.isArray(v) || v.length < 1 || v.length > 2) return null;
+  const pages = v.map(num);
+  if (!pages.every((n): n is number => n !== null && Number.isInteger(n) && n > 0)) return null;
+  const [from, to = from] = pages;
+  return from <= to ? JSON.stringify([from, to]) : null;
+}
+
 function parseInstruments(v: unknown): string | null {
   if (!Array.isArray(v) || !v.length) return null;
   const out = v
@@ -1577,8 +1623,9 @@ const UPSERT_SQL = `
     scheduled_repeal_from, kept_after_repeal, published_hijri, published_gregorian, instruments,
     is_attachment, attachment_of, has_attachment, text_from_attachment, amend_link,
     former_article_no, former_article_no_norm, is_annex, is_mukarrar,
+    source_kind, source_pages, source_version, source_sha256, ocr_confidence,
     embed_text, text_norm, book_norm, handle_norm, meta_json, embed_hash, embedded_at, imported_at, updated_at
-  ) VALUES (${Array(47).fill('?').join(',')},${Array(20).fill('?').join(',')},?,?,?,?,?,?,NULL,?,?)
+  ) VALUES (${Array(47).fill('?').join(',')},${Array(25).fill('?').join(',')},?,?,?,?,?,?,NULL,?,?)
   ON CONFLICT(id) DO UPDATE SET
     law_id = excluded.law_id,
     parent_law_id = excluded.parent_law_id,
@@ -1651,6 +1698,11 @@ const UPSERT_SQL = `
     former_article_no_norm = excluded.former_article_no_norm,
     is_annex = excluded.is_annex,
     is_mukarrar = excluded.is_mukarrar,
+    source_kind = excluded.source_kind,
+    source_pages = excluded.source_pages,
+    source_version = excluded.source_version,
+    source_sha256 = excluded.source_sha256,
+    ocr_confidence = excluded.ocr_confidence,
     embed_text = excluded.embed_text,
     text_norm = excluded.text_norm,
     book_norm = excluded.book_norm,
@@ -1821,6 +1873,7 @@ export async function upsertLegalChunks(
           r.scheduled_repeal_from, r.kept_after_repeal, r.published_hijri, r.published_gregorian, r.instruments,
           r.is_attachment, r.attachment_of, r.has_attachment, r.text_from_attachment, r.amend_link,
           r.former_article_no, r.former_article_no_norm, r.is_annex, r.is_mukarrar,
+          r.source_kind, r.source_pages, r.source_version, r.source_sha256, r.ocr_confidence,
           r.embed_text, r.text_norm, r.book_norm, r.handle_norm, r.meta_json, r.embed_hash, now, now
         )
       )
@@ -3324,7 +3377,19 @@ interface HitRow {
   law_effective_from: string | null; scheduled_repeal_from: string | null; kept_after_repeal: number;
   is_attachment: number; attachment_of: string | null; has_attachment: number; text_from_attachment: number;
   former_article_no: string | null; former_article_no_norm: string | null; is_annex: number; is_mukarrar: number;
+  source_kind: string | null; source_pages: string | null; source_version: string | null;
   meta_json: string | null;
+}
+
+/** الصفحاتُ كما خُزِّنت — وما لم يُقرأ منها عددين يُردّ `null` لا يُعرض خطأً. */
+function readSourcePages(v: string | null): [number, number] | null {
+  if (!v) return null;
+  try {
+    const p = JSON.parse(v);
+    return Array.isArray(p) && p.length === 2 && p.every((n) => Number.isInteger(n)) ? [p[0], p[1]] : null;
+  } catch {
+    return null;
+  }
 }
 
 function toHit(r: HitRow): LegalHit {
@@ -3425,6 +3490,9 @@ function toHit(r: HitRow): LegalHit {
     formerArticleNo: r.former_article_no,
     isAnnex: r.is_annex === 1,
     isMukarrar: r.is_mukarrar === 1,
+    sourceKind: r.source_kind,
+    sourcePages: readSourcePages(r.source_pages),
+    sourceVersion: r.source_version,
     meta,
     score: 0,
     signals: [],

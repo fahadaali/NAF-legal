@@ -2718,6 +2718,98 @@ await check('٢٨ · والاستشهاد بجزءٍ يفتح المادة بأ�
   assert.match(page, /groupArticleParts\(result\.kb\.articles\)/, 'شاشة البحث تعرض كل جزءٍ بطاقة');
 });
 
+// ── ٢٩ · مصدرُ السجل — اللوائح من خارج البوابة (الإصدار الثامن §3-13، §6-4) ──
+//
+// لائحةٌ من ملفّ جهة يُستشهد بصفحتها ونسختها، ومادةٌ نصّ الملفُّ على حذفها
+// تُرفع «(محذوفة)» ملغاةً تُستدعى برقمها ولا يُرجعها البحث.
+
+const EXT_BASE = {
+  law_id: 'ext-reg', law_name: 'اللائحة الخارجية', doc_type: 'لائحة', parent_law_id: 'parts',
+  law_status_source: 'افتراضي', has_amendments: false, is_repealed: false, needs_review: false,
+  amendment_events: [], source_url: 'https://example.gov.sa/reg.pdf',
+  source_kind: 'مسح-ضوئي', source_version: '2025-04', source_sha256: 'ab'.repeat(32), retrieval_status: 'نافذ',
+};
+const extLine = (o) => line({ ...EXT_BASE, embed_text: `اللائحة الخارجية — ${o.text}`, ...o });
+const EXT_LINES = [
+  extLine({ id: 'خارجية/art-012', article_no: 12, article_label: 'المادة الثانية عشرة',
+    source_pages: [14, 15], ocr_confidence: 0.5, text: 'تُقدَّم طلباتُ الترخيص إلى الجهة إلكترونياً: ياقوت.' }),
+  extLine({ id: 'خارجية/art-013', article_no: 13, article_label: 'المادة الثالثة عشرة',
+    source_pages: [16], text: 'مادةٌ في صفحةٍ واحدة.' }),
+  extLine({ id: 'خارجية/art-014', article_no: 14, article_label: 'المادة الرابعة عشرة',
+    source_pages: ['x', 2], ocr_confidence: 'خشن', text: 'مادةٌ صفحاتُها معيبة في الملف.' }),
+  extLine({ id: 'خارجية/art-015', article_no: 15, article_label: 'المادة الخامسة عشرة', text: '(محذوفة)',
+    is_repealed: true, amendment_kind: 'إلغاء', amendment_instrument: 'قرار وزاري 123', amended_on: '1446/05/01',
+    amend_note: 'حُذفت بالقرار الوزاري 123', retrieval_status: 'ملغى' }),
+];
+const extParsed = lib.parseJsonl(EXT_LINES.join('\n'));
+
+await check('٢٩ · حقولُ المصدر تُقرأ إلى أعمدتها لا `meta_json` — ومعيبُها `null` لا رفضٌ للسطر', () => {
+  assert.equal(extParsed.errors.length, 0, JSON.stringify(extParsed.errors));
+  const by = Object.fromEntries(extParsed.rows.map((r) => [r.id, r]));
+  assert.equal(by['خارجية/art-012'].source_pages, '[14,15]');
+  assert.equal(by['خارجية/art-012'].source_kind, 'مسح-ضوئي');
+  assert.equal(by['خارجية/art-012'].source_version, '2025-04');
+  assert.equal(by['خارجية/art-012'].ocr_confidence, 0.5);
+  assert.equal(by['خارجية/art-013'].source_pages, '[16,16]', 'الصفحة الواحدة لم تُقرأ مدىً');
+  assert.equal(by['خارجية/art-014'].source_pages, null);
+  assert.equal(by['خارجية/art-014'].ocr_confidence, null);
+  for (const r of extParsed.rows) {
+    const meta = r.meta_json ? JSON.parse(r.meta_json) : {};
+    for (const k of ['source_kind', 'source_pages', 'source_version', 'source_sha256', 'ocr_confidence']) {
+      assert.ok(!(k in meta), `«${k}» بقي في meta_json في ${r.id}`);
+    }
+  }
+});
+
+await lib.upsertLegalChunks(env, extParsed.rows, { importId: 'imp-ext', batchId: 'batch-ext' });
+
+await check('٢٩ · والصفحةُ والنسخة تصلان النتيجة، والثقةُ لا تصلها — للتدقيق وحده', async () => {
+  const [hit] = await lib.getArticle(env, { lawId: 'ext-reg', articleNo: '12' });
+  assert.deepEqual(hit.sourcePages, [14, 15]);
+  assert.equal(hit.sourceVersion, '2025-04');
+  assert.equal(hit.sourceKind, 'مسح-ضوئي');
+  assert.ok(!('ocrConfidence' in hit), '`ocr_confidence` يصل طبقة العرض');
+  assert.equal(q("SELECT ocr_confidence FROM legal_chunks WHERE id = 'خارجية/art-012'")[0].ocr_confidence, 0.5);
+});
+
+await check('٢٩ · والمساعد يستشهد بالصفحة ونسخة الجهة (§6-4)', async () => {
+  const results = (await lib.retrieve(env, ['ياقوت'], 5)).filter((r) => r.lawId === 'ext-reg');
+  assert.equal(results.length, 1);
+  const context = lib.formatRagContext(results);
+  assert.match(context, /المادة 12 — ص 14–15 — نسخة 2025-04/);
+  const single = lib.formatRagContext([{ ...results[0], sourcePages: [16, 16] }]);
+  assert.match(single, /— ص 16 —/, 'الصفحة الواحدة كُتبت مدىً');
+});
+
+await check('٢٩ · والمادة «(محذوفة)» ملغاةٌ: لا يُرجعها البحث، وتُستدعى برقمها موسومةً', async () => {
+  const row = q("SELECT retrieval_status, is_repealed FROM legal_chunks WHERE id = 'خارجية/art-015'")[0];
+  assert.equal(row.retrieval_status, lib.RETRIEVAL_REPEALED);
+  assert.equal(row.is_repealed, 1);
+  const searched = await lib.searchLegal(env, 'محذوفة', { lawId: 'ext-reg', lexicalOnly: true });
+  assert.ok(!searched.some((h) => h.id === 'خارجية/art-015'), 'البحث أرجع مادةً محذوفة');
+  assert.deepEqual(await lib.getArticle(env, { lawId: 'ext-reg', articleNo: '15' }), []);
+  const archived = await lib.getArticle(env, { lawId: 'ext-reg', articleNo: '15', includeRepealed: true });
+  assert.equal(archived.length, 1);
+  assert.equal(archived[0].retrievalStatus, lib.RETRIEVAL_REPEALED);
+  assert.equal(archived[0].amendmentInstrument, 'قرار وزاري 123');
+});
+
+await check('٢٩ · وما سبق الهجرة في `meta_json` يُنقل إلى أعمدته ويُرفع من هناك', async () => {
+  sqlite.prepare(`INSERT INTO legal_chunks (id, law_id, text, embed_text, text_norm, handle_norm, embed_hash, meta_json, imported_at, updated_at)
+    VALUES ('قبل-الهجرة/1', 'pre', 'نص', 'نص', 'نص', '', 'h', ?, 0, 0)`).run(JSON.stringify({
+    source_kind: 'ملف-نصي', source_pages: [3, 4], source_version: 'الإصدار الرابع 2022م', ocr_confidence: 1, other: 'يبقى',
+  }));
+  const migration = readFileSync(path.join(ROOT, 'migrations', '0032_legal_source_provenance.sql'), 'utf8');
+  sqlite.exec(migration.slice(migration.indexOf('UPDATE legal_chunks')));
+  const row = q("SELECT source_kind, source_pages, source_version, ocr_confidence, meta_json FROM legal_chunks WHERE id = 'قبل-الهجرة/1'")[0];
+  assert.equal(row.source_kind, 'ملف-نصي');
+  assert.equal(row.source_pages, '[3,4]');
+  assert.equal(row.source_version, 'الإصدار الرابع 2022م');
+  assert.equal(row.ocr_confidence, 1);
+  assert.deepEqual(JSON.parse(row.meta_json), { other: 'يبقى' });
+  sqlite.prepare("DELETE FROM legal_chunks WHERE id = 'قبل-الهجرة/1'").run();
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

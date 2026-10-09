@@ -97,6 +97,10 @@ export interface RagResult {
    * بتاريخ نفاذه والنافذ قبله (§5-5).
    */
   retrievalWarning?: string;
+  /** صفحاتُ السجل في ملف الجهة — للائحة من خارج البوابة (§3-13). */
+  sourcePages?: [number, number];
+  /** نسخةُ الجهة كما في ملفها. */
+  sourceVersion?: string;
 }
 
 /** ثابت دمج الرتب — كما في `lib/legal.ts`. */
@@ -184,6 +188,11 @@ function joinArticleParts(hits: LegalHit[]): LegalHit[] {
             }
           : {}),
         text: `${last.text}\n${h.text}`,
+        // وصفحاتُ المادة من أوّل جزءٍ إلى آخره: الاستشهاد بها لا بصفحة جزئها الأوّل.
+        sourcePages:
+          last.sourcePages && h.sourcePages
+            ? [Math.min(last.sourcePages[0], h.sourcePages[0]), Math.max(last.sourcePages[1], h.sourcePages[1])]
+            : (last.sourcePages ?? h.sourcePages),
       };
     } else {
       out.push(h);
@@ -220,6 +229,8 @@ function fromLegalHit(h: LegalHit): RagResult {
     effectiveFrom: h.effectiveFrom ?? h.effectiveFromHijri ?? undefined,
     retrievalWarning:
       h.retrievalStatus === RETRIEVAL_WARNING ? (h.retrievalWarning ?? AMENDMENT_NOTICE) : undefined,
+    sourcePages: h.sourcePages ?? undefined,
+    sourceVersion: h.sourceVersion ?? undefined,
   };
 }
 
@@ -318,7 +329,7 @@ export function formatRagContext(results: RagResult[]): string {
   const blocks = results
     .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`)
     .join('\n\n---\n\n');
-  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا حاشيةٌ عليه — انقله في متن الإجابة مع الاستشهاد لا في حاشيتها. وما نبّه التنبيه أن نصَّه أصليٌّ لم يُدمج تعديلُه فلا تصغ نصَّه النافذ من عندك: قل صراحةً إن النصّ النافذ غير متاح في قاعدة المعرفة، وأحِل إلى سجل التعديلات.\n\n${blocks}\n</سياق_نظامي>`;
+  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها وأشِر لأرقامها عند الاقتباس، وما حمل سطرُ مصدره صفحةً أو نسخةً فاذكرهما في الاستشهاد كما وردا. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا حاشيةٌ عليه — انقله في متن الإجابة مع الاستشهاد لا في حاشيتها. وما نبّه التنبيه أن نصَّه أصليٌّ لم يُدمج تعديلُه فلا تصغ نصَّه النافذ من عندك: قل صراحةً إن النصّ النافذ غير متاح في قاعدة المعرفة، وأحِل إلى سجل التعديلات.\n\n${blocks}\n</سياق_نظامي>`;
 }
 
 /**
@@ -348,13 +359,21 @@ function noticeLines(r: RagResult): string {
 }
 
 /**
- * سطر الإسناد: اسم النظام، ثم المادة، ثم رقم الأداة، ثم تاريخ الإصدار.
+ * سطر الإسناد: اسم النظام، ثم المادة، ثم صفحتها ونسخة الجهة إن جاءت من ملفّ
+ * جهة، ثم رقم الأداة، ثم تاريخ الإصدار.
  *
  * التاريخ ميلاديّ يتبعه الهجريّ بين قوسين — تاريخ أداةٍ نظامية يُستشهد به.
  */
 function citationLine(r: RagResult): string {
   const parts = [r.title];
   if (r.articleRef) parts.push(r.articleRef);
+  /* واللائحةُ من خارج البوابة يُستشهد بصفحتها في ملف الجهة ونسختها (§6-4):
+   * «المادة 12، ص 14، نسخة 2025-04». النسخةُ تقول أيَّ ملفٍّ، والصفحةُ أين فيه. */
+  if (r.sourcePages) {
+    const [from, to] = r.sourcePages;
+    parts.push(from === to ? `ص ${from}` : `ص ${from}–${to}`);
+  }
+  if (r.sourceVersion) parts.push(`نسخة ${r.sourceVersion}`);
   if (r.instrumentNo) parts.push(r.instrumentNo);
   if (r.issueDate) parts.push(r.issueDateHijri ? `${r.issueDate} (${r.issueDateHijri})` : r.issueDate);
   else if (r.issueDateHijri) parts.push(r.issueDateHijri);
