@@ -196,9 +196,12 @@ for (const { o } of rows) {
   const st = String(o.status ?? '—');
   byLawStatus.set(st, (byLawStatus.get(st) ?? 0) + 1);
 }
-const isAnnex = (o) => !!o.is_annex || /\/annex-\d+$/.test(String(o.id ?? ''));
-const isAttachment = (o) => !!o.is_attachment || /-attach\d*$/.test(String(o.id ?? ''));
-const isMukarrar = (o) => /-mukarrar\d*(?:--dup\d+)?$/.test(String(o.id ?? ''));
+// ولاحقةُ المعرّف تُقرأ قبل `#`: جزءُ المادة المقسّمة (§3-2) يحمل لاحقةَ مادته ثم
+// `#a` — كما يقرؤها الاستيراد في `src/lib/legal.ts`.
+const baseId = (o) => String(o.id ?? '').split('#')[0];
+const isAnnex = (o) => !!o.is_annex || /\/annex-\d+$/.test(baseId(o));
+const isAttachment = (o) => !!o.is_attachment || /-attach\d*$/.test(baseId(o));
+const isMukarrar = (o) => /-mukarrar\d*(?:--dup\d+)?$/.test(baseId(o));
 const kinds = [
   ['ملاحق', (o) => isAnnex(o)],
   ['مرفقات', (o) => isAttachment(o)],

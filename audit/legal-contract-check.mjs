@@ -2644,6 +2644,80 @@ await check('٢٧ · والمسار يجمع ويُتمّ ويُلغي، وال�
   assert.match(index, /getUTCHours\(\) === 3 && at\.getUTCMinutes\(\) === 0/, 'نبضةُ الليل ليست الثالثة فجراً');
 });
 
+// ── ٢٨ · أجزاءُ المادة مادةٌ واحدة (الإصدار الثامن §3-2، §5-8) ──
+//
+// المادة الطويلة سجلاتٌ بلاحقة `#a` و`#b`، وأجزاؤها تُستدعى معاً مرتّبةً بـ`part`.
+// واثنا عشر جزءاً عمداً: فوق سقف الاستدعاء القديم (خمسة)، وفيها `10` التي
+// تسبق `2` لو رُتّبت نصّاً.
+
+const PARTS_BASE = {
+  law_id: 'parts', law_name: 'نظام الأجزاء', doc_type: 'نظام', law_status_source: 'البوابة',
+  status: 'ساري', has_amendments: false, is_repealed: false, needs_review: false,
+  amendment_events: [], retrieval_status: 'نافذ',
+};
+const partLine = (o) => line({ ...PARTS_BASE, embed_text: `نظام الأجزاء — ${o.text}`, ...o });
+const PART_WORD = (n) => (n === 7 ? 'زبرجد' : `بند${n}`);
+const PARTS_LINES = [
+  ...Array.from({ length: 12 }, (_, i) =>
+    partLine({ id: `أجزاء/art-001#${String.fromCharCode(97 + i)}`, article_no: 1, article_label: 'المادة الأولى',
+      part: i + 1, parts_total: 12, text: `الجزء ${i + 1} من المادة الأولى: ${PART_WORD(i + 1)}.` })),
+  partLine({ id: 'أجزاء/art-015', article_no: 15, article_label: 'المادة الخامسة عشرة', text: 'أصلُ المادة الخامسة عشرة.' }),
+  partLine({ id: 'أجزاء/art-015-mukarrar#a', article_no: 15, article_label: 'المادة الخامسة عشرة مكرر',
+    part: 1, parts_total: 2, text: 'الجزء الأول من المادة المكررة.' }),
+  partLine({ id: 'أجزاء/art-015-mukarrar#b', article_no: 15, article_label: 'المادة الخامسة عشرة مكرر',
+    part: 2, parts_total: 2, text: 'الجزء الثاني من المادة المكررة.' }),
+  partLine({ id: 'أجزاء/annex-01#a', article_no: 1001, article_label: 'جدول الرسوم',
+    part: 1, parts_total: 1, text: 'جدولٌ ملحقٌ مقسّم.' }),
+];
+const partsParsed = lib.parseJsonl(PARTS_LINES.join('\n'));
+const partIds = Array.from({ length: 12 }, (_, i) => `أجزاء/art-001#${String.fromCharCode(97 + i)}`);
+
+await check('٢٨ · لاحقةُ «مكرر» والملحق تُقرأ قبل `#` — الجزء لا يفقد صنف مادته', () => {
+  assert.equal(partsParsed.errors.length, 0, JSON.stringify(partsParsed.errors));
+  const by = Object.fromEntries(partsParsed.rows.map((r) => [r.id, r]));
+  assert.equal(by['أجزاء/art-015-mukarrar#a'].is_mukarrar, 1, 'جزءُ مادة «مكرر» قُرئ مادةً أصلاً');
+  assert.equal(by['أجزاء/art-015'].is_mukarrar, 0);
+  assert.equal(by['أجزاء/annex-01#a'].is_annex, 1, 'جزءُ الملحق قُرئ مادةً برقمٍ اصطلاحيّ');
+  assert.equal(lib.articleBaseId('أجزاء/art-001#b'), 'أجزاء/art-001');
+});
+
+await lib.upsertLegalChunks(env, partsParsed.rows, { importId: 'imp-parts', batchId: 'batch-parts' });
+
+await check('٢٨ · الاستدعاء بالرقم يُرجع الأجزاء كلَّها مرتّبةً بـ`part` — لا ما بلغه السقف', async () => {
+  const direct = await lib.getArticle(env, { lawId: 'parts', articleNo: '1' });
+  assert.deepEqual(direct.map((h) => h.id), partIds);
+  const searched = await lib.searchLegal(env, 'المادة 1', { lawId: 'parts', articleNo: '1', lexicalOnly: true, limit: 3 });
+  const got = searched.filter((h) => h.id.startsWith('أجزاء/art-001#')).map((h) => h.id);
+  assert.deepEqual(got, partIds, 'الاستدعاء في البحث قطع المادة أو بعثر أجزاءها');
+});
+
+await check('٢٨ · وبحثٌ أصاب جزءاً يأتي بالمادة بأجزائها متتابعةً في موضعه', async () => {
+  const hits = await lib.searchLegal(env, 'زبرجد', { lawId: 'parts', lexicalOnly: true, limit: 1 });
+  assert.deepEqual(hits.map((h) => h.id), partIds);
+  assert.ok(hits.every((h) => h.score === hits[6].score), 'الأجزاء المضمومة لم تأخذ درجة ما أصابه البحث');
+});
+
+await check('٢٨ · و«المادة 15» لا تُرجع أجزاء «مكرر»، و«15 مكرر» تُرجعها كلَّها', async () => {
+  const plain = await lib.getArticle(env, { lawId: 'parts', articleNo: '15' });
+  assert.deepEqual(plain.map((h) => h.id), ['أجزاء/art-015']);
+  const muk = await lib.getArticle(env, { lawId: 'parts', articleNo: '15 مكرر' });
+  assert.deepEqual(muk.map((h) => h.id), ['أجزاء/art-015-mukarrar#a', 'أجزاء/art-015-mukarrar#b']);
+});
+
+await check('٢٨ · والمساعد يتلقّى المادة المقسّمة مقطعاً واحداً بنصّها كاملاً', async () => {
+  const results = (await lib.retrieve(env, ['زبرجد'], 5)).filter((r) => r.lawId === 'parts');
+  assert.equal(results.length, 1, 'أجزاء المادة وصلت السياق نتائجَ متفرّقة');
+  assert.equal(results[0].documentId, partIds[0]);
+  assert.match(results[0].text, /الجزء 1 من[\s\S]*زبرجد[\s\S]*الجزء 12 من/);
+});
+
+await check('٢٨ · والاستشهاد بجزءٍ يفتح المادة بأجزائها، والبحث يعرضها بطاقةً واحدة', () => {
+  const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
+  assert.match(routes, /getChunkById\([\s\S]{0,900}withParts\(c\.env, \[hit\]/, '`/article?id=` لا يُتمّ أجزاء المادة');
+  const page = readFileSync(path.join(ROOT, 'web', 'src', 'components', 'SearchPage.tsx'), 'utf8');
+  assert.match(page, /groupArticleParts\(result\.kb\.articles\)/, 'شاشة البحث تعرض كل جزءٍ بطاقة');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

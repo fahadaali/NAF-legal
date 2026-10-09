@@ -12,7 +12,7 @@ import { api, type PlatformSearch, type ExternalGroup, type LegalLaw, type Legal
 import { formatDate } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 import { docTypeLabel } from '../lib/labels';
-import { ArticleFlags, ArticleName, ArticleNotices, LawIdentity, LawTags } from './LegalArticleView';
+import { ArticleFlags, ArticleName, ArticleNotices, LawIdentity, LawTags, groupArticleParts } from './LegalArticleView';
 
 const INTERNAL_SCOPES: [string, string][] = [
   ['all', 'الكل'],
@@ -202,7 +202,9 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
         {result?.kb.articles.length ? (
           <>
             <div className="kb-section">قاعدة المعرفة</div>
-            {result.kb.articles.map((a) => (
+            {/* أجزاءُ المادة المقسّمة بطاقةٌ واحدة (§5-8): طبقةُ الاسترجاع تردّها
+                متتابعةً مرتّبة، والجزء مقطعٌ من مادة لا مادة. */}
+            {groupArticleParts(result.kb.articles).map(([a, ...rest]) => (
               <article key={a.id} className="legal-article">
                 <h4>
                   <bdi>{a.lawTitle ?? ''}</bdi>
@@ -216,7 +218,9 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
                 {/* التنبيه يلاحق النصّ حيث عُرض: هذه شاشةُ كل مستخدم، ونصٌّ
                     أصليّ بلا تنبيهه يُنسخ إلى مذكّرةٍ على أنه الجاري. */}
                 <ArticleNotices a={a} />
-                <p>{a.text}</p>
+                {[a, ...rest].map((part) => (
+                  <p key={part.id}>{part.text}</p>
+                ))}
               </article>
             ))}
           </>

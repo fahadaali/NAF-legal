@@ -693,6 +693,19 @@ export function parseJsonl(input: ArrayBuffer | Uint8Array | string, opts: Impor
 const MAX_ID_LEN = 200;
 const MAX_TEXT_LEN = 200_000;
 
+/**
+ * معرّفُ المادة بلا لاحقة جزئها: `…/art-001#a` ← `…/art-001` (§3-2).
+ *
+ * المادة الطويلة تُقسَّم سجلاتٍ بلاحقة `#a` ثم `#b`، والأجزاء مادةٌ واحدة لا
+ * موادّ. فكلُّ ما يُقرأ من لاحقة المعرّف — «مكرر» والمرفق والملحق — يُقرأ من
+ * المعرّف قبل `#`، وإلا صار الجزء الأول من مادة «مكرر» مادةً أصلاً تُستدعى برقم
+ * غيرها.
+ */
+export function articleBaseId(id: string): string {
+  const i = id.indexOf('#');
+  return i < 0 ? id : id.slice(0, i);
+}
+
 /** يتحقّق من سطر واحد ويحسب حقوله المشتقّة. يرمي رسالةً عربية عند الخطأ. */
 export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedChunk {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -883,12 +896,17 @@ export function prepareChunk(raw: unknown, opts: ImportOptions = {}): PreparedCh
   // الحقلان الصريحان يُقرآن كما وردا، ولاحقةُ المعرّف تقوم مقامهما حين يغيبان:
   // `-attach` و`annex-01` صيغتان يسمّيهما العقد نفسه (§3-11، §3-12)، فقراءتُهما
   // قراءةٌ للعقد لا تخمين. ومادة «مكرر» لا حقلَ لها غيرُ لاحقتها.
-  const isAttachment = explicitOr(o.is_attachment, /-attach\d*$/.test(id)) ? 1 : 0;
+  //
+  // واللاحقة تُقرأ من المعرّف قبل `#`: جزءُ المادة المقسّمة (§3-2) يحمل لاحقةَ
+  // مادته ثم `#a`، وقراءتُها من آخر المعرّف كانت تُسقطها عن الجزء.
+  const baseId = articleBaseId(id);
+  const isAttachment = explicitOr(o.is_attachment, /-attach\d*$/.test(baseId)) ? 1 : 0;
   const attachmentOf = str(o.attachment_of) || null;
-  const isAnnex = explicitOr(o.is_annex, /\/annex-\d+$/.test(id)) ? 1 : 0;
-  const isMukarrar = /-mukarrar\d*(?:--dup\d+)?$/.test(id) ? 1 : 0;
+  const isAnnex = explicitOr(o.is_annex, /\/annex-\d+$/.test(baseId)) ? 1 : 0;
+  const isMukarrar = /-mukarrar\d*(?:--dup\d+)?$/.test(baseId) ? 1 : 0;
   // مرفقُ الملحق يحمل رقمه الاصطلاحيّ نفسه (§3-12)، فحكمُه في الرقم حكمُه.
-  const conventionalNo = !!isAnnex || /\/annex-\d+-attach\d*$/.test(id) || /\/annex-\d+$/.test(attachmentOf ?? '');
+  const conventionalNo =
+    !!isAnnex || /\/annex-\d+-attach\d*$/.test(baseId) || /\/annex-\d+$/.test(articleBaseId(attachmentOf ?? ''));
   const formerArticleNo = str(o.former_article_no) || null;
 
   // مقبض المادة: ما يكتبه من يبحث عنها بعينها — اسم النظام ورقمها ورقم أداتها.
@@ -3214,6 +3232,76 @@ export async function withAttachments(env: Env, hits: LegalHit[], filters: Legal
   return hits.flatMap((h) => [h, ...(byParent.get(h.id) ?? [])]);
 }
 
+/** جزءٌ من مادةٍ مقسّمة: لاحقةُ `#` في المعرّف ورقمُ جزءٍ معه (§3-2). */
+function isArticlePart(h: LegalHit): boolean {
+  return !!h.part && h.id.includes('#');
+}
+
+/**
+ * ترتيب أجزاء المادة بـ`part` (§5-8) — عدداً إن كان عدداً، فـ`10` بعد `9` لا
+ * قبل `2`. وما تساوى فيه يُرتَّب بترتيب الملف.
+ */
+function byPartOrder(a: LegalHit, b: LegalHit): number {
+  const an = Number(a.part);
+  const bn = Number(b.part);
+  if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
+  if ((a.part ?? '') !== (b.part ?? '')) return (a.part ?? '') < (b.part ?? '') ? -1 : 1;
+  return a.seq - b.seq;
+}
+
+/**
+ * يُتمّ كلَّ جزءٍ جاءت به النتائج بأجزاء مادته كلِّها، مرتّبةً (§5-8).
+ *
+ * الجزء مقطعٌ من مادة لا مادة: بحثٌ أصاب `#b` وحده يعرض نصفَ حكمٍ على أنه
+ * الحكم، واستدعاءُ الرقم بسقفٍ يقطع المادة الطويلة عند جزئها الخامس. فالأجزاء
+ * تُضمّ في طبقة الاسترجاع — والشاشة والمساعد وكل مسارٍ آخر يتلقّاها كاملة.
+ *
+ * والأجزاء تأخذ موضعَ أعلاها في النتائج ودرجتَه: مادةٌ واحدة لا تتفرّق في
+ * الترتيب. والتصفية نفسها تسري على المضموم، فجزءٌ محجوب لا يدخل من هنا — وتقول
+ * الشاشة حينئذٍ أيَّ جزءٍ بين يدي القارئ.
+ *
+ * والبحث عن الأجزاء بمدى المفتاح لا بـ`LIKE`: كلُّ معرّفٍ يبدأ بـ`base#` يقع بين
+ * `base#` و`base$` (`$` تلي `#` في الترميز)، فلا يُهرَّب `%` و`_` في المعرّف
+ * ويُقرأ الفهرس الأساسيّ كما هو.
+ */
+export async function withParts(env: Env, hits: LegalHit[], filters: LegalFilters): Promise<LegalHit[]> {
+  const bases = Array.from(new Set(hits.filter(isArticlePart).map((h) => articleBaseId(h.id))));
+  if (!bases.length) return hits;
+
+  const built = buildFilters({ ...filters, articleNo: null });
+  const byBase = new Map<string, LegalHit[]>();
+  for (let i = 0; i < bases.length; i += DB_BATCH) {
+    const slice = bases.slice(i, i + DB_BATCH);
+    const ranges = slice.map(() => '(c.id >= ? AND c.id < ?)').join(' OR ');
+    const rows = await env.DB.prepare(
+      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE (${ranges})${built.sql}`
+    )
+      .bind(...slice.flatMap((b) => [`${b}#`, `${b}$`]), ...built.binds)
+      .all<HitRow>();
+    for (const r of rows.results ?? []) {
+      const base = articleBaseId(r.id);
+      byBase.set(base, [...(byBase.get(base) ?? []), toHit(r)]);
+    }
+  }
+
+  const out: LegalHit[] = [];
+  const done = new Set<string>();
+  for (const h of hits) {
+    if (!isArticlePart(h)) {
+      out.push(h);
+      continue;
+    }
+    const base = articleBaseId(h.id);
+    if (done.has(base)) continue;
+    done.add(base);
+    // ما جاءت به النتائج يبقى بدرجته وإشاراته، وما ضُمّ يأخذهما من أعلاه.
+    const group = new Map((byBase.get(base) ?? []).map((p) => [p.id, { ...p, score: h.score, signals: [...h.signals] }]));
+    for (const x of hits) if (isArticlePart(x) && articleBaseId(x.id) === base) group.set(x.id, x);
+    out.push(...Array.from(group.values()).sort(byPartOrder));
+  }
+  return out;
+}
+
 interface HitRow {
   seq: number; id: string; law_id: string | null; parent_law_id: string | null;
   doc_type: string | null; article_no: string | null; article_no_norm: string | null;
@@ -3459,7 +3547,8 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     )
       .bind(...filters.binds, limit)
       .all<HitRow>();
-    return (rows.results ?? []).map((r, i) => ({ ...toHit(r), score: 1 / (RRF_K + i), signals: ['metadata'] }));
+    const hits = (rows.results ?? []).map((r, i) => ({ ...toHit(r), score: 1 / (RRF_K + i), signals: ['metadata'] }));
+    return withParts(env, hits, opts);
   }
 
   const articleInQuery = opts.articleNo ? articleRequest(opts.articleNo) : articleFromQuery(query);
@@ -3523,7 +3612,7 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     const scope = buildFilters({ ...opts, articleNo: null });
     const byNo = articleNoClause(articleInQuery);
     const exact = await env.DB.prepare(
-      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${byNo.sql}${scope.sql} LIMIT 5`
+      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${byNo.sql}${scope.sql} ORDER BY c.seq LIMIT 20`
     )
       .bind(...byNo.binds, ...scope.binds)
       .all<HitRow>();
@@ -3539,7 +3628,8 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     }
   }
 
-  return fuse(lists, articleInQuery, limit);
+  // وجزءُ المادة لا يُعرض وحده (§5-8): يُتمّ بعد الدمج بأجزاء مادته في موضعه.
+  return withParts(env, fuse(lists, articleInQuery, limit), opts);
 }
 
 /** دمج القوائم المرتّبة بـRRF، مع ترجيح مطابقة رقم المادة. */
@@ -3607,7 +3697,8 @@ export async function getArticle(
   // الضمّ بنطاق النظام لا بنطاق الرقم: أخوات المادة قد تحمل أرقاماً مختلفة
   // في `article_no` وتجمعها `duplicate_of` وحدها. ومرفقاتُها معها بعدها.
   const siblings = await expandDuplicates(env, (rows.results ?? []).map(toHit), scope);
-  return withAttachments(env, siblings, scope);
+  // وأجزاءُ المادة المقسّمة كلُّها مرتّبةً بـ`part` (§5-8) — لا ما بلغه السقف.
+  return withAttachments(env, await withParts(env, siblings, scope), scope);
 }
 
 /** مقطع بمعرّفه. التصفية سارية هنا أيضاً — الاستشهاد لا يستثنى من الشرط. */

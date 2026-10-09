@@ -19,6 +19,7 @@ import {
   getChunkById,
   hiddenReason,
   withAttachments,
+  withParts,
   listLaws,
   listLawArticles,
   listLawBooks,
@@ -613,12 +614,10 @@ app.get('/article', async (c) => {
     const hit = await getChunkById(c.env, id, includeRepealed);
     if (hit) {
       // ومرفقاتُها معها بعدها (§5-6): الاستشهاد يفتح المادة، والجدول الذي تحيل
-      // إليه في مرفقها — والتصفية نفسها تسري على المرفق.
-      const results = await withAttachments(c.env, [hit], {
-        lawId: hit.lawId,
-        withRegulations: false,
-        includeRepealed,
-      });
+      // إليه في مرفقها — والتصفية نفسها تسري على المرفق. واستشهادٌ بجزءٍ من
+      // مادةٍ مقسّمة يفتحها بأجزائها كلِّها (§5-8).
+      const scope = { lawId: hit.lawId, withRegulations: false, includeRepealed };
+      const results = await withAttachments(c.env, await withParts(c.env, [hit], scope), scope);
       return c.json({ results, count: results.length });
     }
     // موجودةٌ لكنها محجوبة: يُقال لماذا غابت بدل «غير موجودة» المضلّلة —
