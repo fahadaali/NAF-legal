@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
-import { extractPdfText, readableLocally } from '../lib/extractText';
+import { useEffect, useRef, useState } from 'react';
+import { preloadPdfReader } from '../lib/extractText';
+import { mapPool, uploadAttachment, UPLOAD_CONCURRENCY } from '../lib/uploadAttachment';
 import { api, ConsultConfig } from '../lib/api';
 import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
@@ -30,6 +31,11 @@ export default function IntakeModal({
   const [replyLength, setReplyLength] = useReplyLength();
   const [error, setError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // قارئ PDF يُحمَّل والمستخدم يملأ الحقول، لا بعد أن يضغط «بدء الاستشارة».
+  useEffect(() => {
+    if (config.file.enabled) preloadPdfReader();
+  }, [config.file.enabled]);
 
   const setVal = (k: string, v: string) => setValues((s) => ({ ...s, [k]: v }));
 
@@ -75,12 +81,11 @@ export default function IntakeModal({
       if (config.file.enabled) {
         /* الاستخراج هنا كما في صندوق الكتابة سواء — وإلا كان ملفُّ نافذة البدء
            وحده يمرّ على النموذج ويُكلِّف رموزاً لا يكلّفها الملفُّ نفسه لو
-           أُرفق بعد سطرٍ واحد من المحادثة. وواحداً بعد واحد كما هناك. */
-        for (const f of files) {
-          const local = readableLocally(f) ? await extractPdfText(f) : null;
-          const r = await api.uploadFile(conv.id, f, local);
-          ids.push(r.id);
-        }
+           أُرفق بعد سطرٍ واحد من المحادثة. ومعاً بحدٍّ أقصى كما هناك. */
+        const results = await mapPool(files, UPLOAD_CONCURRENCY, (f) => uploadAttachment(conv.id, f));
+        const failed = results.find((r) => !r.ok);
+        if (failed && !failed.ok) throw failed.error;
+        for (const r of results) if (r.ok) ids.push(r.value.id);
       }
       onStart(conv.id, composeMessage(config, values, files, pastedText), ids);
     } catch (e: any) {

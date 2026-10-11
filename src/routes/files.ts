@@ -2,7 +2,7 @@
 import { Hono, type Context } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
-import { extractText } from '../lib/extract';
+import { extractText, ocrPages, TRUNCATED_NOTE, UNREAD_PAGE_NOTE } from '../lib/extract';
 import { buildDocx, annotateDates } from '../lib/docx';
 import { splitDocTitle, stripLawyerNotes, toPlainText } from '../lib/draftText';
 import { loadDocTemplate, loadLetterhead, LETTERHEAD_KEY } from '../lib/docTemplate';
@@ -19,6 +19,10 @@ const MAX_SIZE = 15 * 1024 * 1024; // 15MB
 /** سقفُ النصّ القادم من المتصفّح — يوافق `ATTACH_PER_FILE_MAX` في `chat.ts`.
     وتجاوزُه هنا تخزينٌ لما لن يُقرأ، ونقصانُه قصٌّ قبل أن يصل السقف الحقيقي. */
 const MAX_TEXT = 200_000;
+
+/** حدّا صور الصفحات الممسوحة — يوافقان `MAX_OCR_PAGES` ورسمَ الصفحة في `web/src/lib/extractText.ts`. */
+const MAX_PAGE_IMAGES = 60;
+const MAX_PAGE_IMAGE_SIZE = 4 * 1024 * 1024;
 const ALLOWED = ['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg', 'image/webp'];
 const ALLOWED_EXT = ['pdf', 'txt', 'md', 'docx', 'png', 'jpg', 'jpeg', 'webp'];
 
@@ -69,10 +73,21 @@ app.post('/upload/:conversationId', async (c) => {
      يملؤه من يشاء بما يشاء. */
   const clientText = (form.get('text')?.toString() ?? '').slice(0, MAX_TEXT).trim();
 
+  /* أو صفحاتٌ بعضُها نصٌّ قرأه المتصفّح وبعضُها صورٌ رسمها لصفحاتٍ بلا طبقة
+     نصّ. فلا يُقرأ هنا إلا الصور، ثم يوضع كلُّ نصٍّ في موضع صفحته. وما لا
+     يستقيم من ذلك يُترك ويُقرأ الملفُّ كلُّه كما كان. */
+  const layout = clientText ? null : parseLayout(form);
+
+  /* الملفُّ نفسه رُفع من قبل وقُرئ: يأخذ نصَّه فوراً ولا يُقرأ ثانيةً.
+     ولا يُعاد نصٌّ ناقص — قُصّ أو غابت منه صفحة — فقراءةٌ جديدة قد تُتمّه. */
+  const contentHash = await sha256Hex(buf);
+  const reused = clientText ? null : await reusableText(c.env, user.id, contentHash);
+  const knownText = clientText || reused || '';
+
   // `message_id` يبقى فارغاً: مرفوعٌ في صندوق الكتابة ولم يُرسَل بعد.
   await c.env.DB.prepare(
-    `INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parsed_text, parse_status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parsed_text, parse_status, content_hash, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
@@ -81,24 +96,56 @@ app.post('/upload/:conversationId', async (c) => {
       file.name,
       file.type,
       file.size,
-      clientText || null,
-      clientText ? 'ready' : 'pending',
+      knownText || null,
+      knownText ? 'ready' : 'pending',
+      contentHash,
       Date.now()
     )
     .run();
 
   // ما قُرئ محلّياً لا يُقرأ ثانيةً. وما لم يُقرأ — صورةٌ أو ممسوحٌ ضوئياً —
-  // يتولّاه الخادم بصرياً.
-  if (!clientText) c.executionCtx.waitUntil(runExtract(c.env, id, buf, file.type, file.name));
+  // يتولّاه الخادم بصرياً: صورُ صفحاته وحدها إن جاءت، وإلا الملفُّ كلُّه.
+  if (!knownText) {
+    c.executionCtx.waitUntil(
+      layout ? runPageOcr(c.env, id, layout) : runExtract(c.env, id, buf, file.type, file.name)
+    );
+  }
 
   return c.json({
     id,
     filename: file.name,
     size: file.size,
     mime: file.type,
-    parse_status: clientText ? 'ready' : 'pending',
+    parse_status: knownText ? 'ready' : 'pending',
   });
 });
+
+async function sha256Hex(buf: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** ذيولٌ يكتبها الاستخراج في نصٍّ ناقص (`src/lib/extract.ts`) — ونصٌّ يحملها لا يُعاد. */
+const INCOMPLETE_MARKS = [TRUNCATED_NOTE.trim(), UNREAD_PAGE_NOTE];
+
+/**
+ * نصُّ ملفٍّ بالبصمة نفسها رفعه **المستخدمُ نفسه** وقُرئ كاملاً، أو `null`.
+ * والقيد بالمستخدم مقصود: انظر `migrations/0033_attachment_content_hash.sql`.
+ */
+async function reusableText(env: Env, userId: string, hash: string): Promise<string | null> {
+  const row = await env.DB.prepare(
+    `SELECT a.parsed_text AS t FROM attachments a
+     JOIN conversations c ON c.id = a.conversation_id
+     WHERE a.content_hash = ? AND c.user_id = ? AND a.parse_status = 'ready'
+       AND a.parsed_text IS NOT NULL AND a.parsed_text != ''
+     ORDER BY a.created_at DESC LIMIT 1`
+  )
+    .bind(hash, userId)
+    .first<{ t: string }>()
+    .catch(() => null);
+  if (!row?.t || INCOMPLETE_MARKS.some((m) => row.t.includes(m))) return null;
+  return row.t;
+}
 
 /**
  * يستخرج نصّ المرفق ويَسِم حالَه، ولا يترك صفّاً معلَّقاً مهما وقع.
@@ -118,6 +165,77 @@ async function runExtract(env: Env, id: string, buf: ArrayBuffer, mime: string, 
     text = await extractText(env, buf, mime, filename);
   } catch (e: any) {
     error = String(e?.message ?? e);
+  }
+  if (!text.trim() && !error) error = 'لم يُستخرَج نصّ من الملف';
+
+  await env.DB.prepare('UPDATE attachments SET parsed_text = ?, parse_status = ?, parse_error = ? WHERE id = ?')
+    .bind(error ? null : text, error ? 'error' : 'ready', error, id)
+    .run()
+    .catch(() => {});
+}
+
+interface PageLayout {
+  /** نصُّ كل صفحة، و`null` لصفحةٍ جاءت صورةً. */
+  pages: (string | null)[];
+  /** صورُ الصفحات بترتيب الـ`null` في `pages`. */
+  images: { bytes: Promise<ArrayBuffer>; mime: string }[];
+}
+
+/** يقرأ `layout` و`page` من النموذج، أو `null` إن لم يستقم شيءٌ منهما. */
+function parseLayout(form: FormData): PageLayout | null {
+  const raw = form.get('layout');
+  if (typeof raw !== 'string') return null;
+  let pages: unknown;
+  try {
+    pages = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(pages) || !pages.every((p) => p === null || typeof p === 'string')) return null;
+  const files = form.getAll('page').filter((f): f is File => f instanceof File);
+  const blanks = pages.filter((p) => p === null).length;
+  if (!blanks || blanks !== files.length || files.length > MAX_PAGE_IMAGES) return null;
+  if (files.some((f) => f.size > MAX_PAGE_IMAGE_SIZE || !f.type.startsWith('image/'))) return null;
+  // والنصُّ الآتي مع الصور محدودٌ بحدّ النصّ نفسه.
+  let budget = MAX_TEXT;
+  const capped = (pages as (string | null)[]).map((p) => {
+    if (p === null) return null;
+    const t = p.slice(0, Math.max(0, budget));
+    budget -= t.length;
+    return t;
+  });
+  return { pages: capped, images: files.map((f) => ({ bytes: f.arrayBuffer(), mime: f.type })) };
+}
+
+/**
+ * يقرأ صور الصفحات ويضع نصَّ كلٍّ منها في موضعها، ثم يَسِم الحال.
+ * لا يترك صفّاً معلَّقاً — كـ`runExtract` سواء.
+ */
+async function runPageOcr(env: Env, id: string, layout: PageLayout): Promise<void> {
+  let text = '';
+  let error: string | null = null;
+  try {
+    const images = await Promise.all(layout.images.map(async (img) => ({ bytes: await img.bytes, mime: img.mime })));
+    const read = await ocrPages(env, images);
+    let k = 0;
+    text = layout.pages
+      .map((p) => (p === null ? read[k++] : p))
+      .filter((p) => p.trim())
+      .join('\n\n')
+      .slice(0, MAX_TEXT);
+  } catch (e: any) {
+    /* تعذّرت قراءة الصور كلِّها: صفحاتُ النصّ مقروءةٌ سلفاً فلا تُرمى معها.
+       يُخزَّن ما قُرئ والغائبُ يُقال في موضعه، ولا خطأَ إلا إن لم يبقَ نصّ. */
+    const known = layout.pages.filter((p): p is string => !!p?.trim());
+    if (known.length) {
+      text = layout.pages
+        .map((p) => (p === null ? UNREAD_PAGE_NOTE : p))
+        .filter((p) => p.trim())
+        .join('\n\n')
+        .slice(0, MAX_TEXT);
+    } else {
+      error = String(e?.message ?? e);
+    }
   }
   if (!text.trim() && !error) error = 'لم يُستخرَج نصّ من الملف';
 

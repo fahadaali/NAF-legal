@@ -31,7 +31,10 @@ export interface ClaudeMessage {
 
 /**
  * مستوى الجهد — يضبط عمق التفكير وحجم الإنفاق (§GA، بلا ترويسة تجربة).
- * الإغفال يعني `high`، وهو الافتراضي في الـAPI.
+ *
+ * **والإغفال هنا يعني `high`، لا افتراضيَّ الـAPI.** افتراضيُّ Opus 5.5 صار
+ * `medium` بعد أن كان `high` في Opus 5، فمستدعٍ لا يحدّد جهداً كان سينزل
+ * درجةً بصمت عند تبديل النموذج. فيُرسَل `DEFAULT_EFFORT` صراحةً.
  */
 export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -48,8 +51,9 @@ export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
  * وحذفها آمن على أي نموذج: الإغفال يعني القيمة الافتراضية لا قيمة شاذّة.
  * التوجيه يكون بالبرومبت لا بمعامِل عيّنة.
  *
- * **والتفكير مُفعَّل على Opus 5 بإغفال الحقل، لا مُعطَّل.** هذا انقلابٌ عن
- * Opus 4.8 حيث كان الإغفال يعني «بلا تفكير». وأثره أن `max_tokens` صار
+ * **والتفكير مُفعَّل على Opus 5 وOpus 5.5 بإغفال الحقل، لا مُعطَّل.** هذا
+ * انقلابٌ عن Opus 4.8 حيث كان الإغفال يعني «بلا تفكير». وعلى Opus 5.5 لا
+ * يُعطَّل أصلاً: `thinking: {type: "disabled"}` يردّه الـAPI بـ400. وأثره أن `max_tokens` صار
  * سقفاً للتفكير **والنص معاً**، فحدٌّ ضيّق يبتلعه التفكير ويعود الردّ مقتطعاً
  * أو فارغاً — وفي استدعاءات JSON (المُخطِّط، التصنيف، التحقّق) يعني ذلك
  * تحليلاً فاشلاً وخطةً احتياطية صامتة. ومن هنا `MIN_MAX_TOKENS` أدناه.
@@ -63,7 +67,7 @@ export interface ClaudeCallOptions {
   system?: string;
   messages: ClaudeMessage[];
   max_tokens?: number;
-  /** الإغفال يعني `high`. */
+  /** الإغفال يعني `high` (`DEFAULT_EFFORT`). */
   effort?: ClaudeEffort;
   tools?: any[];
   tool_choice?: any;
@@ -77,6 +81,9 @@ export interface ClaudeCallOptions {
  * هنا لا في كل مستدعٍ: مستدعٍ جديد يُكتب غداً بحدٍّ صغير لا يُسقط نفسه بصمت.
  */
 const MIN_MAX_TOKENS = 4096;
+
+/** ما يُرسَل حين لا يحدّد المستدعي جهداً — انظر `ClaudeEffort`. */
+const DEFAULT_EFFORT: ClaudeEffort = 'high';
 
 /** رسالة بلا محتوى يردّها الـAPI بـ400، والفراغ يقع من نصٍّ مقتطع أو حقل ناقص. */
 function hasContent(m: ClaudeMessage): boolean {
@@ -113,7 +120,7 @@ function buildBody(opts: ClaudeCallOptions, defaultMaxTokens: number, stream: bo
   // الحقول الاختيارية تُحذف ولا تُرسل فارغة: `system` فارغ و`tools` فارغة
   // كلاهما 400، والإغفال هو ما يعنيه غيابُها أصلاً.
   if (opts.system?.trim()) body.system = opts.system;
-  if (opts.effort) body.output_config = { effort: opts.effort };
+  body.output_config = { effort: opts.effort ?? DEFAULT_EFFORT };
   if (opts.tools?.length) body.tools = opts.tools;
   if (opts.tool_choice) body.tool_choice = opts.tool_choice;
   if (stream) body.stream = true;

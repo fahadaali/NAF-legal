@@ -94,6 +94,21 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 // ── استخراج عبر رؤية Claude (PDF/صور) ──
+
+/**
+ * سقفُ مخرَج نداء الاستخراج — والتفكير يقتسمه مع النصّ.
+ *
+ * كان ٨١٩٢، فمستندٌ ممسوح من عشر صفحات أو أكثر يُقصّ نصُّه عند السقف بصمت:
+ * لا يُقرأ `stop_reason`، فيُخزَّن نصفُ المستند ويجيب المساعد عنه كأنه كلّه.
+ * والسقفُ لا يُدفع إلا عمّا وُلّد فعلاً، فرفعُه مجّانيّ.
+ */
+const EXTRACT_MAX_TOKENS = 32000;
+
+/** ذيلٌ يقوله النصُّ عن نفسه حين بلغ النداءُ سقفه — بصيغة ذيل القصّ في `chat.ts`. */
+export const TRUNCATED_NOTE = '\n…(مقتطع)';
+
+const TRANSCRIBE = 'استخرج كامل النص المكتوب في هذا الملف حرفيًا وبالترتيب، دون تلخيص أو تعليق. أعِد النص فقط.';
+
 async function extractViaClaude(env: Env, buf: ArrayBuffer, mediaType: string, kind: 'document' | 'image'): Promise<string> {
   const base64 = arrayBufferToBase64(buf);
   const block =
@@ -101,22 +116,86 @@ async function extractViaClaude(env: Env, buf: ArrayBuffer, mediaType: string, k
       ? { type: 'document', source: { type: 'base64', media_type: mediaType, data: base64 } }
       : { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } };
 
-  const { text } = await callClaude(env, {
+  const { text, raw } = await callClaude(env, {
     model: env.PLANNER_MODEL,
     effort: 'low', // نقلٌ حرفيّ للنص، لا تحليل — فلا وجه لإنفاق تفكيرٍ عليه
-    max_tokens: 8192,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          block as any,
-          { type: 'text', text: 'استخرج كامل النص المكتوب في هذا الملف حرفيًا وبالترتيب، دون تلخيص أو تعليق. أعِد النص فقط.' },
-        ],
-      },
-    ],
+    max_tokens: EXTRACT_MAX_TOKENS,
+    messages: [{ role: 'user', content: [block as any, { type: 'text', text: TRANSCRIBE }] }],
   });
-  return text.trim();
+  return text.trim() + (raw?.stop_reason === 'max_tokens' ? TRUNCATED_NOTE : '');
 }
+
+/**
+ * أقصى عدد نداءاتٍ لقراءة صفحات ملفٍّ واحد.
+ *
+ * كلُّ نداءٍ طلبٌ فرعيّ من العامل، وللطلبات الفرعية حدٌّ في الخطة. فالصفحات
+ * تُجمع في دفعاتٍ لا تتجاوز هذا العدد: عشرُ صفحاتٍ عشرةُ نداءات بصفحةٍ لكلٍّ،
+ * وستّون صفحة عشرةُ نداءات بستّ صفحاتٍ لكلٍّ.
+ */
+const OCR_MAX_CALLS = 10;
+
+/** فاصلٌ يكتبه النموذج بين صفحات الدفعة، فيُعاد كلُّ نصٍّ إلى صفحته. */
+const PAGE_BREAK = '<<<PAGE>>>';
+
+/**
+ * يقرأ صفحاتٍ مرسومةً صوراً، معاً لا واحدةً بعد واحدة، ويردّ نصَّ كلٍّ منها
+ * بترتيبها.
+ *
+ * **والسرعة من التوازي، والدقّة من صِغَر الدفعة.** كان المستند الممسوح يُرسَل
+ * كلُّه في نداءٍ واحد، فيطول بطول نصّه كلّه ويُقصّ عند سقفٍ واحد. والآن
+ * يطول بطول أطول دفعة، ولكلّ دفعةٍ سقفُها.
+ */
+export async function ocrPages(env: Env, images: { bytes: ArrayBuffer; mime: string }[]): Promise<string[]> {
+  if (!images.length) return [];
+  const size = Math.ceil(images.length / OCR_MAX_CALLS);
+  const batches: number[][] = [];
+  for (let i = 0; i < images.length; i += size) {
+    batches.push(Array.from({ length: Math.min(size, images.length - i) }, (_, k) => i + k));
+  }
+
+  const out: string[] = new Array(images.length).fill('');
+  const settled = await Promise.allSettled(
+    batches.map(async (batch) => {
+      const content: any[] = batch.map((i) => ({
+        type: 'image',
+        source: { type: 'base64', media_type: images[i].mime, data: arrayBufferToBase64(images[i].bytes) },
+      }));
+      const instruction =
+        batch.length === 1
+          ? TRANSCRIBE
+          : `هذه ${batch.length} صفحات متتالية من مستندٍ واحد، بترتيبها. استخرج النص المكتوب في كل صفحة حرفيًا وبالترتيب، دون تلخيص أو تعليق، واكتب بين نصّ كل صفحةٍ والتي تليها سطرًا وحده فيه ${PAGE_BREAK} فقط. أعِد النصوص فقط.`;
+      content.push({ type: 'text', text: instruction });
+
+      const { text, raw } = await callClaude(env, {
+        model: env.PLANNER_MODEL,
+        effort: 'low',
+        max_tokens: EXTRACT_MAX_TOKENS,
+        messages: [{ role: 'user', content }],
+      });
+      const truncated = raw?.stop_reason === 'max_tokens';
+      const parts = batch.length === 1 ? [text] : text.split(PAGE_BREAK);
+      if (parts.length === batch.length) {
+        batch.forEach((i, k) => (out[i] = parts[k].trim()));
+      } else {
+        /* فواصلُ لم تأتِ كما طُلبت: النصّ كلُّه في موضع أوّل صفحةٍ من الدفعة.
+           صفحاتُ الدفعة متتالية في الصور، فالترتيب بينها محفوظ — والذي قد
+           يختلّ موضعُ صفحةٍ نصّيةٍ تقع بينها في المستند، وهو أهون من فقدها. */
+        out[batch[0]] = text.split(PAGE_BREAK).map((t) => t.trim()).filter(Boolean).join('\n\n');
+      }
+      if (truncated) out[batch[batch.length - 1]] += TRUNCATED_NOTE;
+    })
+  );
+  /* دفعةٌ تعثّرت لا تُسقط أخواتها: صفحاتُها تُقال غائبةً في النصّ نفسه، فيعرف
+     المساعد أن في المستند ما لم يقرأه. وتعثُّر الدفعات كلِّها خطأٌ يُرمى. */
+  const failures = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failures.length === batches.length) throw failures[0].reason;
+  settled.forEach((r, b) => {
+    if (r.status === 'rejected') for (const i of batches[b]) out[i] = UNREAD_PAGE_NOTE;
+  });
+  return out;
+}
+
+export const UNREAD_PAGE_NOTE = '…(تعذّرت قراءة هذه الصفحة)';
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);

@@ -1,5 +1,6 @@
 // عميل API للواجهة
 import type { ReplyLength } from './replyLength';
+import type { LocalExtract } from './extractText';
 import { loginWithReturn, rememberLoginUrl, sessionLost } from './session';
 
 /** أدوار هذه المنصة، وألفاظها في naf-terms.md §١٠. لا رابع لها. */
@@ -930,12 +931,18 @@ export const api = {
    * `parse_status` في الردّ `pending` دائماً: الاستخراج يجري في الخادم بعده،
    * وتُسأل عنه `attachment` حتى يستقرّ.
    */
-  uploadFile: async (conversationId: string, file: File, extractedText?: string | null) => {
+  uploadFile: async (conversationId: string, file: File, local?: LocalExtract | null) => {
     const fd = new FormData();
     fd.append('file', file);
     // نصٌّ اُستخرج في المتصفّح: الخادم يخزّنه ولا ينادي النموذج. وغيابُه يعني
     // «اقرأه أنت» — صورةٌ أو ممسوحٌ ضوئياً.
-    if (extractedText) fd.append('text', extractedText);
+    if (local?.text) fd.append('text', local.text);
+    /* أو صفحاتٌ بعضُها نصٌّ وبعضُها صور: يقرأ الخادم الصورَ وحدها، معاً لا
+       واحدةً بعد واحدة، ثم يضعها في مواضعها بين صفحات النصّ. */
+    else if (local?.pages && local.images?.length) {
+      fd.append('layout', JSON.stringify(local.pages));
+      local.images.forEach((img, i) => fd.append('page', img, `page-${i + 1}.jpg`));
+    }
     const res = await fetch(`/api/files/upload/${conversationId}`, { method: 'POST', body: fd, credentials: 'same-origin' });
     const data = await res.json().catch(() => ({}));
     if (handleAuthRedirect(res, data)) return pending<any>();

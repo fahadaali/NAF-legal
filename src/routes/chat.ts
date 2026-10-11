@@ -105,6 +105,13 @@ app.post('/:conversationId', async (c) => {
     );
   }
 
+  /* مرفقٌ أُرسل ونصُّه يُستخرج بعد: يُنتظر هنا لا في الشاشة.
+     كان زرُّ الإرسال معطَّلاً حتى يُستخرج النصّ، فيجلس المحامي أمام سؤالٍ
+     كتبه ولا يستطيع إرساله. والآن يُرسل فوراً، ويقع الانتظار هنا موازياً
+     لما بقي من عمل. وهو أيضاً ما يجعل ملفَّ نافذة البدء يبلغ أوّلَ ردّ: رسالةُ
+     البدء تُرسَل فور الرفع، فكان نصُّ الممسوح لم يُستخرج بعدُ فيسقط منها. */
+  if (sentIds.length) await waitForExtraction(c.env, conversationId, sentIds);
+
   // سجل الرسائل السابق (سياق المحادثة) — نأخذ أحدث 40 رسالة ثم نعيد ترتيبها زمنيًا
   const historyDesc = await c.env.DB.prepare(
     'SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 40'
@@ -576,6 +583,36 @@ function toCitation(r: RagResult) {
    وكانت مضبوطةً حين كان الملفُّ كلُّه يُرسَل بايتاتِه إلى النموذج ليقرأه.
    والقراءة الآن تقع في المتصفّح مجّاناً، فالكلفة كلفةُ سياقٍ لا كلفةُ قراءة:
    مئتا ألف حرفٍ عربيّ ≈ سبعون ألف رمز، في نافذةٍ سعتُها مليون. */
+/**
+ * حدُّ انتظار استخراج المرفقات قبل أن يمضي الدور بما استقرّ منها.
+ *
+ * المستند الممسوح يُقرأ بدفعاتٍ متوازية، وتسعون ثانيةً تسع أطولها عادةً.
+ * وما لم يستقرّ بعدها يمضي الدور بدونه — كما كان يمضي قبل الانتظار — ولا
+ * يُعلَّق السؤال بلا نهاية على نداءٍ متعثّر.
+ */
+const EXTRACTION_WAIT_MS = 90_000;
+
+/**
+ * يسأل عن حال المرفقات متباعداً حتى لا يبقى منها `pending` أو ينقضي الحدّ.
+ * والتباعد يتّسع: أغلب الملفات تستقرّ في ثوانٍ، وكلُّ سؤالٍ طلبٌ إلى القاعدة.
+ */
+async function waitForExtraction(env: Env, conversationId: string, ids: string[]): Promise<void> {
+  const deadline = Date.now() + EXTRACTION_WAIT_MS;
+  const steps = [500, 1000, 2000, 3000];
+  for (let i = 0; Date.now() < deadline; i++) {
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM attachments
+       WHERE conversation_id = ? AND parse_status = 'pending' AND id IN (${ids.map(() => '?').join(',')})`
+    )
+      .bind(conversationId, ...ids)
+      .first<{ n: number }>()
+      .catch(() => null);
+    if (!row || !row.n) return;
+    await new Promise((r) => setTimeout(r, steps[Math.min(i, steps.length - 1)]));
+  }
+  console.error(`extraction wait timed out — conversation ${conversationId}`);
+}
+
 const ATTACH_TOTAL_BUDGET = 400_000; // حروف
 const ATTACH_PER_FILE_MAX = 200_000;
 
