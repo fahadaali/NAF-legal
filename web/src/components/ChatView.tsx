@@ -195,7 +195,15 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         return { ...m, citations, fiqhCitations, clarifying, verification, missingRegulations };
       });
       setMessages(msgs);
-      setAttachments(r.attachments);
+      /* ما في صندوق الكتابة لا يُستبدل بما عند الخادم، بل يُضمّ إليه.
+         الجلبة تقع والرفع جارٍ — أوّلها عودةُ التركيز إلى النافذة حين يُغلق
+         منتقي الملفات — فلو استُبدلت القائمة لذهبت شارةُ الملف الذي في
+         الطريق (`local:`)، ولم يجد ردُّ الرفع شارةً يحلّ محلّها، فيُرسَل
+         السؤال بلا مرفقه. وكذلك ملفٌّ وصل بعد أن قرأ الخادمُ قائمتَه. */
+      setAttachments((prev) => {
+        const known = new Set(r.attachments.map((a) => a.id));
+        return [...r.attachments, ...prev.filter((a) => !a.message_id && !known.has(a.id))];
+      });
 
       /* التقييمات تُجلب عند فتح المحادثة وحدها.
          نداءٌ لكل رسالة مساعد — ومحادثةٌ ذات عشرين ردّاً تعني إحدى وعشرين
