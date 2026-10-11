@@ -289,10 +289,30 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
      فيُجَسّ متباعداً حتى يصل الردّ — ولا يُعاد الإرسال: دورٌ ثانٍ على دورٍ
      يجري يدفع كلفةً مرّتين ويعطي إجابتين لسؤال واحد. */
   useEffect(() => {
-    if (!conversationId || !generating || stream) return;
+    if (!conversationId || !generating || stream?.streaming) return;
     const t = window.setInterval(() => void load({ withFeedback: false, background: true }), POLL_MS);
     return () => window.clearInterval(t);
-  }, [conversationId, generating, stream, load]);
+  }, [conversationId, generating, stream?.streaming, load]);
+
+  /* نافذةٌ أخرى قد تكون أرسلت في هذه المحادثة وهذه في الخلفية. فعند العودة
+     إليها تُجلب من جديد: يظهر ما أُرسل هناك، ويُعرف إن كان دورٌ يجري فيُعطَّل
+     الإرسال. ولا تُجلب ودورُها يُبَثّ هنا — الختام يجلبها. */
+  const streamingHere = !!stream?.streaming;
+  useEffect(() => {
+    if (!conversationId || streamingHere) return;
+    const onFocus = () => void load({ withFeedback: false, background: true });
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [conversationId, streamingHere, load]);
+
+  /* دورٌ ردّه الخادم أو انقطع: تُجلب المحادثة مرّةً، فإن كان دورٌ يجري من
+     نافذةٍ أخرى ظهر «جارٍ التوليد» وتعطّل الإرسال حتى يكتمل. */
+  const erredAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (!conversationId || !stream?.error || erredAt.current === stream.startedAt) return;
+    erredAt.current = stream.startedAt;
+    void load({ withFeedback: false, background: true });
+  }, [conversationId, stream?.error, stream?.startedAt, load]);
 
   /* الرسائل المعروضة: ما في القاعدة، ثم ما يجري الآن.
      ورسالة المستخدم لا تُضاف مرّتين — الخادم يحفظها قبل أن يبدأ التوليد،
@@ -321,6 +341,8 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
 
   const sending = !!stream?.streaming;
   const searching = !!stream?.searching;
+  /** دورٌ يجري في الخادم لم تبدأه هذه الشاشة — من نافذةٍ أخرى أو قبل إعادة التحميل. */
+  const generatingElsewhere = generating && !sending;
   /** رسائلُ لها صفٌّ في القاعدة — وهي وحدها ما يُظلَّل: التظليل يُسنَد إليها. */
   const persistedIds = useMemo(() => new Set(messages.map((m) => m.id)), [messages]);
 
@@ -665,7 +687,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
    */
   const send = (explicit?: string, explicitIds?: string[]) => {
     const text = (explicit ?? input).trim();
-    if (!text || !conversationId || sending || (!explicitIds && attachmentsBusy)) return;
+    if (!text || !conversationId || sending || generatingElsewhere || (!explicitIds && attachmentsBusy)) return;
     if (!explicit) setInput('');
     if (textarea.current) textarea.current.style.height = 'auto';
 
@@ -967,7 +989,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
 
           {/* دورٌ يجري في الخادم وبثُّه ذهب مع الصفحة: يُقال ذلك ولا تُترك
               المحادثة ساكنةً فيُعاد السؤال على سؤالٍ يُجاب. */}
-          {generating && !stream && (
+          {generatingElsewhere && (
             <div className="msg assistant">
               <div className="msg-avatar">ن</div>
               <div className="msg-body">
@@ -1096,7 +1118,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             <button
               className="send-btn"
               onClick={() => send()}
-              disabled={sending || attachmentsBusy || !input.trim()}
+              disabled={sending || generatingElsewhere || attachmentsBusy || !input.trim()}
             >
               {sending ? <span className="spinner" /> : <Icon.send size={ICON_MD} aria-hidden />}
             </button>

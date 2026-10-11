@@ -18,7 +18,9 @@ export default function IntakeModal({
 }) {
   useModalDismiss(onClose);
   const [values, setValues] = useState<Record<string, string>>({});
-  const [file, setFile] = useState<File | null>(null);
+  /* ملفاتٌ لا ملف: المستندات المؤيِّدة وصفحاتُ الحكم المصوَّرة تأتي متعدّدة.
+     وكلُّ اختيارٍ يُضاف إلى ما سبقه ولا يستبدله، فيُجمع من أكثر من مجلّد. */
+  const [files, setFiles] = useState<File[]>([]);
   const [pastedText, setPastedText] = useState('');
   const [useText, setUseText] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -30,6 +32,17 @@ export default function IntakeModal({
   const fileInput = useRef<HTMLInputElement>(null);
 
   const setVal = (k: string, v: string) => setValues((s) => ({ ...s, [k]: v }));
+
+  // الملفُّ نفسُه إن اختير مرّتين لا يُرفع مرّتين.
+  const fileKey = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
+  const addFiles = (picked: FileList | null) => {
+    if (!picked?.length) return;
+    setFiles((cur) => {
+      const seen = new Set(cur.map(fileKey));
+      return [...cur, ...Array.from(picked).filter((f) => !seen.has(fileKey(f)))];
+    });
+  };
+  const removeFile = (f: File) => setFiles((cur) => cur.filter((x) => x !== f));
 
   const grow = (el: HTMLTextAreaElement) => {
     el.style.height = 'auto';
@@ -47,7 +60,7 @@ export default function IntakeModal({
     }
     // تحقّق الملف/النص
     if (config.file.enabled && config.file.required) {
-      const hasFile = !!file;
+      const hasFile = files.length > 0;
       const hasText = config.file.allow_text && pastedText.trim().length > 0;
       if (!hasFile && !hasText) {
         setError(`مطلوب: ${config.file.label}${config.file.allow_text ? ' (ارفع ملفًا أو الصق النص)' : ''}`);
@@ -59,15 +72,17 @@ export default function IntakeModal({
     try {
       const conv = await api.createConversation(config.key);
       const ids: string[] = [];
-      if (config.file.enabled && file) {
+      if (config.file.enabled) {
         /* الاستخراج هنا كما في صندوق الكتابة سواء — وإلا كان ملفُّ نافذة البدء
            وحده يمرّ على النموذج ويُكلِّف رموزاً لا يكلّفها الملفُّ نفسه لو
-           أُرفق بعد سطرٍ واحد من المحادثة. */
-        const local = readableLocally(file) ? await extractPdfText(file) : null;
-        const r = await api.uploadFile(conv.id, file, local);
-        ids.push(r.id);
+           أُرفق بعد سطرٍ واحد من المحادثة. وواحداً بعد واحد كما هناك. */
+        for (const f of files) {
+          const local = readableLocally(f) ? await extractPdfText(f) : null;
+          const r = await api.uploadFile(conv.id, f, local);
+          ids.push(r.id);
+        }
       }
-      onStart(conv.id, composeMessage(config, values, file, pastedText), ids);
+      onStart(conv.id, composeMessage(config, values, files, pastedText), ids);
     } catch (e: any) {
       setError(e.message ?? 'تعذّر البدء');
       setBusy(false);
@@ -130,13 +145,29 @@ export default function IntakeModal({
                     ref={fileInput}
                     type="file"
                     hidden
+                    multiple
                     accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"
-                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                    onChange={(e) => {
+                      addFiles(e.target.files);
+                      // يُفرَّغ ليُختار الملفُّ نفسُه ثانيةً بعد حذفه.
+                      e.target.value = '';
+                    }}
                   />
+                  {files.length > 0 && (
+                    <div className="attachments-row">
+                      {files.map((f) => (
+                        <span className="attach-chip" key={fileKey(f)}>
+                          <Icon.attachment size={ICON_SM} aria-hidden />
+                          <bdi className="attach-name">{f.name}</bdi>
+                          <button type="button" className="attach-remove" onClick={() => removeFile(f)} title="حذف المرفق" aria-label="حذف المرفق">
+                            <Icon.delete size={ICON_SM} aria-hidden />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="dropzone" onClick={() => fileInput.current?.click()}>
-                    {file
-                      ? <><Icon.attachment size={ICON_SM} aria-hidden /> <bdi>{file.name}</bdi></>
-                      : <><Icon.upload size={ICON_SM} aria-hidden /> اضغط لاختيار الملف (PDF · DOCX · صورة · نص)</>}
+                    <Icon.upload size={ICON_SM} aria-hidden /> اختر ملفات — PDF أو Word أو صورة أو نصّ
                   </div>
                 </>
               ) : (
@@ -179,14 +210,17 @@ export default function IntakeModal({
 }
 
 // يبني رسالة البدء من الحقول والملف/النص
-function composeMessage(config: ConsultConfig, values: Record<string, string>, file: File | null, pastedText: string): string {
+function composeMessage(config: ConsultConfig, values: Record<string, string>, files: File[], pastedText: string): string {
   const parts: string[] = [];
   for (const f of config.fields) {
     const v = values[f.key]?.trim();
     if (v) parts.push(`**${f.label}:**\n${v}`);
   }
   if (config.file.enabled) {
-    if (file) parts.push(`**${config.file.label}:** (مرفق ملف: ${file.name})`);
+    if (files.length === 1) parts.push(`**${config.file.label}:** (مرفق ملف: ${files[0].name})`);
+    else if (files.length > 1) {
+      parts.push(`**${config.file.label}:**\n${files.map((f) => `- (مرفق ملف: ${f.name})`).join('\n')}`);
+    }
     else if (config.file.allow_text && pastedText.trim()) {
       parts.push(`**${config.file.label} (نص):**\n${pastedText.trim()}`);
     }

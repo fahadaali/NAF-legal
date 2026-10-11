@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 /* طول الردّ — تفضيلٌ للقارئ لا إعدادٌ للمحادثة.
  *
@@ -7,8 +7,12 @@ import { useEffect, useState } from 'react';
  * يهدم الشاشة عند كل تبديل محادثة (`key={activeConv}`)، فيعود الخيار إلى
  * «متوسط» وقد اختار «قصير» قبل سطرين.
  *
- * والتخزين دائم لا للجلسة — بخلاف مسوّدة صندوق الكتابة: تلك نصٌّ كتبه
- * القارئ ولا يُترك في حاسوبٍ مشترك، وهذا تفضيلُ قراءةٍ لا يكشف شيئاً.
+ * والتخزين طبقتان. لكل نافذةٍ درجتُها (`sessionStorage`): المحامي يعمل في
+ * محادثتين جنباً إلى جنب، واحدةٌ يريدها «قصير» والأخرى «موسّع»، ولو اشتركتا
+ * في مفتاحٍ واحد لقلبت الأولى الثانيةَ عند أوّل تبديل محادثةٍ فيها — والقائمة
+ * تعرض ما لا يُرسَل. وآخرُ اختيارٍ في أيّ نافذة يُحفظ دائماً (`localStorage`)
+ * فتبدأ به النافذة الجديدة. وهذا تفضيلُ قراءةٍ لا يكشف شيئاً، بخلاف مسوّدة
+ * صندوق الكتابة التي لا تُترك في حاسوبٍ مشترك.
  *
  * والآلية آلية `theme.ts` نفسها: قراءةٌ وكتابةٌ داخل `try/catch` لأن
  * التخزين يُمنَع في نافذةٍ خاصة، وغيابُ المفتاح معناه الافتراض.
@@ -35,19 +39,25 @@ function isReplyLength(v: unknown): v is ReplyLength {
   return REPLY_LENGTHS.some((o) => o.value === v);
 }
 
-/** الدرجة المحفوظة — «متوسط» إن لم توجد أو تعذّر التخزين. */
+function readFrom(storage: Storage): ReplyLength | null {
+  const v = storage.getItem(STORAGE_KEY);
+  return isReplyLength(v) ? v : null;
+}
+
+/** درجة هذه النافذة، ثم آخرُ اختيارٍ في أيّ نافذة، ثم «متوسط». */
 export function readReplyLength(): ReplyLength {
   try {
-    const v = localStorage.getItem(STORAGE_KEY);
-    return isReplyLength(v) ? v : DEFAULT;
+    return readFrom(sessionStorage) ?? readFrom(localStorage) ?? DEFAULT;
   } catch {
     return DEFAULT;
   }
 }
 
-/** يحفظ الدرجة. و«متوسط» تُمحى ولا تُخزَّن، فيبقى غياب المفتاح معناه الافتراض. */
+/** يحفظ الدرجة للنافذة ولما يُفتح بعدها. وتُخزَّن «متوسط» أيضاً في النافذة:
+ *  غيابُ مفتاحها يعني «خذ آخر اختيار» لا «متوسط». */
 export function writeReplyLength(value: ReplyLength): void {
   try {
+    sessionStorage.setItem(STORAGE_KEY, value);
     if (value === DEFAULT) localStorage.removeItem(STORAGE_KEY);
     else localStorage.setItem(STORAGE_KEY, value);
   } catch {
@@ -55,12 +65,15 @@ export function writeReplyLength(value: ReplyLength): void {
   }
 }
 
+/** والكتابة عند الاختيار وحده لا عند التركيب: شاشةٌ تُركَّب بدرجة نافذتها
+ *  لا تكتبها فوق آخر اختيارٍ في نافذةٍ أخرى. */
 export function useReplyLength(): [ReplyLength, (value: ReplyLength) => void] {
   const [value, setValue] = useState<ReplyLength>(readReplyLength);
 
-  useEffect(() => {
-    writeReplyLength(value);
-  }, [value]);
+  const choose = useCallback((next: ReplyLength) => {
+    writeReplyLength(next);
+    setValue(next);
+  }, []);
 
-  return [value, setValue];
+  return [value, choose];
 }

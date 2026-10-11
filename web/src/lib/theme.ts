@@ -57,5 +57,16 @@ export function useTheme(): [ThemeChoice, (choice: ThemeChoice) => void] {
     return () => mq.removeEventListener('change', onChange);
   }, [choice]);
 
+  /* المظهر واحدٌ للقارئ في كل نوافذه: ما اختاره في نافذةٍ يسري في الأخرى
+     فوراً، لا عند إعادة تحميلها. وحدث `storage` لا يصل النافذةَ التي كتبت،
+     ولا يُطلق إن كُتبت القيمة نفسها — فلا حلقة. */
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY || e.key === null) setChoice(readThemeChoice());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   return [choice, setChoice];
 }

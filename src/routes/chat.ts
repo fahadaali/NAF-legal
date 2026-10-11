@@ -24,7 +24,7 @@ import { getEffectiveConfig, getOutputStyle } from '../lib/consultationConfig';
 import { verifyGrounding } from '../lib/verify';
 import { logUsage } from '../lib/usage';
 import { findMissingRegulations, mentionedInAnswer } from '../lib/regulations';
-import { markGenerating, clearGenerating } from '../lib/generating';
+import { markGenerating, clearGenerating, isGenerating } from '../lib/generating';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -62,6 +62,15 @@ app.post('/:conversationId', async (c) => {
     .bind(conversationId, user.id)
     .first<{ id: string; consultation_type: string | null; title: string }>();
   if (!conv) return c.json({ error: 'المحادثة غير موجودة' }, 404);
+
+  /* دورٌ يجري في هذه المحادثة — من نافذةٍ أخرى غالباً: لا يُبدأ عليه ثانٍ.
+     الشاشة تعطّل الإرسال متى عرفت، لكنها لا تعرف ما بدأته نافذةٌ أخرى حتى
+     تجلب المحادثة. ودوران معاً يدفعان الكلفة مرّتين ويعطيان إجابتين، وكلٌّ
+     منهما لا يرى سؤال الآخر في سياقه. والفحص قبل حفظ الرسالة فلا يبقى سؤالٌ
+     بلا جواب. وليس قفلاً ذرّياً: نداءان في اللحظة نفسها قد يمرّان معاً. */
+  if (await isGenerating(c.env, conversationId)) {
+    return c.json({ error: 'يجري الردّ على سؤالٍ سابق في هذه المحادثة. أرسل سؤالك بعد اكتماله' }, 409);
+  }
 
   const now = Date.now();
 
