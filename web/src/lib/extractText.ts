@@ -22,6 +22,70 @@
 /** حدُّ ما يُقرأ محلّياً. أبعدُ منه يتكفّل به الخادم — والسقف في `chat.ts` يقصّ. */
 const MAX_PAGES = 200;
 
+/**
+ * أقصى ما يُرسَم من صفحاتٍ بلا طبقة نصّ ليقرأها الخادم صوراً.
+ *
+ * ما فوقه يُرفع الملفُّ كلُّه بلا نصّ ويقرؤه الخادم دفعةً واحدة كما كان —
+ * صورُ ستّين صفحة نحو عشرين ميغابايت في طلب الرفع، وما بعدها يُثقل الرفع
+ * أكثر ممّا يوفّر من القراءة.
+ */
+const MAX_OCR_PAGES = 60;
+
+/**
+ * صفحةٌ نصُّها دون هذا تُعدّ بلا طبقة نصّ فتُقرأ صورةً.
+ *
+ * عتبةٌ لا صفر، والسبب ما كان على المستند كلّه: صفحةٌ ممسوحة قد تحمل رقمَ
+ * صفحةٍ أو ترويسةً في طبقة نصّ، فتخرج بضعةُ محارف تُوهم أنها قُرئت. وصفحةٌ
+ * نصّيةٌ قصيرة حقاً تُقرأ صورةً فيخرج نصُّها نفسه — كلفةُ نداءٍ صغير لا خطأ.
+ */
+const MIN_PAGE_TEXT = 40;
+
+/**
+ * الطولُ الأطول للصورة المرسومة بالبكسل.
+ *
+ * ١٦٠٠ تُبقي التشكيل والنقاط مقروءةً في صفحةٍ مقاس A4، والصفحةُ بها نحو
+ * ثلاثمئة كيلوبايت بجودة ٨٠. والصورُ ملوّنة لا رمادية: الختمُ الأحمر والتظليل
+ * يفقدان تباينهما في الرماديّ.
+ */
+const RENDER_LONG_SIDE = 1600;
+const JPEG_QUALITY = 80;
+
+/** ما خرج من المتصفّح: نصٌّ كامل، أو صفحاتٌ بعضُها صور، أو لا شيء. */
+export interface LocalExtract {
+  /** نصُّ المستند كلّه — حين قُرئت صفحاته كلُّها. */
+  text: string | null;
+  /**
+   * صفحةٌ بصفحة حين خلت بعضُها من طبقة نصّ: النصُّ لما قُرئ، و`null` لما
+   * رُسم صورةً. والصورُ في `images` بترتيب الـ`null` هنا.
+   */
+  pages?: (string | null)[];
+  images?: Blob[];
+}
+
+let mupdfLoad: Promise<typeof import('mupdf')> | null = null;
+
+/** المكتبة تُحمَّل مرّة. وما فشل تحميلُه يُعاد في المرّة التالية لا يُحفظ فشلُه. */
+function loadMupdf(): Promise<typeof import('mupdf')> {
+  if (!mupdfLoad) {
+    mupdfLoad = import('mupdf').catch((e) => {
+      mupdfLoad = null;
+      throw e;
+    });
+  }
+  return mupdfLoad;
+}
+
+/**
+ * يبدأ تحميل المكتبة قبل أن يُختار الملف.
+ *
+ * أربعةُ ميغابايت ونصف تُحمَّل عند أوّل PDF، فكانت تُضاف إلى انتظار أوّل
+ * مرفق. فتُطلب عند الضغط على «إرفاق ملف» أو فتح نافذة البدء: يختار المستخدم
+ * ملفَّه والمكتبةُ في الطريق. والفشل هنا صامت — الاستخراج يطلبها ثانيةً.
+ */
+export function preloadPdfReader(): void {
+  loadMupdf().catch(() => {});
+}
+
 const ARABIC = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
 /* صنفُ ما يُقرأ من اليسار داخل السطر العربي.
    والأرقامُ العربية‑الهندية (‏٠-٩) منه — وغيابُها كان يعكس كلَّ تاريخٍ ورقمِ
@@ -223,10 +287,11 @@ export function readableLocally(file: File): boolean {
  * الظنّ يُفسد الصحيحَ ليصلح المعطوب. فتُترك الأقواسُ كما رُمِّزت: المعنى
  * كاملٌ، والخللُ في الشكل وحده.
  */
-export async function extractPdfText(file: File): Promise<string | null> {
+export async function extractPdf(file: File, opts: { renderScanned?: boolean } = {}): Promise<LocalExtract> {
+  const renderScanned = opts.renderScanned ?? true;
   try {
     // تحميلٌ عند الطلب: قطعةٌ منفصلة لا تدخل حزمة الصفحة الأولى.
-    const mupdf = await import('mupdf');
+    const mupdf = await loadMupdf();
     const buf = new Uint8Array(await file.arrayBuffer());
     const doc = mupdf.Document.openDocument(buf, 'application/pdf');
     const pageCount = Math.min(doc.countPages(), MAX_PAGES);
@@ -378,22 +443,60 @@ export async function extractPdfText(file: File): Promise<string | null> {
     }
 
     /* التوحيد إلى NFC: بعض الخطوط تُخرج الهمزة حرفاً مركَّباً، فتصير الكلمة
-       الواحدة صورتين لا تتطابقان في بحثٍ ولا مقارنة. */
-    const text = pages
-      .map((l) => l.join('\n'))
-      .join('\n\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .replace(/[\u06CC\u06BE\u06A9\u06C1]/g, (c) => MISENCODED[c])
-      .normalize('NFC')
-      .trim();
+       الواحدة صورتين لا تتطابقان في بحثٍ ولا مقارنة. والتوحيد صفحةً صفحة،
+       لأن الحكم على كل صفحةٍ وحدها. */
+    const pageTexts = pages.map((l) =>
+      l
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/[\u06CC\u06BE\u06A9\u06C1]/g, (c) => MISENCODED[c])
+        .normalize('NFC')
+        .trim()
+    );
 
-    /* عتبةٌ لا صفر: صفحةٌ ممسوحة ضوئياً قد تحمل رقم صفحةٍ أو ترويسةً في طبقة
-       نصّ، فتخرج بضعةُ محارف تُوهم أن الملف قُرئ — ثم لا يجد المساعد شيئاً.
-       فما دون العتبة يُعدّ لا نصّ، ويُترك للخادم يقرأه بصرياً. */
-    return text.length >= 40 ? text : null;
+    /* **والحكم بالصفحة لا بالمستند.** كان المستند كلُّه يُقرأ أو لا يُقرأ:
+       عقدٌ من عشرين صفحة مكتوبة ومعه صفحةٌ ممسوحة واحدة — صكٌّ أو توقيع —
+       كان يُعدّ مقروءاً فتسقط تلك الصفحة من غير أن يعلم أحد، أو يُرسل كلُّه
+       إلى النموذج ليقرأ ما قُرئ. والآن ما قُرئ يُرسَل نصّاً، وما لم يُقرأ
+       يُرسم صورةً ويقرؤه الخادم وحده. */
+    const scanned = pageTexts.map((t, i) => (t.length < MIN_PAGE_TEXT ? i : -1)).filter((i) => i >= 0);
+    if (!scanned.length || !renderScanned) {
+      const text = pageTexts.filter((t) => t.length >= MIN_PAGE_TEXT).join('\n\n');
+      return { text: text || null };
+    }
+    // صورٌ أكثر من السقف: يقرأ الخادمُ الملفَّ كلَّه كما كان.
+    if (scanned.length > MAX_OCR_PAGES) return { text: null };
+
+    const images: Blob[] = [];
+    for (const i of scanned) images.push(renderPage(mupdf, doc.loadPage(i)));
+    return {
+      text: null,
+      pages: pageTexts.map((t, i) => (scanned.includes(i) ? null : t)),
+      images,
+    };
   } catch {
     // مكتبةٌ لم تُحمَّل، أو ملفٌّ معطوب، أو ذاكرةٌ ضاقت: يُرفع الملف ويتولّاه
     // الخادم. والرفع لا يتوقّف لأجل تحسينٍ في الكلفة.
-    return null;
+    return { text: null };
   }
+}
+
+/**
+ * نصُّ ما قُرئ من صفحات PDF وحده، بلا رسم — لأداة المقارنة: تقرأ ما في
+ * طبقة النصّ ولا ترسل صوراً إلى أحد. و`null` حين لا نصَّ يُعتدّ به.
+ */
+export async function extractPdfText(file: File): Promise<string | null> {
+  return (await extractPdf(file, { renderScanned: false })).text;
+}
+
+/** يرسم صفحةً صورةً لا يتجاوز طولُها الأطول `RENDER_LONG_SIDE`. */
+function renderPage(mupdf: typeof import('mupdf'), page: import('mupdf').Page): Blob {
+  const [x0, y0, x1, y1] = page.getBounds();
+  const longSide = Math.max(x1 - x0, y1 - y0) || 1;
+  // نقطةٌ لكل بكسل عند ١، وصفحةٌ صغيرة لا تُكبَّر أكثر من ثلاثة أضعاف.
+  const scale = Math.min(3, Math.max(1, RENDER_LONG_SIDE / longSide));
+  const pixmap = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false);
+  const jpeg = pixmap.asJPEG(JPEG_QUALITY);
+  pixmap.destroy();
+  return new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' });
 }

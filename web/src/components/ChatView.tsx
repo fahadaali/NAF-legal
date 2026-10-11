@@ -23,7 +23,8 @@ import SelectionToolbar, { type SelectionAnchor } from './SelectionToolbar';
 import SourceModal, { isOpenableCitation } from './SourceModal';
 import AttachmentViewer from './AttachmentViewer';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD, ICON_LG } from '../lib/icons';
-import { extractPdfText, readableLocally } from '../lib/extractText';
+import { preloadPdfReader } from '../lib/extractText';
+import { mapPool, uploadAttachment, UPLOAD_CONCURRENCY } from '../lib/uploadAttachment';
 
 interface Props {
   conversationId: string | null;
@@ -593,28 +594,30 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     if (!files?.length || !conversationId) return;
     setUploading(true);
     try {
-      for (const f of Array.from(files)) {
+      /* الشارات كلُّها أوّلاً، ثم المعالجة معاً بحدٍّ أقصى (`mapPool`).
+         كانت الملفات تُعالَج واحداً بعد واحد، وشارةُ الملف الخامس لا تظهر
+         حتى ينتهي الرابع — فيبدو كأنّ الاختيار لم يقع. */
+      const queued = Array.from(files).map((f) => ({
+        f,
         // معرِّفٌ محلّيّ يعيش حتى يردّ الخادم. و`local:` بادئةٌ لا تلتبس
         // بمعرِّف خادم: الإرسال يُسقط ما بقي منها ولا يرسلها.
-        const localId = `local:${f.name}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-        setAttachments((a) => [
-          ...a,
-          {
-            id: localId,
-            message_id: null,
-            filename: f.name,
-            mime: f.type,
-            size: f.size,
-            parse_status: 'uploading',
-            created_at: Date.now(),
-          },
-        ]);
+        localId: `local:${f.name}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      }));
+      setAttachments((a) => [
+        ...a,
+        ...queued.map(({ f, localId }) => ({
+          id: localId,
+          message_id: null,
+          filename: f.name,
+          mime: f.type,
+          size: f.size,
+          parse_status: 'uploading' as const,
+          created_at: Date.now(),
+        })),
+      ]);
+      await mapPool(queued, UPLOAD_CONCURRENCY, async ({ f, localId }) => {
         try {
-          /* الاستخراج قبل الرفع لا بعده: النصّ يسافر مع الملف في طلبٍ واحد،
-             فلا يبقى الصفّ ينتظر قراءةً ثانية. وما لا يُقرأ محلّياً يُرفع بلا
-             نصّ ويتولّاه الخادم — صورةً أو ممسوحاً ضوئياً. */
-          const local = readableLocally(f) ? await extractPdfText(f) : null;
-          const r = await api.uploadFile(conversationId, f, local);
+          const r = await uploadAttachment(conversationId, f);
           setAttachments((a) =>
             a.map((x) =>
               x.id === localId
@@ -628,7 +631,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           setAttachments((a) => a.filter((x) => x.id !== localId));
           alert(e.message ?? 'فشل رفع الملف');
         }
-      }
+      });
     } finally {
       setUploading(false);
     }
@@ -1078,7 +1081,10 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             <button
               className="icon-btn"
               title="إرفاق ملف"
-              onClick={() => fileInput.current?.click()}
+              onClick={() => {
+                preloadPdfReader();
+                fileInput.current?.click();
+              }}
               disabled={uploading}
             >
               {uploading ? <span className="spinner" /> : <Icon.attachment size={ICON_MD} aria-hidden />}
