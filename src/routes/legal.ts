@@ -10,6 +10,7 @@ import {
   parseJsonl,
   summarizeErrors,
   diffChunks,
+  diffStaged,
   listLawChanges,
   upsertLegalChunks,
   embedPending,
@@ -357,6 +358,27 @@ app.post('/commit', requireAdmin, async (c) => {
     await rollbackBatch(c.env, batchId, reason);
     await audit(c, 'legal.import_rolled_back', batchId, { reason });
     return c.json({ ok: false, rolled_back: true, error: BATCH_MESSAGES.rolledBack }, 500);
+  }
+});
+
+/**
+ * المقارنة على ما جُمع — خطوةً خطوة، ولا تكتب شيئاً.
+ *
+ * بديلُ `?dry_run=1` للملفات الكبيرة: ذاك يحمل الملف كاملاً في طلبٍ واحد، وهذا
+ * يقرأ الأسطر من الدفعة المجموعة. `after` آخرُ ما قوبل (يبدأ من غيابه)، و`room`
+ * كم تغييراً يُفصَّل بعد. ويُنادى حتى يعود `done`، ومعه الغائبُ عن الملف كلِّه.
+ */
+app.post('/diff', requireAdmin, async (c) => {
+  const batchId = c.req.query('batch') ?? '';
+  if (!batchId) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
+  // رقمٌ أو لا شيء: قيمةٌ معطوبة تعود إلى الافتراضي ولا تُربط `NaN`.
+  const int = (v: string | undefined) => (v !== undefined && Number.isInteger(Number(v)) ? Number(v) : undefined);
+  try {
+    const step = await diffStaged(c.env, batchId, { after: int(c.req.query('after')), room: int(c.req.query('room')) });
+    return c.json({ ok: true, ...step });
+  } catch (e) {
+    if (e instanceof BatchError) return c.json({ ok: false, error: e.message, code: e.code }, 404);
+    throw e;
   }
 });
 
