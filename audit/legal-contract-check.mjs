@@ -41,7 +41,7 @@ const lib = await (async () => {
     // مدخلٌ في الذاكرة لا ملفٌّ يُكتب في `src/`: هذا فحصٌ لا يترك أثراً في
     // شجرة المصدر. و`resolveDir` يجعل `./legal` و`./rag` تُحلّان من مكانهما.
     stdin: {
-      contents: "export * from './legal';\nexport { retrieve, formatRagContext } from './rag';\n",
+      contents: "export * from './legal';\nexport { retrieve, formatRagContext } from './rag';\nexport { outputStyleInstruction, LAWYER_NOTES_CONTRACT } from './prompts';\nexport { stripLawyerNotes } from './draftText';\n",
       resolveDir: path.join(ROOT, 'src', 'lib'),
       loader: 'ts',
     },
@@ -2950,6 +2950,41 @@ await check('٣١ · المقارنة على ما جُمع خطوةً خطوة �
   // ودفعةٌ أُلغيت لا يُقارَن ما فيها — يُقال إن الرفع انقطع.
   await lib.rollbackBatch(env, 'batch-diff', 'aborted');
   await assert.rejects(() => lib.diffStaged(env, 'batch-diff'), (e) => e instanceof lib.BatchError && e.code === 'missing');
+});
+
+// ═══ ٣٢) ما يُكتب للمحامي لا يصل إلى الدائرة ═══
+//
+// مذكرةٌ خرجت إلى الدائرة وفيها «ومن أجل صوت الأمانة أبين لفضيلتكم أنني لم
+// أتحقق من المادة». كتبها النموذج لأن التوجيه أمره أن يصرّح بحال المادة «في
+// متن الإجابة»، وقسمُ «ملاحظات للمحامي» — وهو وحده ما يُحذف عند التصدير —
+// كان محصوراً في أربعة أنواع ليست منها المذكرة.
+
+await check('٣٢ · تنبيهُ المادة يُوجَّه إلى «ملاحظات للمحامي» لا إلى متن المستند', async () => {
+  const context = lib.formatRagContext(
+    await lib.retrieve(env, ['يُعمل بهذا النظام الجديد في التاريخ المحدّد لنفاذه'], 10)
+  );
+  assert.match(context, /^تنبيه:/m, 'السياق بلا مادةٍ عليها تنبيه — الفحص لا يمتحن شيئاً');
+  assert.ok(!/في متن الإجابة/.test(context), 'السياق ما زال يأمر بنقل التنبيه إلى المتن');
+  assert.match(context, /«ملاحظات للمحامي» لا في متن المستند/, 'السياق لا يوجّه التنبيه إلى قسم المحامي');
+  const prompts = readFileSync(path.join(ROOT, 'src', 'lib', 'prompts.ts'), 'utf8');
+  assert.ok(!/صرّح بذلك بدل التخمين/.test(prompts), 'BASE ما زال يأمر بالتصريح دون أن يقول أين');
+  assert.ok(!/فانقل التنبيه في إجابتك/.test(prompts), 'BASE ما زال يأمر بنقل التنبيه في الإجابة');
+  const fiqh = readFileSync(path.join(ROOT, 'src', 'lib', 'external.ts'), 'utf8');
+  assert.ok(!/انقله مع النسبة/.test(fiqh), 'سياق التدعيم الفقهي ما زال يأمر بنقل لفظ التنبيه');
+});
+
+await check('٣٢ · وعقدُ القسم يُلحق بكل قالب — ولو حفظت الإدارة قالباً بلا القسم', async () => {
+  const contract = lib.LAWYER_NOTES_CONTRACT;
+  assert.ok(lib.outputStyleInstruction(null, null).includes(contract), 'القالب الافتراضي بلا عقد القسم');
+  assert.ok(lib.outputStyleInstruction('شركة', 'قالبٌ مخصّص بلا قسم الملاحظات').includes(contract), 'قالب الإدارة أسقط عقد القسم');
+  assert.ok(!/وحدها/.test(contract), 'القسم ما زال محصوراً في أنواعٍ بعينها');
+  assert.match(contract, /`## ملاحظات للمحامي`/, 'العقد لا يكتب العنوان بحرفه المسجّل');
+  assert.match(contract, /لم يتأكّد نصُّها النافذ/, 'العقد لا يذكر المواد غير المؤكَّدة');
+  assert.match(contract, /خانةً بين معقوفين/, 'العقد لا يضع خانةً مكان نصٍّ غير مؤكَّد');
+  // والحذف عند التصدير يأخذ ما كُتب في القسم كلّه.
+  const draft = '# مذكرة رد\n\nأصحاب الفضيلة…\n\nوالله يحفظكم ويرعاكم،\n\n## ملاحظات للمحامي\n\n- المادة (77): تنبيه: نصٌّ أصليّ لم يُدمج تعديله — أحِل إلى سجل التعديلات.';
+  const out = lib.stripLawyerNotes(draft);
+  assert.ok(!/تنبيه|سجل التعديلات|ملاحظات للمحامي/.test(out), 'التنبيه بقي في المصدَّر: ' + out);
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');

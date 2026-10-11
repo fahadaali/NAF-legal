@@ -5,6 +5,7 @@ import { zip } from '../lib/zip';
 import { buildDocx } from '../lib/docx';
 import { loadDocTemplate, loadLetterhead } from '../lib/docTemplate';
 import { CONSULTATION_LABELS } from '../lib/prompts';
+import { stripLawyerNotes } from '../lib/draftText';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -107,7 +108,8 @@ app.get('/:folderId/export', async (c) => {
     try {
       files[name] = buildDocx(`${label} — ${d.conv_title ?? ''}`, String(d.content ?? ''), { template, letterhead });
     } catch {
-      files[name.replace('.docx', '.txt')] = String(d.content ?? '');
+      // البديل النصّي يخرج من المنصة كما يخرج Word، فلا يحمل «ملاحظات للمحامي».
+      files[name.replace('.docx', '.txt')] = stripLawyerNotes(String(d.content ?? ''));
     }
     i++;
   }
