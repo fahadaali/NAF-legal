@@ -640,7 +640,9 @@ function QueueList({
           <div className="modal-card confirm-card" {...modalCardProps}>
             <div className="modal-head">
               <span className="modal-title">اعتماد المحدَّد</span>
-              <button className="modal-close" onClick={() => setAsking(false)} title="إغلاق">×</button>
+              <button className="modal-close" onClick={() => setAsking(false)} title="إغلاق" aria-label="إغلاق">
+                <Icon.close size={ICON_SM} aria-hidden />
+              </button>
             </div>
             <div className="modal-body confirm-body">
               <p>

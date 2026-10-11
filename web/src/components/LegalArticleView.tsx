@@ -390,7 +390,9 @@ export function AmendmentWindow({ id, onClose }: { id: string; onClose: () => vo
       <div className="modal-card amendment-card" {...modalCardProps}>
         <div className="modal-head">
           <span className="modal-title">سجل التعديلات</span>
-          <button className="modal-close" onClick={onClose} title="إغلاق">×</button>
+          <button className="modal-close" onClick={onClose} title="إغلاق" aria-label="إغلاق">
+            <Icon.close size={ICON_SM} aria-hidden />
+          </button>
         </div>
 
         <div className="amendment-tabs" role="tablist">
