@@ -41,7 +41,7 @@ const lib = await (async () => {
     // مدخلٌ في الذاكرة لا ملفٌّ يُكتب في `src/`: هذا فحصٌ لا يترك أثراً في
     // شجرة المصدر. و`resolveDir` يجعل `./legal` و`./rag` تُحلّان من مكانهما.
     stdin: {
-      contents: "export * from './legal';\nexport { retrieve, formatRagContext } from './rag';\nexport { outputStyleInstruction, LAWYER_NOTES_CONTRACT } from './prompts';\nexport { stripLawyerNotes } from './draftText';\n",
+      contents: "export * from './legal';\nexport { retrieve, formatRagContext } from './rag';\nexport { outputStyleInstruction, LAWYER_NOTES_CONTRACT, systemPromptFor } from './prompts';\nexport { stripLawyerNotes } from './draftText';\n",
       resolveDir: path.join(ROOT, 'src', 'lib'),
       loader: 'ts',
     },
@@ -2985,6 +2985,40 @@ await check('٣٢ · وعقدُ القسم يُلحق بكل قالب — ولو
   const draft = '# مذكرة رد\n\nأصحاب الفضيلة…\n\nوالله يحفظكم ويرعاكم،\n\n## ملاحظات للمحامي\n\n- المادة (77): تنبيه: نصٌّ أصليّ لم يُدمج تعديله — أحِل إلى سجل التعديلات.';
   const out = lib.stripLawyerNotes(draft);
   assert.ok(!/تنبيه|سجل التعديلات|ملاحظات للمحامي/.test(out), 'التنبيه بقي في المصدَّر: ' + out);
+});
+
+// ═══ ٣٣) ما يُقدَّم إلى الدائرة: ألفاظُ العرف، واستشهادٌ مختصر، ووقائعُ متصلة ═══
+//
+// الأصل تعديلٌ أجراه المحامي على «صحيفة الدعوى» من لوحة الإدارة، فعُمِّم على
+// الأنواع: المتن يستشهد بالنظام والمادة دون المراسيم، ونسخةُ المادة المعدَّلة
+// لا تضيع بل تنتقل إلى «ملاحظات للمحامي»؛ والوقائع والدفوع فقراتٌ بأسانيدها؛
+// ولا يُخاطَب القاضي بما لم يجرِ به العرف في المملكة.
+
+await check('٣٣ · المتن يستشهد بالنظام والمادة، ونسخةُ المعدَّلة في «ملاحظات للمحامي»', async () => {
+  const claim = lib.systemPromptFor('litigation.statement_of_claim');
+  assert.ok(!/وانقل سطر الإسناد كما ورد/.test(claim), 'BASE ما زال يأمر بنقل سطر الإسناد إلى المتن');
+  assert.match(claim, /دون نقل المراسيم/, 'BASE لا يقصر الاستشهاد على النظام والمادة');
+  assert.match(lib.LAWYER_NOTES_CONTRACT, /بصيغتها بعد/, 'نسخةُ المادة المعدَّلة لا موضع لها في قسم المحامي');
+  const context = lib.formatRagContext(
+    await lib.retrieve(env, ['بدل الاغتراب للمبتعث الموفَد إلى خارج المملكة'], 10)
+  );
+  assert.match(context, /بصيغتها بعد/, 'السياق فقد نسخة المادة — فلا يعرفها المساعد ليضعها في الملاحظات');
+  assert.ok(!/فاذكرهما في الاستشهاد كما وردا/.test(context), 'السياق ما زال يأمر بالصفحة والنسخة في المتن');
+  assert.match(context, /باسم النظام ورقم المادة وحدهما/, 'السياق لا يقصر استشهاد المتن على النظام والمادة');
+  // والاستدلال النظامي أداةُ بحثٍ للمحامي: جدوله يطلب الأداة والتاريخ نصّاً.
+  assert.match(lib.systemPromptFor('legal_basis'), /أداةُ الإصدار وتاريخُها/);
+});
+
+await check('٣٣ · وما يُقدَّم إلى الدائرة فقراتٌ بأسانيدها، بألفاظ العرف القضائي', async () => {
+  for (const key of ['litigation.statement_of_claim', 'litigation.reply_memo', 'litigation.objection']) {
+    assert.match(lib.systemPromptFor(key), /على شكل فقرة وليس نقاطاً/, `${key}: لا يطلب الفقرات`);
+    assert.match(lib.systemPromptFor(key), /اتصالاً وثيقاً/, `${key}: الأسانيد منفصلة عن الوقائع`);
+  }
+  const style = lib.outputStyleInstruction(null, null);
+  for (const word of ['الدائرة الموقرة', 'سيادتكم', 'ألتمس', 'عدالتكم']) {
+    assert.ok(style.includes(`«${word}»`), `«${word}» ليست في قائمة الممنوع`);
+  }
+  assert.match(style, /في غير التماس إعادة النظر/, '«ألتمس» مُنعت حتى في الالتماس');
 });
 
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
