@@ -2,7 +2,7 @@
 import { Hono, type Context } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
-import { extractText, ocrPages } from '../lib/extract';
+import { extractText, ocrPages, TRUNCATED_NOTE, UNREAD_PAGE_NOTE } from '../lib/extract';
 import { buildDocx, annotateDates } from '../lib/docx';
 import { splitDocTitle, stripLawyerNotes, toPlainText } from '../lib/draftText';
 import { loadDocTemplate, loadLetterhead, LETTERHEAD_KEY } from '../lib/docTemplate';
@@ -78,10 +78,16 @@ app.post('/upload/:conversationId', async (c) => {
      يستقيم من ذلك يُترك ويُقرأ الملفُّ كلُّه كما كان. */
   const layout = clientText ? null : parseLayout(form);
 
+  /* الملفُّ نفسه رُفع من قبل وقُرئ: يأخذ نصَّه فوراً ولا يُقرأ ثانيةً.
+     ولا يُعاد نصٌّ ناقص — قُصّ أو غابت منه صفحة — فقراءةٌ جديدة قد تُتمّه. */
+  const contentHash = await sha256Hex(buf);
+  const reused = clientText ? null : await reusableText(c.env, user.id, contentHash);
+  const knownText = clientText || reused || '';
+
   // `message_id` يبقى فارغاً: مرفوعٌ في صندوق الكتابة ولم يُرسَل بعد.
   await c.env.DB.prepare(
-    `INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parsed_text, parse_status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parsed_text, parse_status, content_hash, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
@@ -90,15 +96,16 @@ app.post('/upload/:conversationId', async (c) => {
       file.name,
       file.type,
       file.size,
-      clientText || null,
-      clientText ? 'ready' : 'pending',
+      knownText || null,
+      knownText ? 'ready' : 'pending',
+      contentHash,
       Date.now()
     )
     .run();
 
   // ما قُرئ محلّياً لا يُقرأ ثانيةً. وما لم يُقرأ — صورةٌ أو ممسوحٌ ضوئياً —
   // يتولّاه الخادم بصرياً: صورُ صفحاته وحدها إن جاءت، وإلا الملفُّ كلُّه.
-  if (!clientText) {
+  if (!knownText) {
     c.executionCtx.waitUntil(
       layout ? runPageOcr(c.env, id, layout) : runExtract(c.env, id, buf, file.type, file.name)
     );
@@ -109,9 +116,36 @@ app.post('/upload/:conversationId', async (c) => {
     filename: file.name,
     size: file.size,
     mime: file.type,
-    parse_status: clientText ? 'ready' : 'pending',
+    parse_status: knownText ? 'ready' : 'pending',
   });
 });
+
+async function sha256Hex(buf: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** ذيولٌ يكتبها الاستخراج في نصٍّ ناقص (`src/lib/extract.ts`) — ونصٌّ يحملها لا يُعاد. */
+const INCOMPLETE_MARKS = [TRUNCATED_NOTE.trim(), UNREAD_PAGE_NOTE];
+
+/**
+ * نصُّ ملفٍّ بالبصمة نفسها رفعه **المستخدمُ نفسه** وقُرئ كاملاً، أو `null`.
+ * والقيد بالمستخدم مقصود: انظر `migrations/0033_attachment_content_hash.sql`.
+ */
+async function reusableText(env: Env, userId: string, hash: string): Promise<string | null> {
+  const row = await env.DB.prepare(
+    `SELECT a.parsed_text AS t FROM attachments a
+     JOIN conversations c ON c.id = a.conversation_id
+     WHERE a.content_hash = ? AND c.user_id = ? AND a.parse_status = 'ready'
+       AND a.parsed_text IS NOT NULL AND a.parsed_text != ''
+     ORDER BY a.created_at DESC LIMIT 1`
+  )
+    .bind(hash, userId)
+    .first<{ t: string }>()
+    .catch(() => null);
+  if (!row?.t || INCOMPLETE_MARKS.some((m) => row.t.includes(m))) return null;
+  return row.t;
+}
 
 /**
  * يستخرج نصّ المرفق ويَسِم حالَه، ولا يترك صفّاً معلَّقاً مهما وقع.
@@ -195,7 +229,7 @@ async function runPageOcr(env: Env, id: string, layout: PageLayout): Promise<voi
     const known = layout.pages.filter((p): p is string => !!p?.trim());
     if (known.length) {
       text = layout.pages
-        .map((p) => (p === null ? '…(تعذّرت قراءة هذه الصفحة)' : p))
+        .map((p) => (p === null ? UNREAD_PAGE_NOTE : p))
         .filter((p) => p.trim())
         .join('\n\n')
         .slice(0, MAX_TEXT);

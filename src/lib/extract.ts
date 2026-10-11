@@ -105,7 +105,7 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 const EXTRACT_MAX_TOKENS = 32000;
 
 /** ذيلٌ يقوله النصُّ عن نفسه حين بلغ النداءُ سقفه — بصيغة ذيل القصّ في `chat.ts`. */
-const TRUNCATED_NOTE = '\n…(مقتطع)';
+export const TRUNCATED_NOTE = '\n…(مقتطع)';
 
 const TRANSCRIBE = 'استخرج كامل النص المكتوب في هذا الملف حرفيًا وبالترتيب، دون تلخيص أو تعليق. أعِد النص فقط.';
 
@@ -195,7 +195,7 @@ export async function ocrPages(env: Env, images: { bytes: ArrayBuffer; mime: str
   return out;
 }
 
-const UNREAD_PAGE_NOTE = '…(تعذّرت قراءة هذه الصفحة)';
+export const UNREAD_PAGE_NOTE = '…(تعذّرت قراءة هذه الصفحة)';
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
