@@ -2901,6 +2901,57 @@ await check('٣٠ · وسطرٌ جُمع قبل ترقيةٍ أضافت حقول
   assert.deepEqual({ ...stored }, { source_kind: null, source_pages: null });
 });
 
+// ── ٣١ · المقارنة على ما جُمع — خطوةً خطوة، ونتيجتُها نتيجةُ المقارنة على الملف كاملاً ──
+//
+// المقارنة كانت تحمل الملف كاملاً في طلبٍ واحد، فملفٌّ فوق حدّ جسم الطلب لا يصل
+// أبداً. والآن يُجمع أوّلاً ثم يُقابَل من الدفعة المجموعة شريحةً شريحة. فالعقد هنا
+// أن مجموع الخطوات هو المقارنة نفسها: الجديد والمتغيّر وما لم يتغيّر، والغائب.
+
+await check('٣١ · المقارنة على ما جُمع خطوةً خطوة تساوي المقارنة على الملف كاملاً، ولا تكتب شيئاً', async () => {
+  // التاسعة في القاعدة بأربع موادّ: ملفٌّ يغيّر واحدة ويُبقي واحدة ويضيف اثنتين ويُغيب اثنتين.
+  const file = lib.parseJsonl([
+    N9({ id: 'تاسعة/1', article_no: 1, text: 'نصٌّ رابعٌ للمادة الأولى في مقارنةٍ لا تكتب.' }),
+    N9({ id: 'تاسعة/2', article_no: 2, text: 'لا يزاول الوساطة العقارية إلا مرخَّصٌ له.' }),
+    N9({ id: 'تاسعة/7', article_no: 7, text: 'مادةٌ جديدةٌ في مقارنةٍ لا تكتب.' }),
+    N10({ id: 'عاشرة/9', article_no: 9, text: 'مادةٌ جديدةٌ للعاشرة في مقارنةٍ لا تكتب.' }),
+  ].join('\n')).rows;
+  const whole = await lib.diffChunks(env, file);
+  const before = q("SELECT * FROM legal_chunks WHERE law_id IN ('ninth','tenth') ORDER BY id");
+  await lib.stageChunks(env, 'batch-diff', file.slice(0, 2), { lines: 2, failed: 0 });
+  await lib.stageChunks(env, 'batch-diff', file.slice(2), { lines: 2, failed: 0 });
+
+  const sum = { added: 0, changed: 0, unchanged: 0, rows: 0, changes: [] };
+  let step = { after: -1, done: false };
+  let steps = 0;
+  while (!step.done) {
+    step = await lib.diffStaged(env, 'batch-diff', { after: step.after, room: 100 - sum.changes.length, limit: 1 });
+    steps++;
+    for (const k of ['added', 'changed', 'unchanged', 'rows']) sum[k] += step[k];
+    sum.changes.push(...step.changes);
+    assert.equal(step.remaining, file.length - sum.rows, 'ما بقي لا يطابق ما لم يُقابَل');
+    if (!step.done) assert.equal(step.missing, undefined, 'الغائبُ قيس على شريحةٍ لا على الملف');
+  }
+  assert.equal(steps, file.length, 'الشرائح لم تمرّ على الأسطر سطراً سطراً');
+  assert.deepEqual(
+    { added: sum.added, changed: sum.changed, unchanged: sum.unchanged, missing: step.missing },
+    { added: whole.added, changed: whole.changed, unchanged: whole.unchanged, missing: whole.missing },
+  );
+  assert.ok(whole.added > 0 && whole.changed > 0 && whole.unchanged > 0 && whole.missing > 0, 'الملف لا يمتحن الأصناف كلّها');
+  assert.deepEqual(sum.changes.map((ch) => ch.id), whole.changes.map((ch) => ch.id));
+  assert.deepEqual([...step.missing_ids].sort(), [...whole.missing_ids].sort());
+  assert.deepEqual([...step.law_ids].sort(), [...whole.law_ids].sort());
+  assert.deepEqual(q("SELECT * FROM legal_chunks WHERE law_id IN ('ninth','tenth') ORDER BY id"), before, 'المقارنة كتبت في القاعدة');
+
+  // و`room` يقف عند سقف التفصيل والعدُّ كامل.
+  const capped = await lib.diffStaged(env, 'batch-diff', { room: 0 });
+  assert.equal(capped.changes.length, 0);
+  assert.equal(capped.changed, whole.changed);
+
+  // ودفعةٌ أُلغيت لا يُقارَن ما فيها — يُقال إن الرفع انقطع.
+  await lib.rollbackBatch(env, 'batch-diff', 'aborted');
+  await assert.rejects(() => lib.diffStaged(env, 'batch-diff'), (e) => e instanceof lib.BatchError && e.code === 'missing');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

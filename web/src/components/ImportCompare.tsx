@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { type LegalImportDiff } from '../lib/api';
 import { formatNumber } from '../lib/format';
+import { Icon, ICON_SM } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
 
 /** ألفاظ الحالة كما تظهر في بقيّة اللوحة — لا لفظان لمعنى واحد. */
@@ -46,7 +47,9 @@ export function ImportCompare({
           <span className="modal-title">
             هذا النظام مستورد سابقاً — <bdi>{filename}</bdi>
           </span>
-          <button className="modal-close" onClick={onCancel} title="إغلاق">×</button>
+          <button className="modal-close" onClick={onCancel} title="إغلاق" aria-label="إغلاق">
+            <Icon.close size={ICON_SM} aria-hidden />
+          </button>
         </div>
 
         <div className="modal-body intake-body">

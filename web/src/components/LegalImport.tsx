@@ -10,7 +10,14 @@
 // وما في المتن من أيقونات حالٍ لا فعل: شريطا الوقوف — انتهاء الجلسة و«لم يكتمل
 // استيراد» — ولونُ الحال لا يُقال بلونه وحده.
 import { useEffect, useRef, useState } from 'react';
-import { api, SessionExpired, type LegalImportDiff, type LegalImportRecord, type LegalImportReport } from '../lib/api';
+import {
+  api,
+  isNetworkError,
+  SessionExpired,
+  type LegalImportDiff,
+  type LegalImportRecord,
+  type LegalImportReport,
+} from '../lib/api';
 import { renewSessionInWindow } from '../lib/session';
 import { ImportCompare } from './ImportCompare';
 import { formatDate } from '../lib/format';
@@ -86,6 +93,11 @@ interface PendingImport {
   parts: number;
   /** `commit` — جُمع كلُّه وبدأت كتابتُه، وقرارُ الحذف فيه مأخوذ. */
   phase: 'staging' | 'commit';
+  /**
+   * أُجيب سؤالُ المقارنة. والمقارنة بعد الجمع لا قبله، فانقطاعٌ قبل الجواب يعيدها
+   * من المجموع عند الإكمال. وغيابُه موضعٌ حُفظ قبل هذا الترتيب — قورن قبل أن يُجمع.
+   */
+  compared?: boolean;
   prune?: boolean;
   staged?: number;
   orphansKept?: number;
@@ -129,10 +141,8 @@ async function sameFile(file: File, record: PendingImport): Promise<boolean> {
   return file.name === record.name && file.size === record.size && file.lastModified === record.lastModified;
 }
 
-/** انقطاع الشبكة: `fetch` يرمي `TypeError` ولا يردّ شيئاً. */
-function isNetworkError(e: unknown): boolean {
-  return e instanceof TypeError;
-}
+/** سقفُ ما يُفصَّل من التغييرات في نافذة المقارنة — سقفُ تقرير الخادم نفسه. */
+const CHANGES_SHOWN = 100;
 
 /** جملة انقطاع الاتصال — المسجَّلة، وهي في هذه الشاشة منذ قبل. */
 const NETWORK_ERROR = 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة';
@@ -299,6 +309,39 @@ export function LegalImport() {
   useEffect(loadHistory, []);
 
   /**
+   * المقارنة على ما جُمع — مجموعُ خطواتها، وتفصيلُ التغييرات حتى سقف التقرير.
+   *
+   * والغائبُ من الخطوة الأخيرة وحدها: يُقاس على الملف كلِّه لا على شريحة.
+   */
+  const compareStaged = async (
+    batchId: string,
+    onStep: (done: number, total: number) => void
+  ): Promise<LegalImportDiff> => {
+    const diff: LegalImportDiff = {
+      added: 0, changed: 0, unchanged: 0, missing: 0, missing_ids: [], changes: [], changes_truncated: 0, law_ids: [],
+    };
+    let after = -1;
+    let seen = 0;
+    for (;;) {
+      const step = await withSession(() => api.legalDiff(batchId, after, CHANGES_SHOWN - diff.changes.length));
+      diff.added += step.added;
+      diff.changed += step.changed;
+      diff.unchanged += step.unchanged;
+      diff.changes.push(...step.changes);
+      seen += step.rows;
+      after = step.after;
+      onStep(seen, seen + step.remaining);
+      if (step.done) {
+        diff.missing = step.missing ?? 0;
+        diff.missing_ids = step.missing_ids ?? [];
+        diff.law_ids = step.law_ids ?? [];
+        diff.changes_truncated = Math.max(0, diff.changed - diff.changes.length);
+        return diff;
+      }
+    }
+  };
+
+  /**
    * يستورد ملفاً واحداً — من أوّله، أو من موضعٍ محفوظ إن جاء `resume`.
    *
    * وحدة «الكل أو لا شيء» هي الملف لا الاختيار كلّه: نظامٌ نصفه مستورد أسوأ
@@ -313,42 +356,21 @@ export function LegalImport() {
     }
     const parts = splitParts(lines);
     const options = resume?.options ?? { buildEmbed, partial, correction };
+    // اسمُ الملف في منطقة الإفلات من أوّل لحظة — والإكمالُ قد يبدأ بالمقارنة أو الكتابة لا بالجمع.
+    setNow({ name: file.name, file: index + 1, files: count, batch: 0, batches: 0 });
 
     let record: PendingImport;
     if (resume) {
-      // المقارنة وقرارها وقعا قبل الانقطاع، فلا يُسأل عنهما ثانيةً.
       record = resume;
     } else {
-      /* مقارنةٌ قبل الكتابة، بالملف كاملاً لا مقطّعاً: «الغائب عن الملف»
-         يُحسب على مستوى النظام، ودفعةٌ من ألفي سطر تجعل سائره غائباً.
-         وإن رُفض الملف في المقارنة لم نسأل شيئاً: الاستيراد التالي يردّ
-         التقرير نفسه، ورسالةُ الرفض تُقال مرّة لا مرّتين. */
-      setNow({ name: file.name, file: index + 1, files: count, batch: 0, batches: 0 });
-      const preview = await withSession(() =>
-        api.importLegal(lines, file.name, { buildEmbed: options.buildEmbed, partial: options.partial, dryRun: true })
-      );
-      /* والوضعُ الصارم صارمٌ على الملف كلِّه لا على جزئه (§4-٦): المقارنة قرأت
-         الأسطر كلَّها، فإن رُفض منها سطرٌ لم يُكتب شيء. وكان الجزءُ الذي يحمله
-         يُرفض وما قبله مكتوب — نظامٌ نصفُه مستورد، وهو ما وُضع الصارم لمنعه.
-         وأرقامُ الأسطر هنا من الملف كاملاً، فلا تُزاح. */
-      if (!options.partial && preview.ok && (preview.failed ?? 0) > 0) {
-        return {
-          name: file.name, ok: false, inserted: 0, updated: 0,
-          report: { ...preview, ok: false, error: 'أسطر غير صالحة — لم يُكتب شيء' },
-        };
-      }
-      const diff = preview.ok ? preview.diff : undefined;
-      if (diff && (diff.changed > 0 || diff.unchanged > 0)) {
-        const apply = await new Promise<boolean>((decide) => setConflict({ filename: file.name, diff, decide }));
-        setConflict(null);
-        if (!apply) {
-          return { name: file.name, ok: true, cancelled: true, inserted: 0, updated: 0 };
-        }
-      }
+      /* الملف يُجمع أوّلاً ثم يُقارَن مما جُمع — لا يُرسل كاملاً في طلبٍ واحد.
+         ذاك الطلب كان يحمل الملف كلَّه للمقارنة، فملفٌّ فوق حدّ جسم الطلب أو ذاكرةِ
+         الـWorker لا يصل أبداً، والشاشة تدور على ردٍّ لا يأتي. والجمعُ لا يمسّ
+         القاعدة، فإلغاءُ المقارنة يُسقط ما جُمع كأنه لم يُرفع.
 
-      /* معرّفٌ واحد لأجزاء الملف كلّها، وبصمتُه معها. بهما يُجمع الملف جانباً، ويُقرأ
+         معرّفٌ واحد لأجزاء الملف كلّها، وبصمتُه معها. بهما يُجمع الملف جانباً، ويُقرأ
          في السجلّ سطراً واحداً، وتُؤخذ صورُ ما يُكتب فوقه. ويُحفظ الموضع قبل أوّل
-         جزء: انقطاعٌ فيه يُكمَل من الجزء الأوّل بلا مقارنةٍ ثانية. */
+         جزء: انقطاعٌ فيه يُكمَل من الجزء الأوّل. */
       record = {
         batchId: newBatchId(),
         name: file.name,
@@ -359,6 +381,7 @@ export function LegalImport() {
         partsDone: 0,
         parts: parts.length,
         phase: 'staging',
+        compared: false,
         totals: { built: 0, skipped: 0, withheld: 0, amendmentPending: 0, unstamped: 0 },
         summary: [],
       };
@@ -367,8 +390,10 @@ export function LegalImport() {
     const { batchId, sha256, totals, summary } = record;
 
     /* ١) الأجزاء تُجمع جانباً ولا يمسّ القاعدةَ منها شيء حتى يكتمل الملف (§4-٦).
-       فرفضٌ هنا لا يترك أثراً: يُلغى ما جُمع، ويُقال إن شيئاً لم يُكتب. وانقطاعُ
-       الشبكة لا يُلغي: ما جُمع يبقى في الخادم، والموضع محفوظ ليكمل منه. */
+       فرفضٌ هنا لا يترك أثراً: يُلغى ما جُمع، ويُقال إن شيئاً لم يُكتب. والصارمُ
+       صارمٌ على الملف كلِّه بهذا: جزءٌ فيه سطرٌ مرفوض يُسقط ما جُمع قبله، وتُقال
+       أخطاؤه بأرقامها في الملف. وانقطاعُ الشبكة لا يُلغي: ما جُمع يبقى في الخادم،
+       والموضع محفوظ ليكمل منه. */
     if (record.phase === 'staging') {
       try {
         for (let p = record.partsDone; p < parts.length; p++) {
@@ -422,7 +447,26 @@ export function LegalImport() {
     }
 
     try {
-      /* ٢) ما سيقع، ومنه سؤالُ الحذف قبل الكتابة (§8) — والحذفُ يقع مع كل نظامٍ وهو
+      /* ٢) المقارنة مما جُمع، خطوةً خطوة — ثم سؤالُها قبل أيّ كتابة. والإلغاء هنا
+         يُسقط ما جُمع: لم يُكتب منه شيء. وتُسأل مرّة: الجوابُ محفوظ في الموضع. */
+      if (record.phase === 'staging' && record.compared === false) {
+        const diff = await compareStaged(batchId, (done, total) =>
+          setNow({ name: file.name, file: index + 1, files: count, batch: done, batches: total })
+        );
+        if (diff.changed > 0 || diff.unchanged > 0) {
+          const apply = await new Promise<boolean>((decide) => setConflict({ filename: file.name, diff, decide }));
+          setConflict(null);
+          if (!apply) {
+            await api.legalAbort(batchId).catch(() => {});
+            clearPending();
+            return { name: file.name, ok: true, cancelled: true, inserted: 0, updated: 0 };
+          }
+        }
+        record.compared = true;
+        savePending(record);
+      }
+
+      /* ٣) ما سيقع، ومنه سؤالُ الحذف قبل الكتابة (§8) — والحذفُ يقع مع كل نظامٍ وهو
          مجمَّد، فلا يُقرأ نظامٌ حُذف بعضُه. ولا يُعرض على ملفٍّ تُخطّيت منه أسطر:
          السطر المتخطّى غائبٌ عن الملف وحاضرٌ في القاعدة، وتُقال الجملة التي تقول لماذا.
          ويُسأل مرّةً: الإكمالُ بعد بدء الكتابة يحمل الجواب في الموضع المحفوظ. */
@@ -445,7 +489,7 @@ export function LegalImport() {
       const prune = record.prune ?? false;
       const staged = record.staged ?? 0;
 
-      /* ٣) الكتابةُ خطوةً خطوة حتى تتمّ: نظاماً نظاماً، وكلُّ نظامٍ يغيب عن البحث وهو
+      /* ٤) الكتابةُ خطوةً خطوة حتى تتمّ: نظاماً نظاماً، وكلُّ نظامٍ يغيب عن البحث وهو
          يُكتب ويعود كاملاً. وما تعذّر يُردّ في الخادم كلُّه ويرمي بجملته. */
       let progress = await withSession(() => api.legalCommit(batchId, { apply: true, prune }));
       while (!progress.done) {

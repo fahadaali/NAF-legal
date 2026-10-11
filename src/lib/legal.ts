@@ -1481,39 +1481,7 @@ async function fetchExisting(env: Env, ids: string[]): Promise<Map<string, Exist
  * ستُضاف، وكم ستتغيّر وبأيّ حقل، وكم لم تتغيّر — ثم يُعتمد أو يُترك.
  */
 export async function diffChunks(env: Env, fromFile: PreparedChunk[]): Promise<ImportDiff> {
-  // المقارنة تُري ما سيقع لا ما في الملف: تحريرٌ يبقى لا يُعرض تغيّراً.
-  const rows = keepEdits(fromFile, await fetchReviewed(env, fromFile.map((r) => r.id)));
-  const existing = await fetchExisting(env, rows.map((r) => r.id));
-  const changes: ChunkChange[] = [];
-  let added = 0;
-  let changed = 0;
-  let unchanged = 0;
-
-  for (const row of rows) {
-    const old = existing.get(row.id);
-    if (!old) {
-      added++;
-      continue;
-    }
-    const fields = differingFields(old, row);
-    if (!fields.length) {
-      unchanged++;
-      continue;
-    }
-    changed++;
-    if (changes.length < MAX_REPORTED_CHANGES) {
-      changes.push({
-        id: row.id,
-        fields,
-        old_article_no: old.article_no,
-        new_article_no: row.article_no,
-        old_status: old.status,
-        new_status: row.status,
-        old_text: old.text,
-        new_text: row.text,
-      });
-    }
-  }
+  const { rows, added, changed, unchanged, changes } = await compareRows(env, fromFile, MAX_REPORTED_CHANGES);
 
   // الغائب عن الملف: يُحسب على مستوى النظام لا الدفعة — ولذلك تُقارَن
   // الملفات كاملةً لا مقطّعة، وإلا عُدَّ سائرُ النظام غائباً.
@@ -1537,6 +1505,59 @@ export async function diffChunks(env: Env, fromFile: PreparedChunk[]): Promise<I
     changes_truncated: Math.max(0, changed - changes.length),
     law_ids: lawIds,
   };
+}
+
+/**
+ * مقابلةُ أسطرٍ بما في القاعدة مادةً مادة — بلا الغائب، فهو على الملف كلِّه.
+ *
+ * مشتركةٌ بين المقارنة على الملف كاملاً (`diffChunks`) والمقارنة على ما جُمع منه
+ * (`diffStaged`)، فلا تفترق النتيجتان. و`room` كم تغييراً يُفصَّل بعد.
+ */
+async function compareRows(
+  env: Env,
+  fromFile: PreparedChunk[],
+  room: number
+): Promise<{
+  rows: PreparedChunk[];
+  added: number;
+  changed: number;
+  unchanged: number;
+  changes: ChunkChange[];
+}> {
+  // المقارنة تُري ما سيقع لا ما في الملف: تحريرٌ يبقى لا يُعرض تغيّراً.
+  const rows = keepEdits(fromFile, await fetchReviewed(env, fromFile.map((r) => r.id)));
+  const existing = await fetchExisting(env, rows.map((r) => r.id));
+  const changes: ChunkChange[] = [];
+  let added = 0;
+  let changed = 0;
+  let unchanged = 0;
+
+  for (const row of rows) {
+    const old = existing.get(row.id);
+    if (!old) {
+      added++;
+      continue;
+    }
+    const fields = differingFields(old, row);
+    if (!fields.length) {
+      unchanged++;
+      continue;
+    }
+    changed++;
+    if (changes.length < room) {
+      changes.push({
+        id: row.id,
+        fields,
+        old_article_no: old.article_no,
+        new_article_no: row.article_no,
+        old_status: old.status,
+        new_status: row.status,
+        old_text: old.text,
+        new_text: row.text,
+      });
+    }
+  }
+  return { rows, added, changed, unchanged, changes };
 }
 
 /** ما يلزم من مادةٍ رُوجعت لمعرفة أثر الدفعة فيها — القرارُ والتحريرُ وما بُني عليهما. */
@@ -2439,6 +2460,12 @@ export async function stageChunks(
 const NOT_IN_FILE_SQL = `c.id NOT IN (SELECT chunk_id FROM legal_batch_ids WHERE batch_id = ?)
        AND c.id NOT IN (SELECT id FROM legal_staging WHERE batch_id = ?)`;
 
+/** ما في القاعدة من أنظمة الملف ولم يرد فيه — أربعة معاملات: الدفعة أربع مرّات. */
+const BATCH_ORPHANS_SQL = `FROM legal_chunks c
+     WHERE c.law_id IN (SELECT law_id FROM legal_staging WHERE batch_id = ? AND law_id IS NOT NULL
+                        UNION SELECT law_id FROM legal_batch_ids WHERE batch_id = ? AND law_id IS NOT NULL)
+       AND ${NOT_IN_FILE_SQL}`;
+
 /** ما سيقع إن كُتبت الدفعة — يُعرض قبل الكتابة، ومنه سؤالُ الحذف. */
 export interface CommitPlan {
   batch_id: string;
@@ -2464,12 +2491,7 @@ export async function planCommit(env: Env, batchId: string): Promise<CommitPlan 
   // الغائبُ عن الملف كلِّه لا عن نظامه وحده: مادةٌ انتقلت إلى نظامٍ آخر في الملف
   // حاضرةٌ فيه، وحذفُها مع نظامها القديم ثم إدراجُها مع الجديد يبدّل معرّفَ متجهها.
   // والملفُّ ما كُتب منه (`legal_batch_ids`) وما لم يُكتب بعد (`legal_staging`).
-  const orphans = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM legal_chunks c
-     WHERE c.law_id IN (SELECT law_id FROM legal_staging WHERE batch_id = ? AND law_id IS NOT NULL
-                        UNION SELECT law_id FROM legal_batch_ids WHERE batch_id = ? AND law_id IS NOT NULL)
-       AND ${NOT_IN_FILE_SQL}`
-  )
+  const orphans = await env.DB.prepare(`SELECT COUNT(*) AS n ${BATCH_ORPHANS_SQL}`)
     .bind(batchId, batchId, batchId, batchId)
     .first<{ n: number }>();
   const locked = await env.DB.prepare(
@@ -2486,6 +2508,93 @@ export async function planCommit(env: Env, batchId: string): Promise<CommitPlan 
     failed: batch.failed,
     orphans: orphans?.n ?? 0,
     locked: (locked.results ?? []).map((r) => r.law_id),
+  };
+}
+
+/** كم سطراً مجموعاً يُقارَن في النداء الواحد — كخطوة الكتابة نفسها. */
+export const DIFF_SLICE = COMMIT_SLICE;
+
+/**
+ * خطوةٌ من المقارنة على ما جُمع — والمقارنةُ كلُّها مجموعُ خطواتها.
+ *
+ * كانت المقارنة تقرأ الملف كاملاً في طلبٍ واحد، فملفٌّ يتجاوز حدَّ جسم الطلب في
+ * Cloudflare أو ذاكرةَ الـWorker لا يصل أبداً، والشاشة تنتظر ردّاً لا يأتي.
+ * والملف مجموعٌ في `legal_staging` قبل الكتابة على أجزاء صغيرة، فتُقابَل أسطره
+ * بالقاعدة من هناك: `DIFF_SLICE` سطراً في كل نداء، بترتيبها في الملف.
+ *
+ * والغائبُ يُقال في الخطوة الأخيرة وحدها: يُقاس على الملف كلِّه لا على شريحة.
+ * و`room` كم تغييراً يُفصَّل بعد — المُرسِل يجمع حتى سقف التقرير ثم يكفّ.
+ */
+export interface StagedDiffStep {
+  /** أسطرٌ قوبلت في هذه الخطوة. */
+  rows: number;
+  added: number;
+  changed: number;
+  unchanged: number;
+  changes: ChunkChange[];
+  /** آخر `seq` قوبل — منه تبدأ الخطوة التالية. */
+  after: number;
+  /** ما بقي بعده. */
+  remaining: number;
+  done: boolean;
+  /** في الخطوة الأخيرة وحدها. */
+  missing?: number;
+  missing_ids?: string[];
+  law_ids?: string[];
+}
+
+export async function diffStaged(
+  env: Env,
+  batchId: string,
+  opts: { after?: number; room?: number; limit?: number } = {}
+): Promise<StagedDiffStep> {
+  const batch = await getBatch(env, batchId);
+  // المقارنة قبل الكتابة: دفعةٌ بدأت كتابتُها أو رُدّت لا يُقارَن ما فيها.
+  if (!batch || batch.state !== 'staging') throw new BatchError('missing', BATCH_MESSAGES.missing);
+  const after = opts.after ?? -1;
+  const room = Math.max(0, Math.min(opts.room ?? MAX_REPORTED_CHANGES, MAX_REPORTED_CHANGES));
+  const limit = Math.max(1, opts.limit ?? DIFF_SLICE);
+
+  const staged = await env.DB.prepare(
+    'SELECT seq, row_json FROM legal_staging WHERE batch_id = ? AND seq > ? ORDER BY seq LIMIT ?'
+  )
+    .bind(batchId, after, limit)
+    .all<{ seq: number; row_json: string }>();
+  const slice = staged.results ?? [];
+  const { added, changed, unchanged, changes } = slice.length
+    ? await compareRows(env, slice.map((r) => JSON.parse(r.row_json) as PreparedChunk), room)
+    : { added: 0, changed: 0, unchanged: 0, changes: [] };
+  const last = slice.length ? slice[slice.length - 1].seq : after;
+  const remaining =
+    (
+      await env.DB.prepare('SELECT COUNT(*) AS n FROM legal_staging WHERE batch_id = ? AND seq > ?')
+        .bind(batchId, last)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+
+  const step: StagedDiffStep = { rows: slice.length, added, changed, unchanged, changes, after: last, remaining, done: remaining === 0 };
+  if (!step.done) return step;
+
+  // الغائبُ عن الملف كلِّه — بالشرط نفسه الذي يُسأل به عن الحذف (`planCommit`).
+  const missing =
+    (
+      await env.DB.prepare(`SELECT COUNT(*) AS n ${BATCH_ORPHANS_SQL}`)
+        .bind(batchId, batchId, batchId, batchId)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+  const missingIds = await env.DB.prepare(`SELECT c.id ${BATCH_ORPHANS_SQL} ORDER BY c.id LIMIT ?`)
+    .bind(batchId, batchId, batchId, batchId, MAX_REPORTED_MISSING)
+    .all<{ id: string }>();
+  const lawIds = await env.DB.prepare(
+    'SELECT DISTINCT law_id FROM legal_staging WHERE batch_id = ? AND law_id IS NOT NULL ORDER BY law_id'
+  )
+    .bind(batchId)
+    .all<{ law_id: string }>();
+  return {
+    ...step,
+    missing,
+    missing_ids: (missingIds.results ?? []).map((r) => r.id),
+    law_ids: (lawIds.results ?? []).map((r) => r.law_id),
   };
 }
 

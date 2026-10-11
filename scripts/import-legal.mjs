@@ -25,7 +25,8 @@
 //   --correction        وسمُ «تصحيح بيانات»: الفرق عن الاستيراد السابق خطأُ
 //                       سحبٍ لا تعديلٌ نظاميّ، فلا يقول السجلّ إن النظام
 //                       عُدِّل اليوم وهو عُدِّل بمرسومه قبل سنوات
-//   --check-only        مقارنةٌ بلا كتابة: يُقال ما سيتغيّر ثم يقف
+//   --check-only        مقارنةٌ بلا كتابة: يُجمع الملف ويُقال ما سيتغيّر، ثم
+//                       يُلغى ما جُمع ويقف
 //   --no-preview        تخطّي المقارنة قبل الكتابة (لأتمتةٍ راجعت ملفَّها)
 //   --prune             حذفُ اليتيم مع الكتابة: ما في القاعدة من أنظمة هذا
 //                       الملف ولم يرد فيه، يُحذف مع كل نظامٍ وهو مجمَّد. ويُقاس
@@ -37,8 +38,8 @@
 // **وانتهاءُ جلسة الدخول لا يُسقط ما رُفع.** الكوكي يعيش ربع ساعة، وملفٌّ كبير
 // يتجاوزه. فعند ٤٠١ تقف الأداة ولا تُلغي الدفعة، وتطبع أمرَ الإكمال كاملاً إلا
 // الكوكي: `--resume` بمعرّف الدفعة و`--from-part` بالجزء الذي لم يُجمع. والأجزاء
-// المجموعة باقيةٌ في المنصة يوماً (`STAGING_TTL_MS`). والإكمال لا يُعيد المقارنة:
-// قرأت الملف كلَّه قبل الانقطاع. و`--batch` يُعاد بقيمته، فحدودُ الأجزاء منه.
+// المجموعة باقيةٌ في المنصة يوماً (`STAGING_TTL_MS`). والمقارنة بعد الجمع، فالإكمال
+// يقارن ما جُمع حين يكتمل. و`--batch` يُعاد بقيمته، فحدودُ الأجزاء منه.
 //
 // و«قبول الصالح» مطفأٌ هنا وفي شاشة الإدارة: الدفعة تنجح كاملة أو تُلغى كاملة.
 // و«بناء نصّ التضمين» مطفأٌ هنا ومفعَّلٌ في الشاشة: أمرٌ في طرفية يُكتب مرّة
@@ -88,7 +89,7 @@ if (args.has('from-part') && !resume) {
   process.exit(1);
 }
 if (resume && checkOnly) {
-  console.error('--check-only لا يجتمع مع --resume: الدفعة المنقطعة قورنت قبل أن تُجمع');
+  console.error('--check-only لا يجتمع مع --resume: المقارنة بلا كتابة تُجمع وتُلغى في تشغيلٍ واحد');
   process.exit(1);
 }
 // معرّفٌ يجمع أجزاء الملف الواحد. بلا هذا لا تُعرف الدفعة التامّة عند الختام.
@@ -157,6 +158,12 @@ function resumeFlags(part) {
  * انتهائه، والجديد يُلصق بيد صاحبه.
  */
 function sessionExpired(part, of) {
+  // أمرُ الإكمال يكتب، والمقارنة بلا كتابة لا تُكمَل إليه: يُعاد التشغيل من أوّله.
+  // وما جُمع لا يُلغى هنا — الكوكي انتهى — فيسقط وحده بعد يوم ولم يُكتب منه شيء.
+  if (checkOnly) {
+    console.error('\nانتهت جلسة الدخول — لم يُكتب شيء. أعِد التشغيل بكوكي جديد.');
+    process.exit(2);
+  }
   const flags = resumeFlags(part);
   console.error(
     part > of
@@ -173,68 +180,8 @@ function printResume(flags) {
   process.exit(2);
 }
 
-/**
- * المقارنة قبل الكتابة — الخطوة الأرخص وأنفعُ من أيّ تراجع.
- *
- * التراجع يُصلح بعد أن يقع، والمقارنة تمنع الوقوع: ملفٌّ ينقصه نصفُ نظام
- * يظهر هنا «٢٥٠٠ غائبة» قبل أن يُكتب حرفٌ واحد. وهي تجري على الملف كلِّه لا
- * على جزئه الأوّل — نصفُ ملفٍ لا يُقاس عليه غيابُ شيء.
- */
-async function comparefirst() {
-  const res = await fetch(`${endpoint}&dry_run=1`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-ndjson', accept: 'application/json', cookie },
-    body: lines.join('\n'),
-  });
-  const r = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    // لم يُجمع شيء بعد: لا دفعة تُكمَل، والتشغيل نفسه يُعاد بكوكي جديد.
-    console.error('\nانتهت جلسة الدخول قبل المقارنة — لم يُرفع شيء. أعِد التشغيل بكوكي جديد.');
-    process.exit(2);
-  }
-  if (!res.ok) {
-    console.error(`\nالمقارنة رُفضت (${res.status}): ${r.error ?? ''}`);
-    for (const g of r.error_summary ?? []) console.error(`  ${g.count} سطراً: ${g.error}`);
-    process.exit(1);
-  }
-  // والصارمُ صارمٌ على الملف كلِّه (§4-٦): المقارنة قرأت الأسطر كلَّها، فسطرٌ
-  // مرفوض في أيّ موضع يقف قبل أوّل كتابة — لا بعد أن تُكتب الأجزاء التي سبقته.
-  if (!partial && r.failed) {
-    console.error(`\nالملف رُفض: ${r.failed} سطراً غير صالح — لم يُكتب شيء.`);
-    for (const g of r.error_summary ?? []) {
-      const at = g.lines?.length ? ` (أسطر: ${g.lines.join(' · ')}…)` : '';
-      console.error(`  ${g.count} سطراً: ${g.error}${at}`);
-    }
-    process.exit(1);
-  }
-  const d = r.diff ?? {};
-  console.log('── المقارنة قبل الكتابة ──');
-  console.log(`جديد ${d.added ?? 0} · متغيّر ${d.changed ?? 0} · بلا تغيير ${d.unchanged ?? 0} · غائب عن الملف ${d.missing ?? 0}`);
-  if (r.needs_review) console.log(`${r.needs_review} مادةً موسومة للمراجعة`);
-  if (r.amendment_pending) console.log(`${r.amendment_pending} مادةً نصُّها أصليّ وعليها تعديل`);
-  // الغائب يُقال بصوتٍ عالٍ: هو العلامة الوحيدة على ملفٍ ناقص قبل أن يُكتب.
-  if (d.missing) {
-    console.log(`\nتنبيه: ${d.missing} مادةً في القاعدة لأنظمة هذا الملف ولا وجود لها فيه.`);
-    console.log('  إن كان الملف تامّاً فهذا ما حُذف من المصدر — يُعالَج بـ--prune عند الختام.');
-    console.log('  وإن كان جزئياً فأنت على وشك رفعِ نصفِ نظام.');
-  }
-  console.log('');
-  return d;
-}
-
 // ما يُعرف من الجمع؛ والجديد والمستبدَل والمحذوف من الكتابة نفسها.
 const totals = { failed: 0, withheld: 0, amendmentPending: 0 };
-
-if (resume) {
-  // المقارنة قرأت الملف كلَّه قبل الانقطاع، وقرارُها أُخذ — فلا تُعاد.
-  console.log('إكمال: المقارنة جرت قبل الانقطاع فلا تُعاد.\n');
-} else if (preview || checkOnly) {
-  await comparefirst();
-  if (checkOnly) {
-    console.log('مقارنةٌ بلا كتابة — لم يُكتب شيء.');
-    process.exit(0);
-  }
-}
 
 /* `accept` صريحاً: الوسيط يفرّق التصفّح عن النداء البرمجي بطبيعة الطلب، ونداءٌ
    يطلب JSON يأخذ ٤٠١ عند انتهاء الجلسة لا تحويلةً إلى صفحة الدخول. */
@@ -302,7 +249,55 @@ for (let start = (fromPart - 1) * batchSize; start < lines.length; start += batc
   console.log(`الجزء ${no}/${of}: جُمع ${report.staged} · مرفوض ${report.failed}`);
 }
 
-// ── ٢) ما سيقع، ومنه الغائب عن الملف ──
+// ── ٢) المقارنة قبل الكتابة — على ما جُمع، خطوةً خطوة ──
+//
+// الخطوة الأرخص وأنفعُ من أيّ تراجع: ملفٌّ ينقصه نصفُ نظام يظهر هنا «٢٥٠٠ غائبة»
+// قبل أن يُكتب حرفٌ واحد. وكانت تحمل الملف كاملاً في طلبٍ واحد، فملفٌّ فوق حدّ جسم
+// الطلب لا يصل. والآن تقرأ ما جُمع من المنصة نفسها، والغائبُ يُقاس في آخرها على
+// الملف كلِّه — نصفُ ملفٍ لا يُقاس عليه غيابُ شيء.
+if (preview || checkOnly) {
+  const d = { added: 0, changed: 0, unchanged: 0, missing: 0 };
+  let after = -1;
+  for (;;) {
+    const step = await post(
+      `${origin}/api/legal/diff?${new URLSearchParams({ batch: batchId, after: String(after), room: '0' })}`
+    ).catch((e) => ({ ok: false, network: true, body: { error: String(e?.message ?? e) } }));
+    if (step.status === 401) sessionExpired(of + 1, of);
+    if (!step.ok) {
+      // ما جُمع سليم والمقارنة لا تكتب: انقطاعٌ هنا يُكمَل ولا يُلغى.
+      if (step.network && !checkOnly) {
+        console.error(`\nانقطعت المقارنة (${step.body.error}) — لم يُلغَ شيء. أعِد الأمر نفسه:`);
+        printResume(resumeFlags(of + 1));
+      }
+      await abort();
+      console.error(`\nتعذّرت المقارنة: ${step.body.error ?? ''} — لم يُكتب من الملف شيء.`);
+      process.exit(1);
+    }
+    for (const k of ['added', 'changed', 'unchanged']) d[k] += step.body[k] ?? 0;
+    after = step.body.after;
+    if (step.body.done) {
+      d.missing = step.body.missing ?? 0;
+      break;
+    }
+  }
+  console.log('\n── المقارنة قبل الكتابة ──');
+  console.log(`جديد ${d.added} · متغيّر ${d.changed} · بلا تغيير ${d.unchanged} · غائب عن الملف ${d.missing}`);
+  if (totals.withheld) console.log(`${totals.withheld} مادةً موسومة للمراجعة`);
+  if (totals.amendmentPending) console.log(`${totals.amendmentPending} مادةً نصُّها أصليّ وعليها تعديل`);
+  // الغائب يُقال بصوتٍ عالٍ: هو العلامة الوحيدة على ملفٍ ناقص قبل أن يُكتب.
+  if (d.missing) {
+    console.log(`\nتنبيه: ${d.missing} مادةً في القاعدة لأنظمة هذا الملف ولا وجود لها فيه.`);
+    console.log('  إن كان الملف تامّاً فهذا ما حُذف من المصدر — يُعالَج بـ--prune عند الختام.');
+    console.log('  وإن كان جزئياً فأنت على وشك رفعِ نصفِ نظام.');
+  }
+  if (checkOnly) {
+    await abort();
+    console.log('\nمقارنةٌ بلا كتابة — أُسقط ما جُمع، ولم يُكتب شيء.');
+    process.exit(0);
+  }
+}
+
+// ── ٣) ما سيقع، ومنه الغائب عن الملف ──
 // `upsert` تُحدّث وتُضيف ولا تحذف ما اختفى، فمادةٌ أُسقطت من المصدر تبقى في
 // النتائج إلى الأبد. والقياس على الملف كلِّه بعد جمعه، وعلى أنظمته وحدها.
 const plan = await post(commitUrl()).catch((e) => ({ ok: false, body: { error: String(e?.message ?? e) } }));
@@ -326,7 +321,7 @@ if (!plan.body.orphans) {
   console.log(`\n${plan.body.orphans} مادةً في القاعدة لم ترد في الملف — تُحذف مع نظامها، ونصُّ كلٍّ في سجلّ التحديث.`);
 }
 
-// ── ٣) الكتابة خطوةً خطوة حتى تتمّ ──
+// ── ٤) الكتابة خطوةً خطوة حتى تتمّ ──
 let progress;
 for (;;) {
   const step = await post(commitUrl({ apply: '1', ...(pruning ? { prune: '1' } : {}) })).catch((e) => ({

@@ -744,6 +744,23 @@ export interface LegalCommitProgress {
   import_id: string | null;
 }
 
+/** خطوةٌ من المقارنة على ما جُمع — والمقارنةُ كلُّها مجموعُ خطواتها. */
+export interface LegalDiffStep {
+  rows: number;
+  added: number;
+  changed: number;
+  unchanged: number;
+  changes: LegalChunkChange[];
+  /** آخر ما قوبل — منه تبدأ الخطوة التالية. */
+  after: number;
+  remaining: number;
+  done: boolean;
+  /** في الخطوة الأخيرة وحدها: الغائبُ يُقاس على الملف كلِّه. */
+  missing?: number;
+  missing_ids?: string[];
+  law_ids?: string[];
+}
+
 /** سطرٌ رُفض، برقمه في الملف وسببه. */
 export interface LegalLineError {
   line: number;
@@ -811,6 +828,21 @@ async function req<T>(path: string, opts: RequestInit = {}, background = false):
   if (handleAuthRedirect(res, data, background)) return pending<T>();
   if (!res.ok) throw new Error((data as any).error ?? 'خطأ في الاتصال');
   return data as T;
+}
+
+/**
+ * مهلةُ رفع الجزء ومقارنتِه — والمهلة تُرمى كانقطاع الشبكة.
+ *
+ * `fetch` لا مهلة له: طلبٌ لا يصله ردٌّ يبقى معلَّقاً، والشاشة تدور بلا نهاية
+ * ولا جملة. فبعد هذه المدّة يُقطع، ويبقى الموضع محفوظاً ليكمل منه. وهي على
+ * الرفع والمقارنة وحدهما: خطوةُ كتابةٍ تُقطع وهي جارية في الخادم ثم تُعاد تجعل
+ * كتابتين على دفعةٍ واحدة.
+ */
+export const IMPORT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** انقطع الطلب: الشبكة (`TypeError` من `fetch`) أو المهلة (`TimeoutError`). */
+export function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError || (e instanceof DOMException && e.name === 'TimeoutError');
 }
 
 /** كـ`req`، إلا أن انتهاء الجلسة يُرمى `SessionExpired` ولا يُحوِّل — للاستيراد. */
@@ -1033,6 +1065,15 @@ export const api = {
       })}`,
       { method: 'POST' }
     ),
+  /**
+   * خطوةٌ من المقارنة على ما جُمع — لا تكتب شيئاً. `after` آخرُ ما قوبل، و`room`
+   * كم تغييراً يُفصَّل بعد. ويُنادى حتى يعود `done`.
+   */
+  legalDiff: (batch: string, after: number, room: number) =>
+    reqHeld<LegalDiffStep>(
+      `/legal/diff?${new URLSearchParams({ batch, after: String(after), room: String(room) })}`,
+      { method: 'POST', signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS) }
+    ),
   /** إلغاءُ دفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ. */
   legalAbort: (batch: string) =>
     req<{ ok: boolean; restored: number; removed: number }>(
@@ -1107,6 +1148,7 @@ export const api = {
       headers: { 'content-type': 'application/x-ndjson' },
       body: lines.join('\n'),
       credentials: 'same-origin',
+      signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS),
     });
     const data = await res.json().catch(() => ({}));
     // انتهاء الجلسة يُرمى ولا يُحوِّل: الاستيراد يقف عنده ويكمل بعد التجديد.
