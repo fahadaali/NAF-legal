@@ -78,6 +78,18 @@ export default function Sidebar(props: Props) {
     loadFolders();
   }, [props.refreshKey, activeFolder]);
 
+  /* المنصة مفتوحةٌ في أكثر من نافذة: محادثةٌ بدأت أو حُذفت أو أُعيدت
+     تسميتها في واحدةٍ لا تعلم بها الأخرى. فتُجلب القائمة عند العودة إلى
+     النافذة — إلا والبحث قائم: نتائجه لا تُستبدل بالقائمة كاملة. */
+  useEffect(() => {
+    const onFocus = () => {
+      if (!search) load();
+      loadFolders();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [search, activeFolder]);
+
   const createFolder = async () => {
     const name = prompt('اسم القضية الجديدة:');
     if (!name?.trim()) return;
