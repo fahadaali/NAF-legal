@@ -4,6 +4,7 @@ import { callClaude, webSearchTool, TRACKING_DOMAINS } from './lib/claude';
 import { notify } from './lib/notify';
 import { dualDate } from './lib/hijri';
 import { embedPending, vectorHealth, vectorCheck, recoverStaleBatches } from './lib/legal';
+import { extractPendingLinks } from './lib/research/links';
 import type { Env } from './types';
 
 /**
@@ -396,3 +397,21 @@ export async function runImportRecovery(env: Env): Promise<{ rolledBack: number;
     return { rolledBack: 0, abandoned: 0 };
   }
 }
+
+/**
+ * استخراجُ الإحالات بين المواد (`lib/research/links.ts`) — في كل نبضة، بدفعةٍ محدودة.
+ *
+ * قواعدُ حتمية على القاعدة وحدها، بلا نموذجٍ ولا شبكة، فتجري كل عشر دقائق: نظامٌ
+ * يُستورد تُستخرج إحالاتُه خلال دقائق، ومادةٌ يُحال إليها قبل وصولها تُوصَل حين تصل.
+ */
+export async function runLinkExtraction(env: Env): Promise<void> {
+  try {
+    const r = await extractPendingLinks(env, LINKS_PER_TICK);
+    if (r.processed) console.log(`links: ${r.processed} chunks, ${r.links} refs, ${r.resolved} resolved, ${r.remaining} left`);
+  } catch (e: any) {
+    console.error('link extraction failed:', e?.message ?? e);
+  }
+}
+
+/** مقاطعُ النبضة الواحدة — ستّة آلاف مادة في ساعةٍ ونصف تقريباً. */
+const LINKS_PER_TICK = 600;

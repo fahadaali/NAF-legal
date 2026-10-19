@@ -3,6 +3,7 @@
 // الاستيراد للمسؤول وحده، والبحث لكل من دخل. والتصفية على السريان لا تُقرَّر
 // هنا: `lib/legal.ts` يحملها في SQL نفسه، فما يُكتب في هذا الملف لا يستطيع
 // تجاوزها ولو أراد.
+import { extractPendingLinks } from '../lib/research/links';
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
@@ -238,6 +239,21 @@ app.post('/import', requireAdmin, async (c) => {
 });
 
 /** تصريف ما ينتظر التضمين يدوياً (بعد تهيئة الفهرس المتجهي مثلاً). */
+/** استخراج الإحالات بين المواد الآن — بدل انتظار نبضة الـCron. */
+app.post('/links/extract', requireAdmin, async (c) => {
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 2000) || 2000, 1), 5000);
+  return c.json(await extractPendingLinks(c.env, limit));
+});
+
+/** إحالاتٌ لم تُحلّ إلى نظامٍ معروف — عناوين تُراجع أو أنظمةٌ لم تُستورد بعد. */
+app.get('/links/unresolved', requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT to_law_title, COUNT(*) AS refs FROM legal_article_links
+     WHERE to_law_id IS NULL AND to_law_title IS NOT NULL GROUP BY to_law_title ORDER BY refs DESC LIMIT 200`
+  ).all();
+  return c.json({ titles: rows.results ?? [] });
+});
+
 app.post('/embed-pending', requireAdmin, async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 200), 1), 1000);
   const result = await embedPending(c.env, limit);

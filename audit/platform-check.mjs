@@ -34,6 +34,8 @@ const routes = await bundle(
    export { default as conversations } from './conversations';
    export { isOfficialUrl } from './admin';
    export { default as evalRoutes } from './eval';
+   export { extractPendingLinks, parseRefs, ordinalToNumber } from '../lib/research/links';
+   export { normalizeArabic } from '../lib/arabic';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -388,6 +390,53 @@ await t.check('سكربت القياس يحسب تغطية الأنظمة وال
   } finally {
     server.close();
   }
+});
+
+console.log('\nالإحالات بين المواد');
+
+const law = (o) => JSON.stringify({ doc_type: 'law', status: 'active', embed_text: o.text, ...o });
+
+await t.check('الأعداد الترتيبية بالحروف تُقرأ أرقاماً', async () => {
+  for (const [w, n] of [['الثالثة والعشرين بعد المائة', 123], ['الثانية عشرة', 12], ['السابعة والسبعين', 77], ['الحادية والعشرون', 21]]) {
+    assert.equal(routes.ordinalToNumber(w), n, w);
+  }
+  assert.equal(routes.ordinalToNumber('المذكورة'), null);
+});
+
+await t.check('الإحالات: بالأرقام وبالحروف، وإلى هذا النظام وإلى نظامٍ مسمّى وإلى اللائحة', async () => {
+  const p = (x) => routes.parseRefs(routes.normalizeArabic(x)).map((r) => [r.articles.join(','), r.scope]);
+  assert.deepEqual(p('مع مراعاة المادة (السابعة والسبعين) من هذا النظام'), [['77', 'self']]);
+  assert.deepEqual(p('وفقاً للمادتين (80) و(81) من هذا النظام.'), [['80,81', 'self']]);
+  assert.deepEqual(p('مع مراعاة المادة (76) من نظام المرافعات الشرعية'), [['76', 'named']]);
+  assert.deepEqual(p('المنصوص عليها في المادة (الثانية عشرة) من اللائحة.'), [['12', 'regulation']]);
+  assert.deepEqual(p('استثناءً من حكم المادة السابقة'), [['', 'previous']]);
+  // «مكرر» مادةٌ أخرى لا تُحلّ برقم أصلها، و«هذه المادة» ذكرٌ لا إحالة.
+  assert.deepEqual(p('وفق المادة (15) مكرر من النظام.'), []);
+  assert.deepEqual(p('الإجراءات المشار إليها في هذه المادة.'), []);
+});
+
+await t.check('الاستخراج يحلّ الإحالة إلى مادة نظامٍ آخر، ويعيدها حين يتغيّر النصّ أو يُحذف المحال إليه', async () => {
+  const db = await makeDb();
+  const env = { ...ENV_BASE, DB: db.DB, KV: makeKv() };
+  await routes.upsertLegalChunks(env, routes.parseJsonl([
+    law({ id: 'labor:20', law_id: 'labor', law_title: 'نظام العمل', article_no: '20', text: 'مع مراعاة المادة (76) من نظام المرافعات الشرعية، والمادة (السابعة) من هذا النظام، تُرفع الدعوى.' }),
+    law({ id: 'labor:7', law_id: 'labor', law_title: 'نظام العمل', article_no: '7', text: 'يُستثنى من أحكام هذا النظام...' }),
+    law({ id: 'mur:76', law_id: 'murafaat', law_title: 'نظام المرافعات الشرعية', article_no: '76', text: 'الدفع بعدم الاختصاص المكاني يُبدى قبل أي طلب.' }),
+  ].join('\n')).rows);
+  const r = await routes.extractPendingLinks(env, 100);
+  assert.equal(r.remaining, 0);
+  const seq = (id) => db.q('SELECT seq FROM legal_chunks WHERE id = ?', id)[0].seq;
+  const links = db.q('SELECT to_law_id, to_article_no, to_seq, scope FROM legal_article_links WHERE from_seq = ? ORDER BY to_article_no', seq('labor:20'));
+  assert.deepEqual(links.map((l) => [l.to_law_id, l.to_article_no, l.to_seq, l.scope]), [
+    ['labor', '7', seq('labor:7'), 'self'],
+    ['murafaat', '76', seq('mur:76'), 'named'],
+  ]);
+  // تعديل النصّ يعيد المقطع إلى الطابور.
+  db.q("UPDATE legal_chunks SET text_norm = 'نص جديد' WHERE id = 'labor:20'");
+  assert.equal(db.q("SELECT links_at FROM legal_chunks WHERE id = 'labor:20'")[0].links_at, null);
+  // حذفُ المحال إليه يُعيد الإحالة معلّقة.
+  db.q("DELETE FROM legal_chunks WHERE id = 'mur:76'");
+  assert.equal(db.q("SELECT to_seq FROM legal_article_links WHERE to_article_no = '76'")[0].to_seq, null);
 });
 
 t.done();
