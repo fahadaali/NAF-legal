@@ -1,7 +1,7 @@
 // قياسُ الاسترجاع على مجموعة القضايا — على المنصة المنشورة لا على نسخةٍ محلية.
 //
 //   node scripts/eval-retrieval.mjs --url https://advisor.naflaw.sa --cookie "naf_session=…"
-//        [--cases eval/cases.jsonl] [--only labor-01,comm-02] [--out eval-result.json]
+//        [--cases eval/cases.jsonl] [--only labor-01,comm-02] [--out eval-result.json] [--deep 1]
 //
 // لكل قضية يُرسَل سؤالها إلى `POST /api/eval/retrieve` (خطّ الاسترجاع نفسه في دور
 // المحادثة، دون توليد)، ثم يُقاس ما رجع:
@@ -58,7 +58,7 @@ for (const c of cases) {
   const res = await fetch(`${base}/api/eval/retrieve`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie: args.cookie },
-    body: JSON.stringify({ message: c.message, consultation_type: c.consultation_type }),
+    body: JSON.stringify({ message: c.message, consultation_type: c.consultation_type, deep: args.deep === '1' }),
   });
   if (!res.ok) {
     console.error(`${c.id}: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);

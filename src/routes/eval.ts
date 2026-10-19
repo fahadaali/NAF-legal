@@ -9,6 +9,7 @@ import { requireAuth, requireAdmin } from '../lib/auth';
 import { runPlanner } from '../lib/planner';
 import { gatherLegalContext } from '../lib/research/gather';
 import { newTrace } from '../lib/research/trace';
+import { deepResearch } from '../lib/research/agent';
 import type { ConsultationType, Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -29,6 +30,13 @@ app.post('/retrieve', async (c) => {
   const plan = await runPlanner(c.env, message, type, false, false, user.id);
   trace.add({ stage: 'planner', count: plan.kb_queries.length, detail: plan.consultation_type });
   const gathered = await gatherLegalContext(c.env, { plan, message, userId: user.id, trace });
+  // `deep: true` يقيس البحث المعمّق فوق المحرّك الطبقي — لمقارنة الوضعين على القضايا نفسها.
+  if (body.deep === true) {
+    const deep = await deepResearch(c.env, { message, plan, groups: gathered.groups, userId: user.id, trace });
+    gathered.groups.push(...deep.groups);
+    gathered.results.push(...deep.groups.flatMap((g) => g.results));
+    gathered.gaps.push(...deep.gaps);
+  }
 
   return c.json({
     plan,
@@ -51,6 +59,7 @@ app.post('/retrieve', async (c) => {
       score: r.score,
       warning: r.retrievalWarning ?? null,
     })),
+    gaps: gathered.gaps,
     steps: trace.steps,
     failed: trace.failed,
     ms: Date.now() - started,

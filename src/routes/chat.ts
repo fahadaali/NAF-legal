@@ -7,6 +7,7 @@ import { type RagResult } from '../lib/rag';
 import { gatherLegalContext } from '../lib/research/gather';
 import { formatLayeredContext, layeredContextBlocks, TOTAL_MAX, type ResearchGroup, type ResearchGap } from '../lib/research/layered';
 import { saveMemo, latestMemo, getOwnedMemo, hydrateMemo, memoGroups } from '../lib/research/memo';
+import { deepResearch } from '../lib/research/agent';
 import { newTrace, saveTrace } from '../lib/research/trace';
 import { buildAnchorsBlock, type BasisAnchor } from '../lib/basis';
 import { enabledSources } from '../lib/sources';
@@ -82,7 +83,9 @@ app.use('/:conversationId', async (c, next) => {
 app.post('/:conversationId', async (c) => {
   const user = c.get('user');
   const conversationId = c.req.param('conversationId');
-  const { message, force_internet, bilingual, attachment_ids, reply_length, memo_id } = await c.req.json().catch(() => ({}));
+  const { message, force_internet, bilingual, attachment_ids, reply_length, memo_id, deep_research } = await c.req
+    .json()
+    .catch(() => ({}));
   if (!message?.trim()) return c.json({ error: 'الرسالة فارغة' }, 400);
 
   // تحقّق الملكية
@@ -252,6 +255,13 @@ app.post('/:conversationId', async (c) => {
         groups = [...groups, ...h.groups];
         trace.add({ stage: 'memo-carried', detail: prior.id, count: h.groups.reduce((n, g) => n + g.results.length, 0) });
       }
+    }
+    /* البحث المعمّق بطلبٍ صريح: Claude يُكمل الموادّ بأدوات البحث قبل الصياغة.
+       يؤخّر أوّل حرفٍ في الردّ بقدر جولاته، فلا يجري إلا حين يُطلب. */
+    if (deep_research === true && !chosenMemo && plan.needs_knowledge_base) {
+      const deep = await deepResearch(c.env, { message, plan, groups, userId: user.id, trace });
+      groups = [...groups, ...deep.groups];
+      gaps = [...gaps, ...deep.gaps];
     }
     results = groups.flatMap((g) => g.results);
     ragContext = formatLayeredContext(groups);

@@ -159,8 +159,9 @@ export function fakeAnthropic(respond) {
     if (!body.stream) {
       return new Response(
         JSON.stringify({
-          content: [{ type: 'text', text: r.text }],
-          stop_reason: 'end_turn',
+          // `content` كما يردّه الـAPI — لكتل `tool_use` في حلقة الأدوات.
+          content: r.content ?? [{ type: 'text', text: r.text }],
+          stop_reason: r.stop_reason ?? 'end_turn',
           usage: { input_tokens: 10, output_tokens: 5 },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } }

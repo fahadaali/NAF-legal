@@ -1,6 +1,7 @@
 // مذكرة البحث قبل الصياغة — تُبنى، ويعدّل المحامي أسانيدها، ويعتمدها، ثم يُصاغ منها.
 //
-//   POST  /api/research/:conversationId      يبني مذكرةً لسؤالٍ دون أن يصوغ (مسودّة)
+//   POST  /api/research/:conversationId      يبني مذكرةً لسؤالٍ دون أن يصوغ (مسودّة)؛
+//                                            و`deep: true` يُكملها Claude بأدوات البحث
 //   GET   /api/research/memos/:id            المذكرة بمسائلها وموادّها وما لا سند له
 //   PATCH /api/research/memos/:id            يحذف موادّ أو يضيف موادّ — نسخةٌ جديدة
 //   POST  /api/research/memos/:id/approve    يعتمدها باسم المعتمِد
@@ -14,6 +15,8 @@ import { gatherLegalContext } from '../lib/research/gather';
 import { newTrace, saveTrace } from '../lib/research/trace';
 import { getOwnedMemo, memoGroups, saveMemo, type Memo, type MemoGroup } from '../lib/research/memo';
 import { getChunkById, articleBaseId } from '../lib/legal';
+import { deepResearch } from '../lib/research/agent';
+import type { ResearchGroup } from '../lib/research/layered';
 import type { ConsultationType, Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -55,16 +58,23 @@ app.post('/:conversationId', async (c) => {
     userId: user.id,
     trace,
   });
-  const groups = gathered.groups.length
+  let groups: ResearchGroup[] = gathered.groups.length
     ? gathered.groups
     : gathered.results.length
       ? [{ kind: 'issue' as const, title: 'نتائج البحث', results: gathered.results }]
       : [];
+  let gaps = gathered.gaps;
+  // البحث المعمّق: Claude يُكمل المذكرة بأدوات البحث في القاعدة نفسها.
+  if (body.deep === true) {
+    const deep = await deepResearch(c.env, { message, plan, groups, userId: user.id, trace });
+    groups = [...groups, ...deep.groups];
+    gaps = [...gaps, ...deep.gaps];
+  }
   const id = await saveMemo(c.env, {
     conversationId,
     messageId: null,
     groups: memoGroups(groups),
-    gaps: gathered.gaps,
+    gaps,
     status: 'draft',
   });
   await saveTrace(c.env, {

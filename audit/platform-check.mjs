@@ -724,4 +724,53 @@ await t.check('مادةٌ مسترجعة ومادةٌ لم تُسترجع: ال�
   }
 });
 
+console.log('\nالبحث المعمّق بالأدوات');
+
+await t.check('Claude يبحث بالأدوات ويُكمل المذكرة — ولا يُضاف مفتاحٌ لم تُرجعه الأدوات', async () => {
+  const { env, db } = await layeredFixture();
+  await routes.upsertLegalChunks(env, routes.parseJsonl(law({
+    id: 'ith:9', law_id: 'ithbat', law_title: 'نظام الإثبات', article_no: '9', text: 'الإقرار حجةٌ قاصرة على المقر.',
+  })).rows);
+  await routes.stemPending(env);
+  const isAgent = (b) => !b.stream && String(b.system ?? '').includes('باحثٌ قانونيّ');
+  let round = 0;
+  const thinking = { type: 'thinking', thinking: '', signature: 'sig-1' };
+  const fake = fakeAnthropic((b) => {
+    if (isPlanner(b)) return { text: JSON.stringify(LAYERED_PLAN) };
+    if (!isAgent(b)) return { text: 'رد' };
+    round++;
+    if (round === 1) {
+      return { stop_reason: 'tool_use', content: [thinking, { type: 'tool_use', id: 't1', name: 'search_laws', input: { query: 'الإقرار', law: 'نظام الإثبات' } }] };
+    }
+    return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't2', name: 'finish_research', input: {
+      add: ['legal:ith:9', 'legal:invented:1'], gaps: [{ title: 'التقادم', reason: 'لا نصّ في القاعدة' }],
+    } }] };
+  });
+  try {
+    const out = await (await routes.research.request('/c1', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'صحيفة دعوى عمالية', deep: true }),
+    }, env)).json();
+    const agentCalls = fake.calls.filter(isAgent);
+    assert.equal(agentCalls.length, 2);
+    // الجولة الثانية: ردُّ الأولى بكتله كما هو (ومنها التفكير)، ثم نتائج الأدوات كتلَ search_result.
+    const msgs = agentCalls[1].messages;
+    assert.deepEqual(msgs[1].content[0], thinking, 'لم يُعد التفكير كما هو');
+    const tr = msgs[2].content[0];
+    assert.equal(tr.type, 'tool_result');
+    assert.equal(tr.content[0].type, 'search_result');
+    assert.equal(tr.content[0].source, 'legal:ith:9');
+    assert.ok(agentCalls[0].tools.every((x) => x.strict === true), 'أدواتٌ بلا strict');
+
+    const keys = out.memo.groups.flatMap((g) => g.items.map((i) => i.key));
+    assert.ok(keys.includes('legal:ith:9'), 'لم يُضف ما وجده البحث');
+    assert.ok(!keys.includes('legal:invented:1'), 'أُضيف مفتاحٌ مخترع');
+    assert.ok(out.memo.gaps.some((g) => /التقادم/.test(g.title)));
+    const steps = JSON.parse(db.q('SELECT steps_json FROM retrieval_traces ORDER BY created_at DESC LIMIT 1')[0].steps_json);
+    assert.ok(steps.some((x) => x.stage === 'agent-search' && x.count === 1));
+  } finally {
+    fake.restore();
+  }
+});
+
 t.done();
