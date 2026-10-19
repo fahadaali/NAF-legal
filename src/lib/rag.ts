@@ -19,6 +19,7 @@ import {
   type LegalHit,
 } from './legal';
 import { embed } from './embed';
+import type { RetrievalTrace } from './research/trace';
 import type { Env } from '../types';
 
 // تُعاد من هنا حفاظاً على مستورديها القائمين (`ingest.ts`).
@@ -114,31 +115,45 @@ const RRF_K = 60;
  * الدمج بالرتب لا بالدرجات: درجة bm25 ودرجة التشابه الجيبي ورتب مصدرين
  * مختلفين لا تُجمع على مقياس واحد.
  */
-export async function retrieve(env: Env, queries: string[], topK = 5, total = topK): Promise<RagResult[]> {
+export async function retrieve(
+  env: Env,
+  queries: string[],
+  topK = 5,
+  total = topK,
+  trace?: RetrievalTrace
+): Promise<RagResult[]> {
   const lists: RagResult[][] = [];
 
   for (const q of queries) {
     if (!q?.trim()) continue;
+    trace?.add({ stage: 'query', query: q });
     // تضمينٌ واحد للاستعلام يخدم المصدرين: هو استدعاء شبكة، وحسابه مرّتين
     // يضيف زمناً على كل دور محادثة بلا مقابل.
     let queryVector: number[] | undefined;
     if (env.VECTORIZE) {
       try {
         queryVector = await embed(env, q);
-      } catch {
+      } catch (e) {
         // نموذج التضمين غير متاح — يبقى البحث اللفظي في المقاطع المستوردة.
+        trace?.fail('embed', e, q);
       }
     }
     // المقاطع المستوردة — بحث هجين، والتصفية على السريان داخله.
     try {
-      const legal = await searchLegal(env, q, { limit: topK, queryVector });
+      const legal = await searchLegal(env, q, {
+        limit: topK,
+        queryVector,
+        onSignal: trace ? (sig) => trace.add({ ...sig, query: q }) : undefined,
+      });
       if (legal.length) lists.push(joinArticleParts(legal).map(fromLegalHit));
-    } catch {
+    } catch (e) {
       // جدول المقاطع غير مهيّأ بعد (هجرة لم تُطبَّق) — نتابع بالوثائق وحدها.
+      trace?.fail('legal', e, q);
     }
     // الوثائق المرفوعة — دلاليّ وحده، فهي غير مفهرسة لفظياً.
     if (queryVector) {
       const docs = await retrieveDocuments(env, queryVector, topK);
+      trace?.add({ stage: 'documents', query: q, count: docs.length });
       if (docs.length) lists.push(docs);
     }
   }

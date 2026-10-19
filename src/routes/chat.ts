@@ -3,8 +3,10 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
-import { retrieve, formatRagContext, type RagResult } from '../lib/rag';
-import { extractAnchors, buildAnchorsBlock, BASIS_PER_ANCHOR, type BasisAnchor } from '../lib/basis';
+import { formatRagContext, type RagResult } from '../lib/rag';
+import { gatherLegalContext } from '../lib/research/gather';
+import { newTrace, saveTrace } from '../lib/research/trace';
+import { buildAnchorsBlock, type BasisAnchor } from '../lib/basis';
 import { enabledSources } from '../lib/sources';
 import { searchSources, formatFiqhContext, type ExternalHit } from '../lib/external';
 import { rerankByMeaning } from '../lib/rerank';
@@ -43,9 +45,6 @@ app.use('*', requireAuth);
  * الأدوات فلا وقفةَ أداةٍ أصلاً. وهي لا تقع إلا حين لا يأتي نصّ، فلا تُضاعف
  * كلفة الدور الناجح.
  */
-/** طولُ ما يُؤخذ من سؤال المحامي استعلاماً حين لا يكتب المُخطِّط استعلاماً. */
-const FALLBACK_QUERY_CHARS = 400;
-
 const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }[] = [
   // الحدُّ سقفٌ للتفكير والنص معاً، والمخرَج صحيفةُ دعوى أو مذكرة قد تطول.
   // والبثّ مُفعَّل فلا يُخشى عليه من مهلة الاتصال.
@@ -192,48 +191,39 @@ app.post('/:conversationId', async (c) => {
     return sseOnce(clarifyText, { messageId: asstId, plan }, title);
   }
 
-  // [2] المُنفِّذ: استرجاع RAG
+  // [2] المُنفِّذ: استرجاع RAG — والأثر يُحفظ لكل دور، تعطّل أو لم يتعطّل.
   let ragContext = '';
   let citations: any[] = [];
   /** مواضع الاستدلال — تُملأ في خدمة «استدلال نظامي» وحدها. */
   let anchors: BasisAnchor[] = [];
-  if (plan.needs_knowledge_base) {
-    try {
-      /* «استدلال نظامي» يمرّ بتمريرتين، وغيرُه بواحدة.
-         المستندُ كلُّه مسألتُه — عشرةُ دفوعٍ أو عشرون بنداً — وخمسةُ
-         استعلاماتٍ يكتبها المُخطِّط عن الطلب تُغطّي أبرزها وتترك الباقي
-         بلا سند. فتُستخرج مواضعُه أولاً ويُبحث لكلٍّ منها. والتفصيل — مع
-         حدِّ الطول الذي يمنعها في أسئلة المتابعة — في `lib/basis.ts`. */
-      if (plan.consultation_type === 'legal_basis') {
-        const own = attByMessage.get(userMsgId) ?? [];
-        const source = [message, ...own.map((a) => a.parsed_text)].join('\n\n');
-        anchors = await extractAnchors(c.env, source, user.id);
-      }
-
-      /* وإن لم يكتب المُخطِّط استعلاماً — تعذّر فعاد بخطّته الاحتياطية، أو
-         أغفلها — فسؤالُ المحامي نفسه هو الاستعلام. وكان الشرطُ يسقط فيمضي
-         التوليد بلا سياقٍ نظاميّ أصلاً، فيكتب النموذج من ذاكرته ولا أثر. */
-      const queries = anchors.length
-        ? anchors.map((a) => a.query)
-        : plan.kb_queries.length
-          ? plan.kb_queries
-          : [message.slice(0, FALLBACK_QUERY_CHARS)];
-      if (queries.length) {
-        /* «استدلال نظامي»: أربعُ مقاطع **لكلّ موضع** لا أربعٌ في المجموع.
-           كان السقف الواحد يقصّ ما دُمج من المواضع كلّها إلى أربع، فتأتي أكثرُ
-           صفوف الجدول بلا نصٍّ تستند إليه. */
-        const results = anchors.length
-          ? await retrieve(c.env, queries, BASIS_PER_ANCHOR, anchors.length * BASIS_PER_ANCHOR)
-          : await retrieve(c.env, queries, 6);
-        ragContext = formatRagContext(results);
-        citations = results.map(toCitation);
-      }
-    } catch (e: any) {
-      // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ:
-      // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هنا وحده.
-      console.error('retrieval failed:', e?.message ?? e);
-    }
+  const trace = newTrace();
+  let results: RagResult[] = [];
+  try {
+    const gathered = await gatherLegalContext(c.env, {
+      plan,
+      message,
+      attachmentsText: (attByMessage.get(userMsgId) ?? []).map((a) => a.parsed_text),
+      userId: user.id,
+      trace,
+    });
+    results = gathered.results;
+    anchors = gathered.anchors;
+    ragContext = formatRagContext(results);
+    citations = results.map(toCitation);
+  } catch (e: any) {
+    // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ والأثر:
+    // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هناك وحده.
+    console.error('retrieval failed:', trace.fail('retrieval', e));
   }
+  if (trace.failed) console.error('retrieval degraded:', JSON.stringify(trace.steps.filter((s) => s.error)));
+  await saveTrace(c.env, {
+    conversationId,
+    messageId: userMsgId,
+    userId: user.id,
+    plan,
+    trace,
+    resultKeys: results.map((r) => r.key ?? r.documentId),
+  });
 
   /* ══ التدعيم الفقهي — خارج السياق النظامي لا داخله ══
    *

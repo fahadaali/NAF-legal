@@ -4,6 +4,11 @@
 //   npm run check:platform
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import http from 'node:http';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { writeFile, mkdtemp } from 'node:fs/promises';
+import os from 'node:os';
 import { ROOT, bundle, makeDb, makeKv, makeR2, makeCtx, fakeAnthropic, suite } from './harness.mjs';
 
 const t = suite('فحوص المنصة');
@@ -28,6 +33,7 @@ const routes = await bundle(
    export { default as folders } from './folders';
    export { default as conversations } from './conversations';
    export { isOfficialUrl } from './admin';
+   export { default as evalRoutes } from './eval';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -305,6 +311,83 @@ await t.check('الاستيعاب من رابط: مصادر رسمية بـhttps
   assert.equal(routes.isOfficialUrl('http://laws.boe.gov.sa/x'), false);
   assert.equal(routes.isOfficialUrl('https://boe.gov.sa.evil.test/x'), false);
   assert.equal(routes.isOfficialUrl('https://evil.test/?u=boe.gov.sa'), false);
+});
+
+console.log('\nالقياس والأثر');
+
+await t.check('كل دورٍ يحفظ أثر استرجاعه بما رجع وما تعطّل', async () => {
+  const { env, db } = await chatFixture();
+  const fake = fakeAnthropic((b) =>
+    isPlanner(b) ? { text: '{"needs_knowledge_base": true, "kb_queries": ["مكافأة نهاية الخدمة"]}' } : { text: 'رد' }
+  );
+  try {
+    await sendTurn(env, 'سؤال');
+    const tr = db.q('SELECT steps_json, result_keys_json, failed FROM retrieval_traces')[0];
+    assert.ok(tr, 'لم يُحفظ أثر');
+    assert.deepEqual(JSON.parse(tr.result_keys_json), ['legal:labor:84']);
+    const steps = JSON.parse(tr.steps_json);
+    assert.ok(steps.some((s) => s.stage === 'lexical' && s.count >= 1), 'المسار اللفظي غائب عن الأثر');
+    // بلا فهرسٍ متجهي: الدور يمضي، والأثر يقول إن المسار الدلالي لم يعمل.
+    assert.ok(steps.some((s) => s.stage === 'semantic' && s.error), 'تعطّل الدلالي لم يُسجَّل');
+    assert.equal(tr.failed, 1);
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('مسار القياس يشغّل خطّ الاسترجاع نفسه ويعيد الأنظمة والمواد', async () => {
+  const { env } = await chatFixture();
+  const fake = fakeAnthropic(() => ({ text: '{"needs_knowledge_base": true, "kb_queries": ["مكافأة"]}' }));
+  try {
+    const res = await routes.evalRoutes.request('/retrieve', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'مكافأة نهاية الخدمة', consultation_type: 'consultation' }),
+    }, env);
+    const out = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(out.results[0].law_title, 'نظام العمل');
+    assert.equal(out.results[0].article_no, '84');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('سكربت القياس يحسب تغطية الأنظمة والطبقات والمواد', async () => {
+  const server = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({
+      results: [
+        { law_title: 'نظام العمل', article_no: '84', article_ref: 'المادة 84' },
+        { law_title: 'اللائحة التنفيذية لنظام العمل', article_no: '3' },
+      ],
+      queries: ['q'], failed: false, ms: 5,
+    }));
+  });
+  await new Promise((r) => server.listen(0, r));
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'naf-eval-'));
+  const cases = path.join(dir, 'cases.jsonl');
+  await writeFile(cases, JSON.stringify({
+    id: 'x', message: 'م', consultation_type: 'consultation',
+    expected_laws: [
+      { layer: 'موضوعي', title: 'نظام العمل', required: true },
+      { layer: 'إجرائي', title: 'نظام المرافعات الشرعية', required: true },
+    ],
+    expected_articles: [{ law: 'نظام العمل', article: '84', confidence: 'high' }, { law: 'نظام العمل', article: '77', confidence: 'high' }],
+  }));
+  try {
+    const out = path.join(dir, 'out.json');
+    await promisify(execFile)('node', [path.join(ROOT, 'scripts', 'eval-retrieval.mjs'),
+      '--url', `http://127.0.0.1:${server.address().port}`, '--cookie', 'x', '--cases', cases, '--out', out]);
+    const { summary, rows } = JSON.parse(await (await import('node:fs/promises')).readFile(out, 'utf8'));
+    // «اللائحة التنفيذية لنظام العمل» لا تُحسب «نظام العمل»، ونظام العمل وحده من نظامين.
+    assert.equal(rows[0].laws, 50);
+    assert.equal(rows[0].layers, 50);
+    assert.equal(rows[0].articles, 50);
+    assert.deepEqual(rows[0].missing, ['إجرائي: نظام المرافعات الشرعية']);
+    assert.equal(summary.laws, 50);
+  } finally {
+    server.close();
+  }
 });
 
 t.done();

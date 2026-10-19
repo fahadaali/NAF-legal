@@ -3700,6 +3700,8 @@ export interface LegalSearchOptions extends LegalFilters {
    * وتمريره أرخص من حسابه في كل مسار — وهو استدعاء شبكة لا حساب محلي.
    */
   queryVector?: number[];
+  /** يُبلَّغ بما رجع من كل مسار وبما تعطّل منه — لأثر الاسترجاع (`lib/research/trace.ts`). */
+  onSignal?: (signal: { stage: string; count?: number; error?: string }) => void;
 }
 
 /**
@@ -3746,12 +3748,15 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
         .bind(match, ...filters.binds, candidates)
         .all<HitRow>();
       lists.push({ name: 'lexical', hits: (rows.results ?? []).map(toHit) });
-    } catch {
+      opts.onSignal?.({ stage: 'lexical', count: rows.results?.length ?? 0 });
+    } catch (e: any) {
       // فهرس لفظي غير مهيّأ (هجرة لم تُطبَّق بعد) — يبقى الدلاليّ وحده.
+      opts.onSignal?.({ stage: 'lexical', error: String(e?.message ?? e) });
     }
   }
 
   // ── المسار الدلالي ──
+  if (!env.VECTORIZE && !opts.lexicalOnly) opts.onSignal?.({ stage: 'semantic', error: 'VECTORIZE غير مربوط' });
   if (env.VECTORIZE && !opts.lexicalOnly) {
     try {
       // الاستعلام يُضمَّن كما كتبه صاحبه لا مطبَّعاً: النموذج يفهم الصرف
@@ -3779,8 +3784,10 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
         }
         lists.push({ name: 'semantic', hits: ordered });
       }
-    } catch {
+      opts.onSignal?.({ stage: 'semantic', count: seqs.length });
+    } catch (e: any) {
       // الفهرس المتجهي أو نموذج التضمين غير متاح — يبقى اللفظيّ وحده.
+      opts.onSignal?.({ stage: 'semantic', error: String(e?.message ?? e) });
     }
   }
 
