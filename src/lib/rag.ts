@@ -109,10 +109,12 @@ const RRF_K = 60;
 /**
  * البحث في المصدرين وإعادة أوثق المقاطع مع الإسناد.
  *
+ * `topK` ما يُطلب لكل استعلام، و`total` سقفُ ما يعود بعد الدمج (افتراضاً مثله).
+ *
  * الدمج بالرتب لا بالدرجات: درجة bm25 ودرجة التشابه الجيبي ورتب مصدرين
  * مختلفين لا تُجمع على مقياس واحد.
  */
-export async function retrieve(env: Env, queries: string[], topK = 5): Promise<RagResult[]> {
+export async function retrieve(env: Env, queries: string[], topK = 5, total = topK): Promise<RagResult[]> {
   const lists: RagResult[][] = [];
 
   for (const q of queries) {
@@ -156,7 +158,9 @@ export async function retrieve(env: Env, queries: string[], topK = 5): Promise<R
 
   return Array.from(merged.values())
     .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
+    // `topK` لكل استعلام و`total` للمجموع. وكانا واحداً، فاستعلاماتٌ ثمانية لكلٍّ
+    // منها أربعٌ تنتهي إلى أربعٍ لا إلى اثنتين وثلاثين.
+    .slice(0, total);
 }
 
 /**

@@ -43,12 +43,33 @@ app.use('*', requireAuth);
  * الأدوات فلا وقفةَ أداةٍ أصلاً. وهي لا تقع إلا حين لا يأتي نصّ، فلا تُضاعف
  * كلفة الدور الناجح.
  */
+/** طولُ ما يُؤخذ من سؤال المحامي استعلاماً حين لا يكتب المُخطِّط استعلاماً. */
+const FALLBACK_QUERY_CHARS = 400;
+
 const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }[] = [
   // الحدُّ سقفٌ للتفكير والنص معاً، والمخرَج صحيفةُ دعوى أو مذكرة قد تطول.
   // والبثّ مُفعَّل فلا يُخشى عليه من مهلة الاتصال.
   { effort: 'high', max_tokens: 64000, withTools: true },
   { effort: 'medium', max_tokens: 32000, withTools: false },
 ];
+
+/**
+ * طلباتٌ رفعت علامة «قيد التوليد» ولم تسلّمها بعدُ لدورٍ يجري في الخلفية.
+ *
+ * بين رفع العلامة وفتح البثّ عملٌ كثير — المُخطِّط والاسترجاع وإعدادُ البرومبت
+ * من القاعدة — وأيُّ خطأٍ يُرمى فيه يخرج إلى `app.onError` فتبقى العلامة
+ * مرفوعةً عشر دقائق: سؤالٌ محفوظ بلا جواب، وكلُّ إرسالٍ بعده يُردّ بـ409.
+ * فتُنزَل هنا عند الخطأ، ولا يمسّ ذلك علامةَ طلبٍ آخر لم يرفعها هذا الطلب.
+ */
+const holdingMark = new WeakSet<Request>();
+
+app.use('/:conversationId', async (c, next) => {
+  await next();
+  if (c.error && holdingMark.has(c.req.raw)) {
+    holdingMark.delete(c.req.raw);
+    await clearGenerating(c.env, c.req.param('conversationId')).catch(() => {});
+  }
+});
 
 // POST /api/chat/:conversationId  → SSE stream
 app.post('/:conversationId', async (c) => {
@@ -87,6 +108,7 @@ app.post('/:conversationId', async (c) => {
      فيها يجد سؤاله محفوظاً بلا جواب ولا أثرِ عمل، فيعيده. وتُنزل عند كل
      مخرجٍ من هذا المسار: الاستيضاح، وفشل فتح البثّ، وختام الدور. */
   await markGenerating(c.env, conversationId);
+  holdingMark.add(c.req.raw);
 
   /* المرفقات المرسَلة مع هذا الدور تُختم برسالته.
      والختم مقيَّدٌ بثلاثة: أن يكون المرفق في هذه المحادثة، وأن يكون لم
@@ -188,9 +210,21 @@ app.post('/:conversationId', async (c) => {
         anchors = await extractAnchors(c.env, source, user.id);
       }
 
-      const queries = anchors.length ? anchors.map((a) => a.query) : plan.kb_queries;
+      /* وإن لم يكتب المُخطِّط استعلاماً — تعذّر فعاد بخطّته الاحتياطية، أو
+         أغفلها — فسؤالُ المحامي نفسه هو الاستعلام. وكان الشرطُ يسقط فيمضي
+         التوليد بلا سياقٍ نظاميّ أصلاً، فيكتب النموذج من ذاكرته ولا أثر. */
+      const queries = anchors.length
+        ? anchors.map((a) => a.query)
+        : plan.kb_queries.length
+          ? plan.kb_queries
+          : [message.slice(0, FALLBACK_QUERY_CHARS)];
       if (queries.length) {
-        const results = await retrieve(c.env, queries, anchors.length ? BASIS_PER_ANCHOR : 6);
+        /* «استدلال نظامي»: أربعُ مقاطع **لكلّ موضع** لا أربعٌ في المجموع.
+           كان السقف الواحد يقصّ ما دُمج من المواضع كلّها إلى أربع، فتأتي أكثرُ
+           صفوف الجدول بلا نصٍّ تستند إليه. */
+        const results = anchors.length
+          ? await retrieve(c.env, queries, BASIS_PER_ANCHOR, anchors.length * BASIS_PER_ANCHOR)
+          : await retrieve(c.env, queries, 6);
         ragContext = formatRagContext(results);
         citations = results.map(toCitation);
       }
@@ -410,13 +444,26 @@ app.post('/:conversationId', async (c) => {
         return attempt.outcome;
       };
 
-      let outcome = await pump(firstAttempt);
+      /* انقطاعُ البثّ في منتصفه يُرمى من `reader.read()`. وكان يخرج من الجسم كلِّه
+         إلى السجلّ: لا حدثَ خطأ ولا ختام، وما وصل من النصّ لا يُحفظ. والآن يصير
+         مآلاً كغيره: نصٌّ لم يصل يُعاد طلبُه، ونصٌّ وصل بعضُه يُحفظ موسوماً
+         بانقطاعه ويُقال ذلك للمحامي. */
+      const pumpSafely = async (attempt: ClaudeStream): Promise<StreamOutcome> => {
+        try {
+          return await pump(attempt);
+        } catch (e: any) {
+          console.error('stream broke:', e?.message ?? e);
+          return { sawText: !!fullText.trim(), stopReason: 'stream_error', refusalCategory: null, blocks: [] };
+        }
+      };
+
+      let outcome = await pumpSafely(firstAttempt);
       for (let i = 1; i < ATTEMPTS.length && !fullText.trim() && isRetryableEmptyTurn(outcome); i++) {
         console.error(
           `empty turn (stop_reason=${outcome.stopReason ?? 'none'}) — retrying at effort=${ATTEMPTS[i].effort} without tools`
         );
         try {
-          outcome = await pump(await openAttempt(i));
+          outcome = await pumpSafely(await openAttempt(i));
         } catch (e: any) {
           console.error('retry failed:', e?.message ?? e);
           break;
@@ -444,6 +491,7 @@ app.post('/:conversationId', async (c) => {
           fiqh_citations: fiqhCitations,
           output_format: plan.output_format,
           missing_regulations: relevantMissing,
+          ...(outcome.stopReason === 'stream_error' ? { interrupted: true } : {}),
         };
         await env.DB.prepare(
           'INSERT INTO messages (id, conversation_id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
@@ -465,6 +513,7 @@ app.post('/:conversationId', async (c) => {
            الفقاعة ثم تصل الحدثان إلى مستمعٍ انصرف: شارة التحقّق لا تظهر
            أبداً، وطلبُ إضافة نظامٍ ناقص لا يُعرض. وزرُّ التصدير كان يظهر
            للحظةٍ قبل أن يوجد الصفّ الذي يصدّره. */
+        if (outcome.stopReason === 'stream_error') await send('error', { error: emptyTurnReason(outcome) });
         await send('done', {});
         await send('regulations', { missing: relevantMissing });
 
@@ -531,6 +580,7 @@ app.post('/:conversationId', async (c) => {
     }
   };
 
+  holdingMark.delete(c.req.raw); // صار للدور في الخلفية، وهو يُنزلها في `finally`.
   c.executionCtx.waitUntil(run());
 
   return new Response(readable, {

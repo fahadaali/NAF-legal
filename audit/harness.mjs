@@ -134,3 +134,69 @@ export function suite(title) {
     },
   };
 }
+
+/**
+ * بديلٌ لـ Claude API على `fetch` نفسه — فتمرّ الطلبات بشيفرة `lib/claude.ts`
+ * كما هي، ويُفحص ما أُرسل وما رجع.
+ *
+ * `respond(body, n)` يعيد واحداً من:
+ *   `{ text }`            ردٌّ غير متدفّق أو متدفّق بالنصّ كاملاً
+ *   `{ text, breakAfter }` بثٌّ ينقطع بعد هذا العدد من المقاطع
+ *   `{ status }`          ردٌّ بخطأ HTTP
+ *   `{ json }`            جسمٌ كما هو
+ */
+export function fakeAnthropic(respond) {
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url.startsWith('https://api.anthropic.com/')) return realFetch(input, init);
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    const r = (await respond(body, calls.length)) ?? { text: '' };
+    if (r.status) return new Response(JSON.stringify({ error: { message: 'fake' } }), { status: r.status });
+    if (r.json) return new Response(JSON.stringify(r.json), { status: 200 });
+    if (!body.stream) {
+      return new Response(
+        JSON.stringify({
+          content: [{ type: 'text', text: r.text }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    const pieces = r.text ? r.text.match(/[\s\S]{1,20}/g) : [];
+    const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+    const frames = [
+      ev('message_start', { message: { usage: { input_tokens: 10 } } }),
+      ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }),
+      ...pieces.map((p) => ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: p } })),
+      ev('content_block_stop', { index: 0 }),
+      ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }),
+      ev('message_stop', {}),
+    ];
+    const enc = new TextEncoder();
+    const limit = r.breakAfter == null ? frames.length : 2 + r.breakAfter;
+    let i = 0;
+    const stream = new ReadableStream({
+      pull(ctrl) {
+        if (i < limit && i < frames.length) ctrl.enqueue(enc.encode(frames[i++]));
+        else if (r.breakAfter != null) ctrl.error(new Error('network connection lost'));
+        else ctrl.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  return { calls, restore: () => (globalThis.fetch = realFetch) };
+}
+
+/** سياقُ تنفيذٍ يجمع ما يُسلَّم لـ`waitUntil` لِيُنتظر في الفحص. */
+export function makeCtx() {
+  const pending = [];
+  return {
+    waitUntil: (p) => pending.push(Promise.resolve(p).catch(() => {})),
+    passThroughOnException() {},
+    settle: () => Promise.all(pending),
+  };
+}
