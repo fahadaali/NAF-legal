@@ -348,6 +348,13 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<C
   let buffer = '';
 
   const outcome: StreamOutcome = { sawText: false, stopReason: null, refusalCategory: null, blocks: [] };
+
+  /* مواضعُ الإسناد في النصّ: كل كتلة نصٍّ تبدأ عند طول ما سبقها، وإسناداتُها تصل
+     دفعاتٍ (`citations_delta`) أثناءها، فتُرسل مجموعةً عند ختامها حدثاً `cite`
+     بمدى الكتلة في النصّ الكامل ومصادرها. */
+  let textLen = 0;
+  const blockStart = new Map<number, number>();
+  const blockCites = new Map<number, { source: string; index: number }[]>();
   let settle: (o: StreamOutcome) => void = () => {};
   const finished = new Promise<StreamOutcome>((resolve) => {
     settle = resolve;
@@ -410,10 +417,25 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<C
             const parsed = JSON.parse(json);
             if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
               outcome.sawText = true;
+              textLen += String(parsed.delta.text ?? '').length;
               emit('delta', { text: parsed.delta.text });
+            } else if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'citations_delta') {
+              const ct = parsed.delta.citation;
+              if (ct?.type === 'search_result_location') {
+                const list = blockCites.get(parsed.index) ?? [];
+                list.push({ source: String(ct.source ?? ''), index: Number(ct.search_result_index ?? -1) });
+                blockCites.set(parsed.index, list);
+              }
+            } else if (parsed.type === 'content_block_stop') {
+              const cites = blockCites.get(parsed.index);
+              if (cites?.length) {
+                emit('cite', { start: blockStart.get(parsed.index) ?? 0, end: textLen, sources: cites });
+                blockCites.delete(parsed.index);
+              }
             } else if (parsed.type === 'content_block_start') {
               const kind = parsed.content_block?.type;
               if (kind) outcome.blocks.push(kind);
+              if (kind === 'text') blockStart.set(parsed.index, textLen);
               if (kind === 'web_search_tool_result') emit('search', { active: true });
             } else if (parsed.type === 'message_start' && parsed.message?.usage) {
               const u = parsed.message.usage;

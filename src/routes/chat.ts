@@ -5,7 +5,7 @@ import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
 import { type RagResult } from '../lib/rag';
 import { gatherLegalContext } from '../lib/research/gather';
-import { formatLayeredContext, TOTAL_MAX, type ResearchGroup, type ResearchGap } from '../lib/research/layered';
+import { formatLayeredContext, layeredContextBlocks, TOTAL_MAX, type ResearchGroup, type ResearchGap } from '../lib/research/layered';
 import { saveMemo, latestMemo, getOwnedMemo, hydrateMemo, memoGroups } from '../lib/research/memo';
 import { newTrace, saveTrace } from '../lib/research/trace';
 import { buildAnchorsBlock, type BasisAnchor } from '../lib/basis';
@@ -47,6 +47,9 @@ app.use('*', requireAuth);
  * الأدوات فلا وقفةَ أداةٍ أصلاً. وهي لا تقع إلا حين لا يأتي نصّ، فلا تُضاعف
  * كلفة الدور الناجح.
  */
+/** سقفُ مواضع الإسناد المحفوظة للردّ الواحد. */
+const MAX_CITE_SPANS = 400;
+
 /** موادُّ مذكرة الدور السابق التي تُعاد في سؤال المتابعة. */
 const PRIOR_MEMO_MAX = 20;
 
@@ -366,7 +369,13 @@ app.post('/:conversationId', async (c) => {
     score: h.score,
   }));
 
-  const userContent = `${ragContext}${fiqhBlock}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
+  /* الموادّ كتلَ `search_result` حين تكون — فيعود الردّ موسوماً بمصدر كل مقطع —
+     وما عداها نصٌّ كما كان. و`ragContext` النصّي يبقى لفحص الإسناد بعد التوليد. */
+  const contextBlocks = layeredContextBlocks(groups);
+  const tail = `${fiqhBlock}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
+  const userContent: string | any[] = contextBlocks.length
+    ? [...contextBlocks, { type: 'text', text: tail }]
+    : `${ragContext}${tail}`.trim();
 
   const messages = [
     ...(history.results ?? [])
@@ -416,6 +425,8 @@ app.post('/:conversationId', async (c) => {
   let fullText = '';
   let inputTokens = 0;
   let outputTokens = 0;
+  /** مواضع الإسناد في الردّ: مدى كل كتلةٍ ومفاتيحُ الموادّ التي استندت إليها. */
+  const citeSpans: { start: number; end: number; sources: { source: string; index: number }[] }[] = [];
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
   const encoder = new TextEncoder();
@@ -481,6 +492,8 @@ app.post('/:conversationId', async (c) => {
               const payload = JSON.parse(dataLine.slice(6));
               if (p.includes('event: delta')) {
                 fullText += payload.text ?? '';
+              } else if (p.includes('event: cite')) {
+                if (citeSpans.length < MAX_CITE_SPANS) citeSpans.push(payload);
               } else if (p.includes('event: usage')) {
                 // العدّادات تُجمع لا تُستبدل: محاولتان تُدفَعان كلتاهما.
                 if (payload.input_tokens) inputTokens += payload.input_tokens;
@@ -542,6 +555,16 @@ app.post('/:conversationId', async (c) => {
           output_format: plan.output_format,
           missing_regulations: relevantMissing,
           ...(outcome.stopReason === 'stream_error' ? { interrupted: true } : {}),
+          ...(citeSpans.length
+            ? {
+                citation_spans: citeSpans.map((c) => ({
+                  start: c.start,
+                  end: c.end,
+                  keys: [...new Set(c.sources.map((x) => x.source))],
+                })),
+              }
+            : {}),
+          ...(memoId ? { memo_id: memoId } : {}),
         };
         await env.DB.prepare(
           'INSERT INTO messages (id, conversation_id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'

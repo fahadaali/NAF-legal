@@ -166,16 +166,24 @@ export function fakeAnthropic(respond) {
         { status: 200, headers: { 'content-type': 'application/json' } }
       );
     }
-    const pieces = r.text ? r.text.match(/[\s\S]{1,20}/g) : [];
     const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
-    const frames = [
-      ev('message_start', { message: { usage: { input_tokens: 10 } } }),
-      ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }),
-      ...pieces.map((p) => ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: p } })),
-      ev('content_block_stop', { index: 0 }),
-      ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }),
-      ev('message_stop', {}),
-    ];
+    // كتلٌ متعدّدة بإسناداتها كما يرسلها البثّ: `{ blocks: [{ text, sources: [مفتاح…] }] }`.
+    const blocks = r.blocks ?? [{ text: r.text ?? '' }];
+    const frames = [ev('message_start', { message: { usage: { input_tokens: 10 } } })];
+    blocks.forEach((b, index) => {
+      frames.push(ev('content_block_start', { index, content_block: { type: 'text', text: '' } }));
+      for (const p of b.text ? b.text.match(/[\s\S]{1,20}/g) : []) {
+        frames.push(ev('content_block_delta', { index, delta: { type: 'text_delta', text: p } }));
+      }
+      for (const src of b.sources ?? []) {
+        frames.push(ev('content_block_delta', {
+          index,
+          delta: { type: 'citations_delta', citation: { type: 'search_result_location', source: src, title: src, search_result_index: 0, start_block_index: 0, end_block_index: 1, cited_text: '' } },
+        }));
+      }
+      frames.push(ev('content_block_stop', { index }));
+    });
+    frames.push(ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }), ev('message_stop', {}));
     const enc = new TextEncoder();
     const limit = r.breakAfter == null ? frames.length : 2 + r.breakAfter;
     let i = 0;

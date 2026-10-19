@@ -638,4 +638,41 @@ await t.check('مذكرةُ محادثة مستخدمٍ آخر لا تُقرأ �
   assert.equal((await routes.research.request('/memos/m2', {}, env)).status, 404);
 });
 
+console.log('\nالإسناد بكتل search_result');
+
+await t.check('الموادّ تصل كتلَ search_result مُفعَّلاً إسنادُها كلُّها، ومواضع الإسناد تُحفظ مع الردّ', async () => {
+  const { env, db } = await layeredFixture();
+  const fake = fakeAnthropic((b) => {
+    if (isPlanner(b)) return { text: JSON.stringify(LAYERED_PLAN) };
+    if (isGeneration(b)) {
+      return { blocks: [
+        { text: 'أولاً: الوقائع. ' },
+        { text: 'يستحق المدعي التعويض عن الفصل غير المشروع.', sources: ['legal:labor:77'] },
+        { text: ' وتختص المحكمة العمالية بنظر الدعوى.', sources: ['legal:mur:31'] },
+      ] };
+    }
+    return { text: 'عنوان' };
+  });
+  try {
+    await sendWith(env, { message: 'صحيفة دعوى عمالية' });
+    const gen = fake.calls.find(isGeneration);
+    const last = gen.messages.at(-1).content;
+    assert.ok(Array.isArray(last), 'السياق نصٌّ لا كتل');
+    const results = last.filter((x) => x.type === 'search_result');
+    assert.ok(results.length >= 5, `كتل الموادّ ${results.length}`);
+    assert.ok(results.every((x) => x.citations?.enabled === true), 'الإسناد ليس في الكتل كلِّها');
+    assert.ok(results.some((x) => x.source === 'legal:labor:77' && /نظام العمل — المادة 77/.test(x.title)));
+    assert.equal(last.at(-1).type, 'text');
+    assert.match(last.at(-1).text, /صحيفة دعوى عمالية/);
+
+    const msg = db.q("SELECT content, metadata_json FROM messages WHERE role = 'assistant'")[0];
+    const spans = JSON.parse(msg.metadata_json).citation_spans;
+    assert.equal(spans.length, 2);
+    assert.equal(msg.content.slice(spans[0].start, spans[0].end), 'يستحق المدعي التعويض عن الفصل غير المشروع.');
+    assert.deepEqual(spans[1].keys, ['legal:mur:31']);
+  } finally {
+    fake.restore();
+  }
+});
+
 t.done();

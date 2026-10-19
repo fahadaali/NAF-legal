@@ -24,7 +24,16 @@ import {
   type LegalHit,
 } from '../legal';
 import { embedBatch } from '../embed';
-import { fromLegalHit, joinArticleParts, formatRagBlock, wrapRagContext, type RagResult } from '../rag';
+import {
+  fromLegalHit,
+  joinArticleParts,
+  formatRagBlock,
+  wrapRagContext,
+  citationLine,
+  noticeLines,
+  RAG_CONTEXT_INSTRUCTIONS,
+  type RagResult,
+} from '../rag';
 import { knownLaws, resolveNamed, type KnownLaw } from './links';
 import type { RetrievalTrace } from './trace';
 import type { Env, GroundingLayer, PlannerIssue, PlannerOutput } from '../../types';
@@ -332,4 +341,32 @@ export function formatLayeredContext(groups: ResearchGroup[]): string {
     .filter((g) => g.results.length)
     .map((g) => `### ${groupHeading(g)}\n\n${g.results.map((r) => formatRagBlock(r, ++n)).join('\n\n---\n\n')}`);
   return wrapRagContext(sections.join('\n\n'));
+}
+
+/**
+ * السياق كتلاً لا نصّاً: كل مادةٍ كتلة `search_result` بمفتاحها مصدراً وسطرِ إسنادها
+ * عنواناً، والإسنادُ مُفعَّل — فيعود كل مقطعٍ من الردّ موسوماً بالمادة التي استند
+ * إليها بعينها (`search_result_location`)، لا بما يُستخرج من النصّ بتعبيرٍ نمطي.
+ *
+ * والعناوين والتعليمات والوسمُ نفسُها في الصيغة النصّية، كتلاً نصّية بين الموادّ.
+ * والإسنادُ في الكتل كلِّها أو لا شيء منها: خلطُهما يردّه الـAPI.
+ */
+export function layeredContextBlocks(groups: ResearchGroup[]): any[] {
+  const filled = groups.filter((g) => g.results.length);
+  if (!filled.length) return [];
+  const blocks: any[] = [{ type: 'text', text: `<سياق_نظامي>\n${RAG_CONTEXT_INSTRUCTIONS}` }];
+  for (const g of filled) {
+    blocks.push({ type: 'text', text: `### ${groupHeading(g)}` });
+    for (const r of g.results) {
+      blocks.push({
+        type: 'search_result',
+        source: r.key ?? r.documentId,
+        title: citationLine(r),
+        content: [{ type: 'text', text: `${noticeLines(r)}${r.text}` }],
+        citations: { enabled: true },
+      });
+    }
+  }
+  blocks.push({ type: 'text', text: '</سياق_نظامي>' });
+  return blocks;
 }
