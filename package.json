@@ -12,6 +12,7 @@
     "db:migrate": "wrangler d1 migrations apply naf_legal --local",
     "db:migrate:remote": "wrangler d1 migrations apply naf_legal --remote",
     "typecheck": "tsc --noEmit",
+    "check": "npm run -s typecheck && npm run -s check:sso && npm run -s check:legal && npm run -s check:mcp && npm run -s check:external && npm run -s check:oauth && npm run -s check:platform",
     "check:sso": "node audit/sso-contract-check.mjs",
     "check:legal": "node audit/legal-contract-check.mjs",
     "check:mcp": "node audit/mcp-client-check.mjs",

@@ -233,8 +233,9 @@ export default {
    */
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     // ردُّ دفعات الاستيراد المتروكة في كل نبضة، ومهامُّ الليل في نبضتها وحدها.
-    ctx.waitUntil(runImportRecovery(env).then(() => {}));
+    // الإحالات بين المواد في كل نبضة كذلك — قواعدُ على القاعدة وحدها بلا نموذج.
     ctx.waitUntil(runLinkExtraction(env));
+    ctx.waitUntil(runImportRecovery(env).then(() => {}));
     if (!isNightlyTick(event.scheduledTime)) return;
     ctx.waitUntil(
       Promise.allSettled([
