@@ -98,6 +98,56 @@ export function ftsMatchExpression(query: string): string | null {
   return groups.join(' OR ');
 }
 
+// ── الجذع الخفيف — للفهرس اللفظي الثاني (`legal_fts_stem`) ──
+//
+// النصّ الرسمي يكتب «للعامل» و«والعامل» و«بالعقد»، والمحامي يبحث عن «العامل»
+// و«العقد». والتقطيع يجعل كلاً منها كلمةً واحدة لا تطابق غيرها، فيفوت البحثَ
+// اللفظيَّ أكثرُ مواضع اللفظ. والجذع الخفيف (Light10 عند Larkey) ينزع السوابق
+// المتصلة واللواحق الشائعة من الطرفين — النصّ والاستعلام — فتلتقي الصيغ.
+//
+// وهو خفيفٌ عمداً: لا يبلغ الجذر الثلاثي، فلا تلتقي «كاتب» و«مكتوب». والغرض
+// صيغُ اللفظ الواحد لا اشتقاقاته. ويُطبَّق على نصٍّ مطبَّع (`normalizeArabic`).
+
+// قائمة Light10 مزيدةً بـ«فلل» و«فبال»: «فللعامل» و«فبالعقد» شائعتان في النصوص
+// النظامية، والواو قبلها تُنزع في الخطوة الأولى.
+const STEM_PREFIXES = ['فبال', 'وال', 'بال', 'كال', 'فال', 'فلل', 'لل', 'ال'];
+const STEM_SUFFIXES = ['ها', 'ان', 'ات', 'ون', 'ين', 'يه', 'ه', 'ي'];
+
+/** جذعٌ خفيف لكلمةٍ مطبَّعة. ما ليس عربياً أو ما قصُر يُعاد كما هو. */
+export function lightStem(token: string): string {
+  if (!/^[\u0621-\u064A]+$/.test(token)) return token;
+  let w = token;
+  if (w.length > 3 && w.startsWith('و')) w = w.slice(1);
+  for (const p of STEM_PREFIXES) {
+    if (w.startsWith(p) && w.length - p.length > 1) {
+      w = w.slice(p.length);
+      break;
+    }
+  }
+  for (const s of STEM_SUFFIXES) {
+    if (w.endsWith(s) && w.length - s.length > 1) w = w.slice(0, -s.length);
+  }
+  return w;
+}
+
+/** نصٌّ مطبَّع إلى جذوعه الخفيفة، كلمةً كلمة — مدخلُ `legal_fts_stem`. */
+export function stemText(textNorm: string): string {
+  return textNorm
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .map(lightStem)
+    .join(' ');
+}
+
+/** تعبير `MATCH` على الجذوع — كتعبير `ftsMatchExpression` بلا صيغتي «ال». */
+export function stemMatchExpression(query: string): string | null {
+  const tokens = tokenize(query);
+  if (!tokens.length) return null;
+  const meaningful = tokens.filter((t) => !STOPWORDS.has(t));
+  const stems = [...new Set((meaningful.length ? meaningful : tokens).map(lightStem))].filter((t) => t.length > 1);
+  return stems.length ? stems.map(quote).join(' OR ') : null;
+}
+
 /**
  * يستخرج رقم المادة من استعلام مثل «ما نصّ المادة (74) من نظام العمل؟».
  *

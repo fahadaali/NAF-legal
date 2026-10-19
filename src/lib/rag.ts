@@ -19,6 +19,7 @@ import {
   type LegalHit,
 } from './legal';
 import { embed } from './embed';
+import type { RetrievalTrace } from './research/trace';
 import type { Env } from '../types';
 
 // تُعاد من هنا حفاظاً على مستورديها القائمين (`ingest.ts`).
@@ -69,6 +70,8 @@ export interface RagResult {
   articleRef?: string;
   /** مفتاح المقطع للدمج — معرّف المتجه للوثائق، ومعرّف العقد للمقاطع. */
   key?: string;
+  /** المفتاح الداخلي لأوّل أجزاء المادة — به تُستعاد في الدور التالي بنصّها الجاري. */
+  seq?: number;
   // ── ما يزيد في المقاطع المستوردة (للاستشهاد الدقيق) ──
   source?: 'legal' | 'document';
   lawId?: string;
@@ -109,34 +112,50 @@ const RRF_K = 60;
 /**
  * البحث في المصدرين وإعادة أوثق المقاطع مع الإسناد.
  *
+ * `topK` ما يُطلب لكل استعلام، و`total` سقفُ ما يعود بعد الدمج (افتراضاً مثله).
+ *
  * الدمج بالرتب لا بالدرجات: درجة bm25 ودرجة التشابه الجيبي ورتب مصدرين
  * مختلفين لا تُجمع على مقياس واحد.
  */
-export async function retrieve(env: Env, queries: string[], topK = 5): Promise<RagResult[]> {
+export async function retrieve(
+  env: Env,
+  queries: string[],
+  topK = 5,
+  total = topK,
+  trace?: RetrievalTrace
+): Promise<RagResult[]> {
   const lists: RagResult[][] = [];
 
   for (const q of queries) {
     if (!q?.trim()) continue;
+    trace?.add({ stage: 'query', query: q });
     // تضمينٌ واحد للاستعلام يخدم المصدرين: هو استدعاء شبكة، وحسابه مرّتين
     // يضيف زمناً على كل دور محادثة بلا مقابل.
     let queryVector: number[] | undefined;
     if (env.VECTORIZE) {
       try {
         queryVector = await embed(env, q);
-      } catch {
+      } catch (e) {
         // نموذج التضمين غير متاح — يبقى البحث اللفظي في المقاطع المستوردة.
+        trace?.fail('embed', e, q);
       }
     }
     // المقاطع المستوردة — بحث هجين، والتصفية على السريان داخله.
     try {
-      const legal = await searchLegal(env, q, { limit: topK, queryVector });
+      const legal = await searchLegal(env, q, {
+        limit: topK,
+        queryVector,
+        onSignal: trace ? (sig) => trace.add({ ...sig, query: q }) : undefined,
+      });
       if (legal.length) lists.push(joinArticleParts(legal).map(fromLegalHit));
-    } catch {
+    } catch (e) {
       // جدول المقاطع غير مهيّأ بعد (هجرة لم تُطبَّق) — نتابع بالوثائق وحدها.
+      trace?.fail('legal', e, q);
     }
     // الوثائق المرفوعة — دلاليّ وحده، فهي غير مفهرسة لفظياً.
     if (queryVector) {
       const docs = await retrieveDocuments(env, queryVector, topK);
+      trace?.add({ stage: 'documents', query: q, count: docs.length });
       if (docs.length) lists.push(docs);
     }
   }
@@ -156,7 +175,9 @@ export async function retrieve(env: Env, queries: string[], topK = 5): Promise<R
 
   return Array.from(merged.values())
     .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
+    // `topK` لكل استعلام و`total` للمجموع. وكانا واحداً، فاستعلاماتٌ ثمانية لكلٍّ
+    // منها أربعٌ تنتهي إلى أربعٍ لا إلى اثنتين وثلاثين.
+    .slice(0, total);
 }
 
 /**
@@ -167,7 +188,7 @@ export async function retrieve(env: Env, queries: string[], topK = 5): Promise<R
  * على أنه الحكم. فتُجمع هنا نصّاً واحداً بأسطرها، ويبقى المعرّفُ معرّفَ أوّل
  * جزء: استدعاؤه يفتح المادة بأجزائها كلِّها.
  */
-function joinArticleParts(hits: LegalHit[]): LegalHit[] {
+export function joinArticleParts(hits: LegalHit[]): LegalHit[] {
   const out: LegalHit[] = [];
   for (const h of hits) {
     const last = out[out.length - 1];
@@ -201,7 +222,7 @@ function joinArticleParts(hits: LegalHit[]): LegalHit[] {
   return out;
 }
 
-function fromLegalHit(h: LegalHit): RagResult {
+export function fromLegalHit(h: LegalHit): RagResult {
   return {
     // `text` وحده. ولو وُضع `embed_text` هنا لتلوّث الاستشهاد بسياق زائد.
     text: h.text,
@@ -211,6 +232,7 @@ function fromLegalHit(h: LegalHit): RagResult {
     articleRef: articleRefOf(h),
     // بمعرّف المادة لا الجزء: المادة الواحدة لا تُعدّ في الدمج مرّتين.
     key: `legal:${articleBaseId(h.id)}`,
+    seq: h.seq,
     source: 'legal',
     lawId: h.lawId ?? undefined,
     docType: h.docType ?? undefined,
@@ -324,12 +346,23 @@ async function effectiveDocumentIds(env: Env, ids: string[]): Promise<Set<string
  */
 
 // تنسيق سياق RAG لإدراجه في البرومبت مع الإسناد
+/** مقطعٌ واحد في السياق: رقمُه وسطرُ مصدره وتنبيهاتُه ثم نصُّه. */
+export function formatRagBlock(r: RagResult, n: number): string {
+  return `[${n}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`;
+}
+
 export function formatRagContext(results: RagResult[]): string {
   if (!results.length) return '';
-  const blocks = results
-    .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`)
-    .join('\n\n---\n\n');
-  return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها، واستشهد بها في المتن باسم النظام ورقم المادة وحدهما. وما في سطر مصدره من أداةٍ وتاريخ و«بصيغتها بعد …» وصفحةٍ ونسخة فلا يُنقل إلى المتن إلا ما يطلبه توجيه المهمة نصّاً؛ ونسخةُ المادة المعدَّلة تُذكر في «ملاحظات للمحامي» كما وردت. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا يُفصل عنه، وهو للمحامي لا لمن يُوجَّه إليه المستند: اعمل بمقتضاه فلا تعرض النصّ على أنه الجاري، وانقله بنصّه مع الاستشهاد في قسم «ملاحظات للمحامي» لا في متن المستند. وما نبّه التنبيه أن نصَّه أصليٌّ لم يُدمج تعديلُه فلا تصغ نصَّه النافذ من عندك: اترك مكانه في المتن خانةً بين معقوفين تسمّيه، وقل في «ملاحظات للمحامي» إن النصّ النافذ غير متاح في قاعدة المعرفة، وأحِل إلى سجل التعديلات.\n\n${blocks}\n</سياق_نظامي>`;
+  const blocks = results.map((r, i) => formatRagBlock(r, i + 1)).join('\n\n---\n\n');
+  return wrapRagContext(blocks);
+}
+
+/** الوسم وتعليماته حول المقاطع — موضعٌ واحد لنصّ التعليمات. */
+/** تعليماتُ السياق النظاميّ — نصٌّ واحد للصيغتين: النصّية وكتل `search_result`. */
+export const RAG_CONTEXT_INSTRUCTIONS = `المقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها، واستشهد بها في المتن باسم النظام ورقم المادة وحدهما. وما في سطر مصدره من أداةٍ وتاريخ و«بصيغتها بعد …» وصفحةٍ ونسخة فلا يُنقل إلى المتن إلا ما يطلبه توجيه المهمة نصّاً؛ ونسخةُ المادة المعدَّلة تُذكر في «ملاحظات للمحامي» كما وردت. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا يُفصل عنه، وهو للمحامي لا لمن يُوجَّه إليه المستند: اعمل بمقتضاه فلا تعرض النصّ على أنه الجاري، وانقله بنصّه مع الاستشهاد في قسم «ملاحظات للمحامي» لا في متن المستند. وما نبّه التنبيه أن نصَّه أصليٌّ لم يُدمج تعديلُه فلا تصغ نصَّه النافذ من عندك: اترك مكانه في المتن خانةً بين معقوفين تسمّيه، وقل في «ملاحظات للمحامي» إن النصّ النافذ غير متاح في قاعدة المعرفة، وأحِل إلى سجل التعديلات.`;
+
+export function wrapRagContext(blocks: string): string {
+  return `<سياق_نظامي>\n${RAG_CONTEXT_INSTRUCTIONS}\n\n${blocks}\n</سياق_نظامي>`;
 }
 
 /**
@@ -339,7 +372,7 @@ export function formatRagContext(results: RagResult[]): string {
  * النصُّ إلى البرومبت مجرَّداً واستُشهد به على أنه الجاري — وهو أخطر خطأ في
  * منتج قانوني. وموضعُها قبل النصّ لا بعده: ما يُقرأ بعد النصّ يُقرأ متأخراً.
  */
-function noticeLines(r: RagResult): string {
+export function noticeLines(r: RagResult): string {
   const lines: string[] = [];
   // تحذيرُ الحال بنصّه كما جاء من طبقة الاسترجاع (§6-4): هو الذي يعرف سببه —
   // تعديلٌ لم يُدمج أو نظامٌ لم يبدأ العمل به — ويذكر تاريخه والنافذ قبله.
@@ -364,7 +397,7 @@ function noticeLines(r: RagResult): string {
  *
  * التاريخ ميلاديّ يتبعه الهجريّ بين قوسين — تاريخ أداةٍ نظامية يُستشهد به.
  */
-function citationLine(r: RagResult): string {
+export function citationLine(r: RagResult): string {
   const parts = [r.title];
   if (r.articleRef) parts.push(r.articleRef);
   /* واللائحةُ من خارج البوابة يُستشهد بصفحتها في ملف الجهة ونسختها (§6-4):

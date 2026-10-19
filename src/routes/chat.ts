@@ -3,8 +3,13 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
-import { retrieve, formatRagContext, type RagResult } from '../lib/rag';
-import { extractAnchors, buildAnchorsBlock, BASIS_PER_ANCHOR, type BasisAnchor } from '../lib/basis';
+import { type RagResult } from '../lib/rag';
+import { gatherLegalContext } from '../lib/research/gather';
+import { formatLayeredContext, layeredContextBlocks, TOTAL_MAX, type ResearchGroup, type ResearchGap } from '../lib/research/layered';
+import { saveMemo, latestMemo, getOwnedMemo, hydrateMemo, memoGroups } from '../lib/research/memo';
+import { deepResearch } from '../lib/research/agent';
+import { newTrace, saveTrace } from '../lib/research/trace';
+import { buildAnchorsBlock, type BasisAnchor } from '../lib/basis';
 import { enabledSources } from '../lib/sources';
 import { searchSources, formatFiqhContext, type ExternalHit } from '../lib/external';
 import { rerankByMeaning } from '../lib/rerank';
@@ -43,6 +48,12 @@ app.use('*', requireAuth);
  * الأدوات فلا وقفةَ أداةٍ أصلاً. وهي لا تقع إلا حين لا يأتي نصّ، فلا تُضاعف
  * كلفة الدور الناجح.
  */
+/** سقفُ مواضع الإسناد المحفوظة للردّ الواحد. */
+const MAX_CITE_SPANS = 400;
+
+/** موادُّ مذكرة الدور السابق التي تُعاد في سؤال المتابعة. */
+const PRIOR_MEMO_MAX = 20;
+
 const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }[] = [
   // الحدُّ سقفٌ للتفكير والنص معاً، والمخرَج صحيفةُ دعوى أو مذكرة قد تطول.
   // والبثّ مُفعَّل فلا يُخشى عليه من مهلة الاتصال.
@@ -50,11 +61,31 @@ const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }
   { effort: 'medium', max_tokens: 32000, withTools: false },
 ];
 
+/**
+ * طلباتٌ رفعت علامة «قيد التوليد» ولم تسلّمها بعدُ لدورٍ يجري في الخلفية.
+ *
+ * بين رفع العلامة وفتح البثّ عملٌ كثير — المُخطِّط والاسترجاع وإعدادُ البرومبت
+ * من القاعدة — وأيُّ خطأٍ يُرمى فيه يخرج إلى `app.onError` فتبقى العلامة
+ * مرفوعةً عشر دقائق: سؤالٌ محفوظ بلا جواب، وكلُّ إرسالٍ بعده يُردّ بـ409.
+ * فتُنزَل هنا عند الخطأ، ولا يمسّ ذلك علامةَ طلبٍ آخر لم يرفعها هذا الطلب.
+ */
+const holdingMark = new WeakSet<Request>();
+
+app.use('/:conversationId', async (c, next) => {
+  await next();
+  if (c.error && holdingMark.has(c.req.raw)) {
+    holdingMark.delete(c.req.raw);
+    await clearGenerating(c.env, c.req.param('conversationId')).catch(() => {});
+  }
+});
+
 // POST /api/chat/:conversationId  → SSE stream
 app.post('/:conversationId', async (c) => {
   const user = c.get('user');
   const conversationId = c.req.param('conversationId');
-  const { message, force_internet, bilingual, attachment_ids, reply_length } = await c.req.json().catch(() => ({}));
+  const { message, force_internet, bilingual, attachment_ids, reply_length, memo_id, deep_research } = await c.req
+    .json()
+    .catch(() => ({}));
   if (!message?.trim()) return c.json({ error: 'الرسالة فارغة' }, 400);
 
   // تحقّق الملكية
@@ -87,6 +118,7 @@ app.post('/:conversationId', async (c) => {
      فيها يجد سؤاله محفوظاً بلا جواب ولا أثرِ عمل، فيعيده. وتُنزل عند كل
      مخرجٍ من هذا المسار: الاستيضاح، وفشل فتح البثّ، وختام الدور. */
   await markGenerating(c.env, conversationId);
+  holdingMark.add(c.req.raw);
 
   /* المرفقات المرسَلة مع هذا الدور تُختم برسالته.
      والختم مقيَّدٌ بثلاثة: أن يكون المرفق في هذه المحادثة، وأن يكون لم
@@ -145,6 +177,11 @@ app.post('/:conversationId', async (c) => {
   // [1] المُخطِّط
   const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet, user.id, history.results);
 
+  /* مذكرةُ بحثٍ اختارها المحامي — بناها `POST /api/research` وعدّلها أو اعتمدها:
+     يُصاغ منها وحدها بلا بحثٍ جديد، ولا استيضاح — المسائل حُسمت في المذكرة. */
+  const chosenMemo = typeof memo_id === 'string' && memo_id ? await getOwnedMemo(c.env, memo_id, user.id) : null;
+  if (chosenMemo) plan.clarifying_questions = [];
+
   // حالة الاستيضاح: أوقف التوليد واطرح الأسئلة (§3, §5)
   if (plan.clarifying_questions.length > 0) {
     const clarifyText =
@@ -170,36 +207,90 @@ app.post('/:conversationId', async (c) => {
     return sseOnce(clarifyText, { messageId: asstId, plan }, title);
   }
 
-  // [2] المُنفِّذ: استرجاع RAG
+  // [2] المُنفِّذ: استرجاع RAG — والأثر يُحفظ لكل دور، تعطّل أو لم يتعطّل.
   let ragContext = '';
   let citations: any[] = [];
   /** مواضع الاستدلال — تُملأ في خدمة «استدلال نظامي» وحدها. */
   let anchors: BasisAnchor[] = [];
-  if (plan.needs_knowledge_base) {
-    try {
-      /* «استدلال نظامي» يمرّ بتمريرتين، وغيرُه بواحدة.
-         المستندُ كلُّه مسألتُه — عشرةُ دفوعٍ أو عشرون بنداً — وخمسةُ
-         استعلاماتٍ يكتبها المُخطِّط عن الطلب تُغطّي أبرزها وتترك الباقي
-         بلا سند. فتُستخرج مواضعُه أولاً ويُبحث لكلٍّ منها. والتفصيل — مع
-         حدِّ الطول الذي يمنعها في أسئلة المتابعة — في `lib/basis.ts`. */
-      if (plan.consultation_type === 'legal_basis') {
-        const own = attByMessage.get(userMsgId) ?? [];
-        const source = [message, ...own.map((a) => a.parsed_text)].join('\n\n');
-        anchors = await extractAnchors(c.env, source, user.id);
-      }
+  const trace = newTrace();
+  let results: RagResult[] = [];
+  let groups: ResearchGroup[] = [];
+  let gaps: ResearchGap[] = [];
+  try {
+    if (chosenMemo) {
+      const h = await hydrateMemo(c.env, chosenMemo, { max: TOTAL_MAX });
+      groups = h.groups;
+      gaps = chosenMemo.gaps;
+      trace.add({ stage: 'memo', detail: chosenMemo.id, count: h.groups.reduce((n, g) => n + g.results.length, 0) });
+      if (h.dropped) trace.add({ stage: 'memo-dropped', count: h.dropped });
+    } else {
+      const gathered = await gatherLegalContext(c.env, {
+        plan,
+        message,
+        attachmentsText: (attByMessage.get(userMsgId) ?? []).map((a) => a.parsed_text),
+        userId: user.id,
+        trace,
+      });
+      anchors = gathered.anchors;
+      gaps = gathered.gaps;
+      groups = gathered.groups.length
+        ? gathered.groups
+        : gathered.results.length
+          ? [{ kind: 'issue', title: 'نتائج البحث', results: gathered.results }]
+          : [];
 
-      const queries = anchors.length ? anchors.map((a) => a.query) : plan.kb_queries;
-      if (queries.length) {
-        const results = await retrieve(c.env, queries, anchors.length ? BASIS_PER_ANCHOR : 6);
-        ragContext = formatRagContext(results);
-        citations = results.map(toCitation);
+      /* ══ سؤال المتابعة يرث مذكرة ما قبله ══
+         الرسالة تُحفظ بنصّها وحده، فكان «عدّل الفقرة الثانية» يُصاغ بلا الموادّ التي
+         بُنيت عليها المسودّة — وكثيراً ما لا يرى المُخطِّط فيه حاجةً إلى بحثٍ أصلاً.
+         فموادُّ المذكرة السابقة تُعاد بعد موادّ هذا الدور، بنصّها الجاري. */
+      const prior = await latestMemo(c.env, conversationId);
+      if (prior) {
+        const have = new Set(groups.flatMap((g) => g.results.map((r) => r.key ?? r.documentId)));
+        const h = await hydrateMemo(c.env, prior, {
+          exclude: have,
+          max: PRIOR_MEMO_MAX,
+          kind: 'memo',
+          titlePrefix: 'من مذكرة البحث السابقة — ',
+        });
+        groups = [...groups, ...h.groups];
+        trace.add({ stage: 'memo-carried', detail: prior.id, count: h.groups.reduce((n, g) => n + g.results.length, 0) });
       }
-    } catch (e: any) {
-      // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ:
-      // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هنا وحده.
-      console.error('retrieval failed:', e?.message ?? e);
     }
+    /* البحث المعمّق بطلبٍ صريح: Claude يُكمل الموادّ بأدوات البحث قبل الصياغة.
+       يؤخّر أوّل حرفٍ في الردّ بقدر جولاته، فلا يجري إلا حين يُطلب. */
+    if (deep_research === true && !chosenMemo && plan.needs_knowledge_base) {
+      const deep = await deepResearch(c.env, { message, plan, groups, userId: user.id, trace });
+      groups = [...groups, ...deep.groups];
+      gaps = [...gaps, ...deep.gaps];
+    }
+    results = groups.flatMap((g) => g.results);
+    ragContext = formatLayeredContext(groups);
+    citations = results.map(toCitation);
+  } catch (e: any) {
+    // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ والأثر:
+    // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هناك وحده.
+    console.error('retrieval failed:', trace.fail('retrieval', e));
   }
+
+  // مذكرة هذا الدور — تُعاد في الدور التالي، ويُرسل ملخّصها للواجهة.
+  let memoId: string | null = chosenMemo?.id ?? null;
+  if (!chosenMemo && (groups.length || gaps.length)) {
+    memoId = await saveMemo(c.env, { conversationId, messageId: userMsgId, groups: memoGroups(groups), gaps }).catch(
+      (e: any) => {
+        console.error('save memo failed:', e?.message ?? e);
+        return null;
+      }
+    );
+  }
+  if (trace.failed) console.error('retrieval degraded:', JSON.stringify(trace.steps.filter((s) => s.error)));
+  await saveTrace(c.env, {
+    conversationId,
+    messageId: userMsgId,
+    userId: user.id,
+    plan,
+    trace,
+    resultKeys: results.map((r) => r.key ?? r.documentId),
+  });
 
   /* ══ التدعيم الفقهي — خارج السياق النظامي لا داخله ══
    *
@@ -288,7 +379,13 @@ app.post('/:conversationId', async (c) => {
     score: h.score,
   }));
 
-  const userContent = `${ragContext}${fiqhBlock}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
+  /* الموادّ كتلَ `search_result` حين تكون — فيعود الردّ موسوماً بمصدر كل مقطع —
+     وما عداها نصٌّ كما كان. و`ragContext` النصّي يبقى لفحص الإسناد بعد التوليد. */
+  const contextBlocks = layeredContextBlocks(groups);
+  const tail = `${fiqhBlock}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
+  const userContent: string | any[] = contextBlocks.length
+    ? [...contextBlocks, { type: 'text', text: tail }]
+    : `${ragContext}${tail}`.trim();
 
   const messages = [
     ...(history.results ?? [])
@@ -318,11 +415,21 @@ app.post('/:conversationId', async (c) => {
       tools: ATTEMPTS[i].withTools ? tools : undefined,
       effort: ATTEMPTS[i].effort,
       max_tokens: ATTEMPTS[i].max_tokens,
+      cache: true,
     });
 
   let firstAttempt: ClaudeStream;
   try {
-    firstAttempt = await openAttempt(0);
+    try {
+      firstAttempt = await openAttempt(0);
+    } catch (e: any) {
+      /* كتلُ `search_result` رُدّت بـ400: يُعاد الطلب مرّةً والسياقُ نصٌّ كما كان قبلها.
+         صياغةٌ بلا مواضع إسناد خيرٌ من «تعذّر توليد الرد» على كل دورٍ فيه موادّ. */
+      if (!contextBlocks.length || !/Claude API 400/.test(String(e?.message))) throw e;
+      console.error('search_result context rejected — retrying with text context:', e?.message ?? e);
+      messages[messages.length - 1] = { role: 'user', content: `${ragContext}${tail}`.trim() };
+      firstAttempt = await openAttempt(0);
+    }
   } catch (e: any) {
     // السبب يُسجَّل ولا يُعرض. هذه الجملة هي كل ما يراه المستخدم حين تنقطع
     // خدمة Claude، فتُقرأ خطأَ صلاحيات أو خللاً في حسابه — وما يفرّق بين
@@ -337,6 +444,10 @@ app.post('/:conversationId', async (c) => {
   let fullText = '';
   let inputTokens = 0;
   let outputTokens = 0;
+  /** مواضع الإسناد في الردّ: مدى كل كتلةٍ ومفاتيحُ الموادّ التي استندت إليها. */
+  const citeSpans: { start: number; end: number; sources: { source: string; index: number }[] }[] = [];
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
   const encoder = new TextEncoder();
   const userId = user.id;
 
@@ -378,6 +489,7 @@ app.post('/:conversationId', async (c) => {
       /* صفّان لا صفّ: خلطُ كتب الفقه بمواد الأنظمة في سطر «المصادر» يُلغي
          في الشاشة الفرقَ الذي حُفظ في البرومبت. */
       await send('meta', { messageId: asstId, plan, citations, fiqhCitations });
+      if (memoId) await send('memo', { id: memoId, groups: memoGroups(groups), gaps });
 
       /** يمرّر أحداث محاولةٍ كما هي إلى الواجهة، ويجمع نصّها وعدّاداتها. */
       const pump = async (attempt: ClaudeStream): Promise<StreamOutcome> => {
@@ -399,10 +511,14 @@ app.post('/:conversationId', async (c) => {
               const payload = JSON.parse(dataLine.slice(6));
               if (p.includes('event: delta')) {
                 fullText += payload.text ?? '';
+              } else if (p.includes('event: cite')) {
+                if (citeSpans.length < MAX_CITE_SPANS) citeSpans.push(payload);
               } else if (p.includes('event: usage')) {
                 // العدّادات تُجمع لا تُستبدل: محاولتان تُدفَعان كلتاهما.
                 if (payload.input_tokens) inputTokens += payload.input_tokens;
                 if (payload.output_tokens) outputTokens += payload.output_tokens;
+                if (payload.cache_read_input_tokens) cacheReadTokens += payload.cache_read_input_tokens;
+                if (payload.cache_creation_input_tokens) cacheWriteTokens += payload.cache_creation_input_tokens;
               }
             } catch {}
           }
@@ -410,13 +526,26 @@ app.post('/:conversationId', async (c) => {
         return attempt.outcome;
       };
 
-      let outcome = await pump(firstAttempt);
+      /* انقطاعُ البثّ في منتصفه يُرمى من `reader.read()`. وكان يخرج من الجسم كلِّه
+         إلى السجلّ: لا حدثَ خطأ ولا ختام، وما وصل من النصّ لا يُحفظ. والآن يصير
+         مآلاً كغيره: نصٌّ لم يصل يُعاد طلبُه، ونصٌّ وصل بعضُه يُحفظ موسوماً
+         بانقطاعه ويُقال ذلك للمحامي. */
+      const pumpSafely = async (attempt: ClaudeStream): Promise<StreamOutcome> => {
+        try {
+          return await pump(attempt);
+        } catch (e: any) {
+          console.error('stream broke:', e?.message ?? e);
+          return { sawText: !!fullText.trim(), stopReason: 'stream_error', refusalCategory: null, blocks: [] };
+        }
+      };
+
+      let outcome = await pumpSafely(firstAttempt);
       for (let i = 1; i < ATTEMPTS.length && !fullText.trim() && isRetryableEmptyTurn(outcome); i++) {
         console.error(
           `empty turn (stop_reason=${outcome.stopReason ?? 'none'}) — retrying at effort=${ATTEMPTS[i].effort} without tools`
         );
         try {
-          outcome = await pump(await openAttempt(i));
+          outcome = await pumpSafely(await openAttempt(i));
         } catch (e: any) {
           console.error('retry failed:', e?.message ?? e);
           break;
@@ -444,6 +573,17 @@ app.post('/:conversationId', async (c) => {
           fiqh_citations: fiqhCitations,
           output_format: plan.output_format,
           missing_regulations: relevantMissing,
+          ...(outcome.stopReason === 'stream_error' ? { interrupted: true } : {}),
+          ...(citeSpans.length
+            ? {
+                citation_spans: citeSpans.map((c) => ({
+                  start: c.start,
+                  end: c.end,
+                  keys: [...new Set(c.sources.map((x) => x.source))],
+                })),
+              }
+            : {}),
+          ...(memoId ? { memo_id: memoId } : {}),
         };
         await env.DB.prepare(
           'INSERT INTO messages (id, conversation_id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
@@ -465,13 +605,14 @@ app.post('/:conversationId', async (c) => {
            الفقاعة ثم تصل الحدثان إلى مستمعٍ انصرف: شارة التحقّق لا تظهر
            أبداً، وطلبُ إضافة نظامٍ ناقص لا يُعرض. وزرُّ التصدير كان يظهر
            للحظةٍ قبل أن يوجد الصفّ الذي يصدّره. */
+        if (outcome.stopReason === 'stream_error') await send('error', { error: emptyTurnReason(outcome) });
         await send('done', {});
         await send('regulations', { missing: relevantMissing });
 
         // [5] طبقة التحقّق بعد التوليد (الاقتباس المُتحقَّق منه) — §2
         let verification = null;
         try {
-          verification = await verifyGrounding(env, userId, fullText, ragContext, plan.consultation_type);
+          verification = await verifyGrounding(env, userId, fullText, results, plan.consultation_type);
         } catch {}
         if (verification) {
           // التحقّق يجري بعد الحفظ الآن، فيُكتب في بياناته الوصفية لتبقى
@@ -513,6 +654,8 @@ app.post('/:conversationId', async (c) => {
         model: env.GENERATION_MODEL,
         inputTokens,
         outputTokens,
+        cacheReadTokens,
+        cacheWriteTokens,
         consultationType: plan.consultation_type,
       });
     } catch (e: any) {
@@ -531,6 +674,7 @@ app.post('/:conversationId', async (c) => {
     }
   };
 
+  holdingMark.delete(c.req.raw); // صار للدور في الخلفية، وهو يُنزلها في `finally`.
   c.executionCtx.waitUntil(run());
 
   return new Response(readable, {

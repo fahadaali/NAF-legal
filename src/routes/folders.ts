@@ -26,7 +26,7 @@ app.get('/', async (c) => {
   const user = c.get('user');
   const rows = await c.env.DB.prepare(
     `SELECT f.id, f.name, f.color, f.created_at,
-       (SELECT COUNT(*) FROM conversations cv WHERE cv.folder_id = f.id) AS count
+       (SELECT COUNT(*) FROM conversations cv WHERE cv.folder_id = f.id AND cv.user_id = f.user_id) AS count
      FROM case_folders f WHERE f.user_id = ? ORDER BY f.created_at DESC`
   )
     .bind(user.id)
@@ -61,6 +61,14 @@ app.delete('/:id', async (c) => {
 app.post('/assign', async (c) => {
   const user = c.get('user');
   const { conversation_id, folder_id } = await c.req.json().catch(() => ({}));
+  /* المجلّد يجب أن يكون لصاحب المحادثة. كان يُقبل أيُّ معرّف، فتُربط محادثةٌ
+     بقضيةِ مستخدمٍ آخر وتُحسب في عدّاد قضيته. */
+  if (folder_id) {
+    const owned = await c.env.DB.prepare('SELECT id FROM case_folders WHERE id = ? AND user_id = ?')
+      .bind(folder_id, user.id)
+      .first();
+    if (!owned) return c.json({ error: 'غير موجودة' }, 404);
+  }
   const res = await c.env.DB.prepare('UPDATE conversations SET folder_id = ? WHERE id = ? AND user_id = ?')
     .bind(folder_id ?? null, conversation_id, user.id)
     .run();

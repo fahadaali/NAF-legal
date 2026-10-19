@@ -12,7 +12,7 @@ import {
   OUTPUT_STYLE_KEY,
 } from '../lib/consultationConfig';
 import { DEFAULT_OUTPUT_STYLE, FIRM_TOKEN } from '../lib/prompts';
-import { callClaude } from '../lib/claude';
+import { callClaude, OFFICIAL_DOMAINS } from '../lib/claude';
 import {
   DOC_TEMPLATE_KEYS,
   LETTERHEAD_KEY,
@@ -609,15 +609,64 @@ app.post('/news/:id/ingest', async (c) => {
   return c.json({ ok: true, document_id: docId });
 });
 
+/** سقفُ ما يُقرأ من صفحة مصدرٍ رسمي — نصُّ نظامٍ لا يقارب هذا. */
+const INGEST_MAX_BYTES = 5 * 1024 * 1024;
+const INGEST_TIMEOUT_MS = 20_000;
+
+/**
+ * هل الرابط من مصدرٍ رسميّ؟ https ونطاقٌ من `OFFICIAL_DOMAINS` أو فرعٌ منه.
+ *
+ * الرابط يأتي من خلاصة الأخبار ومن نتائج بحثٍ يكتبها النموذج، فرابطٌ مدسوسٌ في
+ * نتيجة بحث كان يُجلب ويدخل قاعدة المعرفة نصّاً «رسمياً» يُستشهد به.
+ */
+export function isOfficialUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'https:') return false;
+    return OFFICIAL_DOMAINS.some((d) => u.hostname === d || u.hostname.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
+/** يقرأ الجسم إلى سقفٍ ثم يتوقّف — لا يُحمَّل ملفٌّ ضخمٌ كاملاً في ذاكرة العامل. */
+async function readCapped(res: Response, max: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      throw new Error(`source page exceeds ${max} bytes`);
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let off = 0;
+  for (const ch of chunks) {
+    all.set(ch, off);
+    off += ch.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+
 // سحب نص من رابط رسمي وتخزينه ثم جدولة التضمين
 async function ingestFromUrl(env: Env, docId: string, url: string) {
   try {
-    const res = await fetch(url);
-    const html = await res.text();
+    if (!isOfficialUrl(url)) throw new Error(`not an official source: ${url}`);
+    const res = await fetch(url, { signal: AbortSignal.timeout(INGEST_TIMEOUT_MS), redirect: 'follow' });
+    // وإعادةُ التوجيه تُفحص وجهتُها كذلك: مصدرٌ رسميّ يحيل إلى غيره لا يُقرأ.
+    if (!res.ok || !isOfficialUrl(res.url || url)) throw new Error(`fetch rejected: ${res.status} ${res.url}`);
+    const html = await readCapped(res, INGEST_MAX_BYTES);
     const text = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     await env.R2.put(`kb-text/${docId}.txt`, text);
     await ingestDocument(env, docId);
-  } catch {
+  } catch (e: any) {
+    console.error('ingest from url failed:', e?.message ?? e);
     await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'error' WHERE id = ?").bind(docId).run();
   }
 }

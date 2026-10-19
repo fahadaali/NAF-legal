@@ -86,4 +86,21 @@ export interface PlannerOutput {
   fiqh_queries: string[];
   clarifying_questions: string[];
   output_format: 'text' | 'docx';
+  /** مجال القضية من قائمة `LEGAL_DOMAINS` — به تُقرأ خريطة الإسناد. */
+  domain: string;
+  /** شجرة المسائل: لكل مسألةٍ طبقتُها واستعلاماتُها والأنظمةُ التي تُبحث فيها. */
+  issues: PlannerIssue[];
+  /** موادُّ ذكرها المحامي بأرقامها وأنظمتها — تُجلب بعينها لا بالبحث. */
+  explicit_articles: { law: string; article: string }[];
+}
+
+/** طبقات الإسناد: موضوعي · إجرائي · إثبات · أحكام عامة · لائحة تنفيذية. */
+export type GroundingLayer = 'substantive' | 'procedural' | 'evidence' | 'general' | 'regulation';
+
+export interface PlannerIssue {
+  title: string;
+  layer: GroundingLayer;
+  queries: string[];
+  /** أسماء الأنظمة الرسمية التي يُبحث فيها لهذه المسألة. */
+  laws: string[];
 }

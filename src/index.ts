@@ -5,6 +5,8 @@ import authRoutes from './routes/auth';
 import ssoRoutes from './routes/ssoCallback';
 import mcpOAuthRoutes from './routes/mcpOAuth';
 import memberRoutes from './routes/members';
+import evalRoutes from './routes/eval';
+import researchRoutes from './routes/research';
 import conversationRoutes from './routes/conversations';
 import chatRoutes from './routes/chat';
 import fileRoutes from './routes/files';
@@ -24,7 +26,7 @@ import clauseRoutes from './routes/clauses';
 import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
 import legalRoutes from './routes/legal';
-import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery } from './cron';
+import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery, runLinkExtraction } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
 import type { Env, Variables } from './types';
@@ -190,6 +192,8 @@ app.route('/api/cases', caseRoutes);
 app.route('/api/regulation-requests', regulationRequestRoutes);
 app.route('/api/legal', legalRoutes);
 app.route('/api/members', memberRoutes);
+app.route('/api/eval', evalRoutes);
+app.route('/api/research', researchRoutes);
 
 // أي مسار /api غير معروف
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));
@@ -231,6 +235,8 @@ export default {
    */
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     // ردُّ دفعات الاستيراد المتروكة في كل نبضة، ومهامُّ الليل في نبضتها وحدها.
+    // الإحالات بين المواد في كل نبضة كذلك — قواعدُ على القاعدة وحدها بلا نموذج.
+    ctx.waitUntil(runLinkExtraction(env));
     ctx.waitUntil(runImportRecovery(env).then(() => {}));
     if (!isNightlyTick(event.scheduledTime)) return;
     ctx.waitUntil(

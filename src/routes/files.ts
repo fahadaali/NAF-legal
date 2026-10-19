@@ -23,8 +23,32 @@ const MAX_TEXT = 200_000;
 /** حدّا صور الصفحات الممسوحة — يوافقان `MAX_OCR_PAGES` ورسمَ الصفحة في `web/src/lib/extractText.ts`. */
 const MAX_PAGE_IMAGES = 60;
 const MAX_PAGE_IMAGE_SIZE = 4 * 1024 * 1024;
-const ALLOWED = ['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg', 'image/webp'];
-const ALLOWED_EXT = ['pdf', 'txt', 'md', 'docx', 'png', 'jpg', 'jpeg', 'webp'];
+/**
+ * الأنواع المقبولة، ونوعُ كلٍّ منها كما يُخزَّن ويُقدَّم.
+ *
+ * **والنوع من هذا الجدول لا من المتصفّح.** كان يُخزَّن `file.type` كما أرسله
+ * المتصفّح ثم يُقدَّم به الملفّ من نطاق المنصة نفسه، فملفٌّ اسمه «تقرير.pdf»
+ * معلَنٌ `text/html` كان يُعرض صفحةً تُنفَّذ نصوصها بصلاحيات المنصة.
+ */
+const MIME_BY_EXT: Record<string, string> = {
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+};
+
+/** الامتدادُ ونوعُه المعتمد — من الامتداد أولاً، ثم من النوع المعلَن إن طابق الجدول. */
+function canonicalType(name: string, declared: string | null): { ext: string; mime: string } | null {
+  const ext = (name.split('.').pop() ?? '').toLowerCase();
+  if (MIME_BY_EXT[ext]) return { ext, mime: MIME_BY_EXT[ext] };
+  const base = (declared ?? '').split(';')[0].trim().toLowerCase();
+  const hit = Object.entries(MIME_BY_EXT).find(([, m]) => m === base);
+  return hit ? { ext: hit[0], mime: hit[1] } : null;
+}
 
 /**
  * يرفع ملفاً إلى محادثة، ويردّ **قبل** استخراج نصّه.
@@ -53,16 +77,14 @@ app.post('/upload/:conversationId', async (c) => {
   if (!(file instanceof File)) return c.json({ error: 'لم يُرفَق ملف' }, 400);
   if (file.size > MAX_SIZE) return c.json({ error: 'حجم الملف يتجاوز الحد (15MB)' }, 413);
 
-  const ext = (file.name.split('.').pop() ?? '').toLowerCase();
-  const isDocx = ext === 'docx' || file.type.includes('officedocument.wordprocessingml');
-  if (!ALLOWED.includes(file.type) && !ALLOWED_EXT.includes(ext) && !isDocx) {
-    return c.json({ error: 'نوع الملف غير مدعوم' }, 415);
-  }
+  const kind = canonicalType(file.name, file.type);
+  if (!kind) return c.json({ error: 'نوع الملف غير مدعوم' }, 415);
+  const mime = kind.mime;
 
   const buf = await file.arrayBuffer();
   const id = uuid();
   const r2Key = `uploads/${user.id}/${conversationId}/${id}-${sanitize(file.name)}`;
-  await c.env.R2.put(r2Key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
+  await c.env.R2.put(r2Key, buf, { httpMetadata: { contentType: mime } });
 
   /* نصٌّ اُستخرج في المتصفّح — إن جاء فلا نداءَ للنموذج أصلاً.
      المتصفّح يقرأ ملفّ PDF بـMuPDF قبل أن يرفعه (`web/src/lib/extractText.ts`)،
@@ -94,7 +116,7 @@ app.post('/upload/:conversationId', async (c) => {
       conversationId,
       r2Key,
       file.name,
-      file.type,
+      mime,
       file.size,
       knownText || null,
       knownText ? 'ready' : 'pending',
@@ -107,7 +129,7 @@ app.post('/upload/:conversationId', async (c) => {
   // يتولّاه الخادم بصرياً: صورُ صفحاته وحدها إن جاءت، وإلا الملفُّ كلُّه.
   if (!knownText) {
     c.executionCtx.waitUntil(
-      layout ? runPageOcr(c.env, id, layout) : runExtract(c.env, id, buf, file.type, file.name)
+      layout ? runPageOcr(c.env, id, layout) : runExtract(c.env, id, buf, mime, file.name)
     );
   }
 
@@ -115,7 +137,7 @@ app.post('/upload/:conversationId', async (c) => {
     id,
     filename: file.name,
     size: file.size,
-    mime: file.type,
+    mime,
     parse_status: knownText ? 'ready' : 'pending',
   });
 });
@@ -277,9 +299,17 @@ app.get('/attachments/:id/file', async (c) => {
   if (!obj) return c.json({ error: 'المرفق غير موجود' }, 404);
 
   const disposition = c.req.query('download') ? 'attachment' : 'inline';
+  /* النوع يُعاد اشتقاقه عند التقديم لا يُقرأ كما خُزِّن: صفوفٌ رُفعت قبل الجدول
+     تحمل نوعاً أعلنه المتصفّح. وما لا يطابق الجدول يُقدَّم بايتاتٍ للتنزيل.
+     و`sandbox` يمنع أيَّ نصٍّ في الملف من العمل بصلاحيات المنصة — إلا PDF:
+     عارضُ المتصفّح لا يعمل في وثيقةٍ معزولة، وPDF لا يحمل HTML يُنفَّذ. */
+  const kind = canonicalType(att.filename, att.mime);
+  const type = kind ? (kind.mime.startsWith('text/') ? `${kind.mime}; charset=utf-8` : kind.mime) : 'application/octet-stream';
   return new Response(obj.body, {
     headers: {
-      'content-type': att.mime || 'application/octet-stream',
+      'content-type': type,
+      'x-content-type-options': 'nosniff',
+      ...(kind?.ext === 'pdf' ? {} : { 'content-security-policy': 'sandbox' }),
       // الاسم عربيٌّ غالباً، و`filename` وحدها لا تحمل غير ASCII.
       'content-disposition': `${disposition}; filename*=UTF-8''${encodeURIComponent(att.filename)}`,
       'cache-control': 'private, max-age=300',

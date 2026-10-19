@@ -34,7 +34,7 @@
 // ٧) **أخوات الرقم الواحد.** استدعاء مادةٍ برقمها يردّ كل من يحمل رقمها
 //    مرتّبةً بـ`duplicate_index`، لا الأولى وحدها: المرسوم المعدِّل يُدخل
 //    مادةً جديدة برقم مادةٍ قائمة، وردُّ الأولى يُخفي الثانية بلا أثر.
-import { normalizeArabic, normalizeArticleNo, extractArticleNo, ftsMatchExpression } from './arabic';
+import { normalizeArabic, normalizeArticleNo, extractArticleNo, ftsMatchExpression, stemMatchExpression } from './arabic';
 import { toHijri } from './hijri';
 import { embed, embedBatch } from './embed';
 import { uuid } from './crypto';
@@ -3700,6 +3700,8 @@ export interface LegalSearchOptions extends LegalFilters {
    * وتمريره أرخص من حسابه في كل مسار — وهو استدعاء شبكة لا حساب محلي.
    */
   queryVector?: number[];
+  /** يُبلَّغ بما رجع من كل مسار وبما تعطّل منه — لأثر الاسترجاع (`lib/research/trace.ts`). */
+  onSignal?: (signal: { stage: string; count?: number; error?: string }) => void;
 }
 
 /**
@@ -3746,12 +3748,42 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
         .bind(match, ...filters.binds, candidates)
         .all<HitRow>();
       lists.push({ name: 'lexical', hits: (rows.results ?? []).map(toHit) });
-    } catch {
+      opts.onSignal?.({ stage: 'lexical', count: rows.results?.length ?? 0 });
+    } catch (e: any) {
       // فهرس لفظي غير مهيّأ (هجرة لم تُطبَّق بعد) — يبقى الدلاليّ وحده.
+      opts.onSignal?.({ stage: 'lexical', error: String(e?.message ?? e) });
+    }
+  }
+
+  // ── المسار اللفظي على الجذوع ──
+  // «العامل» لا يطابق «للعامل» في الفهرس الأول. ونتائجُ هذا الفهرس تُلحق بقائمة
+  // الأول بعد آخرها: ما وجده الأول يبقى في ترتيبه، والجذوعُ تزيد ما فاته وحده.
+  const stemMatch = stemMatchExpression(query);
+  if (stemMatch) {
+    try {
+      const rows = await env.DB.prepare(
+        `SELECT ${HIT_COLUMNS}, bm25(legal_fts_stem) AS lex
+         FROM legal_fts_stem JOIN legal_chunks c ON c.seq = legal_fts_stem.rowid
+         WHERE legal_fts_stem MATCH ?${filters.sql}
+         ORDER BY lex ASC LIMIT ?`
+      )
+        .bind(stemMatch, ...filters.binds, candidates)
+        .all<HitRow>();
+      const extra = (rows.results ?? []).map(toHit);
+      const lexical = lists.find((l) => l.name === 'lexical');
+      const have = new Set((lexical?.hits ?? []).map((h) => h.seq));
+      const added = extra.filter((h) => !have.has(h.seq));
+      if (lexical) lexical.hits.push(...added);
+      else if (added.length) lists.push({ name: 'lexical', hits: added });
+      opts.onSignal?.({ stage: 'stem', count: added.length });
+    } catch (e: any) {
+      // الهجرة 0037 لم تُطبَّق بعد — يبقى الفهرس الأول وحده.
+      opts.onSignal?.({ stage: 'stem', error: String(e?.message ?? e) });
     }
   }
 
   // ── المسار الدلالي ──
+  if (!env.VECTORIZE && !opts.lexicalOnly) opts.onSignal?.({ stage: 'semantic', error: 'VECTORIZE غير مربوط' });
   if (env.VECTORIZE && !opts.lexicalOnly) {
     try {
       // الاستعلام يُضمَّن كما كتبه صاحبه لا مطبَّعاً: النموذج يفهم الصرف
@@ -3779,8 +3811,10 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
         }
         lists.push({ name: 'semantic', hits: ordered });
       }
-    } catch {
+      opts.onSignal?.({ stage: 'semantic', count: seqs.length });
+    } catch (e: any) {
       // الفهرس المتجهي أو نموذج التضمين غير متاح — يبقى اللفظيّ وحده.
+      opts.onSignal?.({ stage: 'semantic', error: String(e?.message ?? e) });
     }
   }
 
@@ -3879,6 +3913,43 @@ export async function getArticle(
   const siblings = await expandDuplicates(env, (rows.results ?? []).map(toHit), scope);
   // وأجزاءُ المادة المقسّمة كلُّها مرتّبةً بـ`part` (§5-8) — لا ما بلغه السقف.
   return withAttachments(env, await withParts(env, siblings, scope), scope);
+}
+
+/**
+ * مقاطعُ بمفاتيحها الداخلية، بترتيبها — بالتصفية الافتراضية نفسها، وبأجزاء موادّها.
+ * لتتبّع الإحالات (`legal_article_links.to_seq`): المحال إليه الملغى لا يعود منها.
+ */
+export async function getHitsBySeqs(env: Env, seqs: number[]): Promise<LegalHit[]> {
+  const unique = [...new Set(seqs)].slice(0, 90);
+  if (!unique.length) return [];
+  const filters = buildFilters({});
+  const rows = await env.DB.prepare(
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE c.seq IN (${unique.map(() => '?').join(',')})${filters.sql}`
+  )
+    .bind(...unique, ...filters.binds)
+    .all<HitRow>();
+  const bySeq = new Map((rows.results ?? []).map((r) => [r.seq, toHit(r)]));
+  const ordered = unique.map((s) => bySeq.get(s)).filter((h): h is LegalHit => !!h);
+  return withParts(env, ordered, {});
+}
+
+/**
+ * مادةُ التعريفات في نظام — «يُقصد بالألفاظ والعبارات الآتية…».
+ *
+ * الحكم يُقرأ بمعاني ألفاظه، والمعاني في مادة التعريفات لا في مادة الحكم.
+ */
+export async function getDefinitionsArticle(env: Env, lawId: string): Promise<LegalHit | null> {
+  const filters = buildFilters({ lawId, withRegulations: false });
+  const row = await env.DB.prepare(
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c
+     WHERE (c.text_norm LIKE '%يقصد بالالفاظ%' OR c.text_norm LIKE '%يقصد بالكلمات%'
+            OR c.text_norm LIKE '%يقصد بالعبارات%' OR c.text_norm LIKE '%يقصد بالمصطلحات%')${filters.sql}
+     ORDER BY c.seq LIMIT 1`
+  )
+    .bind(...filters.binds)
+    .first<HitRow>();
+  if (!row) return null;
+  return (await withParts(env, [toHit(row)], { lawId }))[0] ?? null;
 }
 
 /** مقطع بمعرّفه. التصفية سارية هنا أيضاً — الاستشهاد لا يستثنى من الشرط. */
