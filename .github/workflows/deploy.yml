@@ -23,6 +23,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# نشرٌ واحد في كل مرّة. دمجان متتاليان كانا يشغّلان `d1 migrations apply --remote`
+# معاً على القاعدة نفسها، والثاني لا ينتظر الأول. والنشر الجاري لا يُلغى: قطعُه في
+# منتصف الترحيلات أسوأ من انتظاره.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -42,6 +49,21 @@ jobs:
         run: |
           npm ci
           npm --prefix web ci
+
+      # البوابة قبل أي موردٍ في Cloudflare: فحصُ الأنواع وفحوصُ العقود تجري على الشيفرة
+      # نفسها التي ستُنشر. وكانت لا تجري إلا يدوياً، فيبلغ الإنتاجَ ما يكسرها ولا يعرف أحد.
+      - name: فحص الأنواع
+        run: |
+          npm run typecheck
+          npx --prefix web tsc --noEmit -p web
+
+      - name: فحوص العقود
+        run: |
+          npm run check:sso
+          npm run check:legal
+          npm run check:mcp
+          npm run check:external
+          npm run check:oauth
 
       - name: بناء الواجهة
         run: npm run build:web
