@@ -675,4 +675,53 @@ await t.check('الموادّ تصل كتلَ search_result مُفعَّلاً �
   }
 });
 
+console.log('\nالتحقّق البنيوي من الإسناد');
+
+const isVerifier = (b) => !b.stream && String(b.system ?? '').includes('مدقّق إسناد');
+
+function verifyEvent(text) {
+  const m = text.match(/event: verify\ndata: (.*)\n/);
+  return m ? JSON.parse(m[1]) : null;
+}
+
+await t.check('لم يُسترجع شيء والمخرَج يذكر موادّ: كلُّها «بحاجة لتأكيد يدوي» — وكانت تمرّ بلا شارة', async () => {
+  const { env } = await chatFixture();
+  const fake = fakeAnthropic((b) =>
+    isPlanner(b) ? { text: '{"needs_knowledge_base": false}' } : isGeneration(b) ? { text: 'وفق المادة (99) من نظام العمل يستحق العامل…' } : { text: '{}' }
+  );
+  try {
+    const { text } = await sendTurn(env, 'سؤال');
+    const v = verifyEvent(text);
+    assert.ok(v, 'لا شارة تحقّق');
+    assert.equal(v.verified, false);
+    assert.deepEqual(v.unsupported, ['نظام العمل — المادة 99']);
+    assert.equal(fake.calls.filter(isVerifier).length, 0, 'استُدعي النموذج بلا موادّ يحكم عليها');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('مادةٌ مسترجعة ومادةٌ لم تُسترجع: الثانية وحدها بلا سند، والمدقّق يقرأ نصّ الأولى وحده', async () => {
+  const { env } = await chatFixture();
+  const answer = 'تستحق المكافأة وفق المادة (84) من نظام العمل، ويقع عبء الإثبات وفق المادة (12) من نظام الإثبات. ' + 'ب'.repeat(15000) + ' والمادة (7) من نظام العمل.';
+  const fake = fakeAnthropic((b) => {
+    if (isPlanner(b)) return { text: '{"needs_knowledge_base": true, "kb_queries": ["مكافأة نهاية الخدمة"]}' };
+    if (isGeneration(b)) return { text: answer };
+    if (isVerifier(b)) return { text: '{"unsupported": [], "note": ""}' };
+    return { text: 'عنوان' };
+  });
+  try {
+    const { text } = await sendTurn(env, 'سؤال');
+    const v = verifyEvent(text);
+    assert.deepEqual(v.unsupported.sort(), ['نظام الإثبات — المادة 12', 'نظام العمل — المادة 7'].sort());
+    const ver = fake.calls.find(isVerifier);
+    const content = ver.messages[0].content;
+    assert.match(content, /المادة 84/);
+    // المخرَج كاملاً — والمادة السابعة في آخره بعد خمسة عشر ألف حرف.
+    assert.match(content, /والمادة \(7\) من نظام العمل/);
+  } finally {
+    fake.restore();
+  }
+});
+
 t.done();

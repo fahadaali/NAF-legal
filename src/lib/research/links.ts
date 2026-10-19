@@ -211,6 +211,8 @@ export function parseRefs(textNorm: string): ParsedRef[] {
 
 export interface KnownLaw {
   lawId: string;
+  /** العنوان كما في القاعدة — للعرض. */
+  title: string;
   titleNorm: string;
   parentLawId: string | null;
   isRegulation: boolean;
@@ -226,6 +228,7 @@ export async function knownLaws(env: Env): Promise<KnownLaw[]> {
     .filter((r) => r.law_title)
     .map((r) => ({
       lawId: r.law_id,
+      title: r.law_title!,
       titleNorm: normalizeArabic(r.law_title!),
       parentLawId: r.parent_law_id,
       isRegulation: !!r.parent_law_id || r.doc_type === 'regulation',

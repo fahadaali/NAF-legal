@@ -593,7 +593,7 @@ app.post('/:conversationId', async (c) => {
         // [5] طبقة التحقّق بعد التوليد (الاقتباس المُتحقَّق منه) — §2
         let verification = null;
         try {
-          verification = await verifyGrounding(env, userId, fullText, ragContext, plan.consultation_type);
+          verification = await verifyGrounding(env, userId, fullText, results, plan.consultation_type);
         } catch {}
         if (verification) {
           // التحقّق يجري بعد الحفظ الآن، فيُكتب في بياناته الوصفية لتبقى
