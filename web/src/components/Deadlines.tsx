@@ -32,8 +32,14 @@ export default function Deadlines() {
     }
   };
 
-  const daysLeft = (due: string) =>
-    Math.ceil((new Date(due + 'T00:00:00Z').getTime() - new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z').getTime()) / 86400000);
+  /* «اليوم» بتوقيت الرياض لا بتوقيت غرينتش.
+     `toISOString` يعطي تاريخ غرينتش، فبين منتصف الليل والثالثة فجراً بتوقيت
+     الرياض كان اليوم السابق — فيظهر للمحامي يومٌ زائد على ميعادٍ نظاميّ.
+     وهذا حسابٌ لا عرض: `en-CA` يعطي YYYY-MM-DD كتاريخ الاستحقاق المخزَّن. */
+  const daysLeft = (due: string) => {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh' }).format(new Date());
+    return Math.round((Date.parse(due + 'T00:00:00Z') - Date.parse(today + 'T00:00:00Z')) / 86400000);
+  };
 
   return (
     <div className="admin-wrap">
