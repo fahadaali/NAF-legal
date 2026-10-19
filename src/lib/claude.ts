@@ -80,6 +80,12 @@ export interface ClaudeCallOptions {
    * من المخزَّن بجزءٍ يسير من السعر.
    */
   cache?: boolean;
+  /**
+   * مخرجٌ منظَّم: JSON يطابق المخطّط يقيناً (`output_config.format`). كان المُخطِّط
+   * يلتقط JSON من النصّ بتعبيرٍ نمطي، فحقلٌ ناقص أو فاصلةٌ زائدة تُسقطه إلى خطّته
+   * الاحتياطية بصمت.
+   */
+  format?: Record<string, unknown>;
 }
 
 /**
@@ -153,7 +159,10 @@ function buildBody(opts: ClaudeCallOptions, defaultMaxTokens: number, stream: bo
       : opts.system;
   }
   if (opts.cache) body.messages = withHistoryBreakpoint(messages);
-  body.output_config = { effort: opts.effort ?? DEFAULT_EFFORT };
+  body.output_config = {
+    effort: opts.effort ?? DEFAULT_EFFORT,
+    ...(opts.format ? { format: { type: 'json_schema', schema: opts.format } } : {}),
+  };
   if (opts.tools?.length) body.tools = opts.tools;
   if (opts.tool_choice) body.tool_choice = opts.tool_choice;
   if (stream) body.stream = true;

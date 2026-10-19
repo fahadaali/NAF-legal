@@ -3,7 +3,7 @@ import { callClaude } from './claude';
 import { logUsage, usageFromRaw } from './usage';
 import type { Env, PlannerOutput, ConsultationType } from '../types';
 
-const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشارات قانونية سعودية. مهمّتك تحليل رسالة المستخدم ونوع الاستشارة المختار، وإنتاج خطة تنفيذ بصيغة JSON فقط دون أي نص إضافي.
+const PLANNER_SYSTEM = () => `أنت مُخطِّط توجيه لمنصّة استشارات قانونية سعودية. مهمّتك تحليل رسالة المستخدم ونوع الاستشارة المختار، وإنتاج خطة تنفيذ بصيغة JSON فقط دون أي نص إضافي.
 
 أعِد كائن JSON بالحقول التالية:
 {
@@ -17,7 +17,10 @@ const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشا
   "needs_fiqh_sources": <bool>,
   "fiqh_queries": [<استعلامات عربية عن التأصيل الفقهي إن لزم>],
   "clarifying_questions": [<أسئلة استيضاح إن نقص بيان جوهري، وإلا مصفوفة فارغة>],
-  "output_format": "<text | docx>"
+  "output_format": "<text | docx>",
+  "domain": "<أحد: ${LEGAL_DOMAINS.join(' | ')}>",
+  "issues": [{"title": "<المسألة بإيجاز>", "layer": "<substantive | procedural | evidence | general | regulation>", "queries": [<استعلامات>], "laws": [<الأنظمة التي يُبحث فيها>]}],
+  "explicit_articles": [{"law": "<اسم النظام الرسمي>", "article": "<رقم المادة>"}]
 }
 
 قواعد:
@@ -28,7 +31,88 @@ const PLANNER_SYSTEM = `أنت مُخطِّط توجيه لمنصّة استشا
 - legal_basis (استدلال نظامي): المستند المرسَل هو المُدخَل لا الطلب، فـ needs_knowledge_base=true و needs_uploaded_files=true و output_format = "text" — المخرَج خريطةُ إسنادٍ عن نصٍّ قائم لا مستندٌ يُصاغ. واجعل kb_queries استعلاماتٍ عن الأنظمة التي يقوم عليها النصّ.
 - **السياق مهم:** إن وُجد «سجل المحادثة» فالرسالة الحالية غالبًا **متابعة** لما سبق (تعديل، إضافة، تصحيح، سؤال متفرّع). افهمها في ضوء ما دار، ولا تعامِلها كطلب جديد منفصل.
 - لا تطرح clarifying_questions إلا إذا كانت هناك معلومة جوهرية **مفقودة فعلًا** ولا يمكن استنتاجها من سجل المحادثة. في رسائل المتابعة اترك clarifying_questions فارغة غالبًا.
+- **issues — شجرة المسائل، وهي أهمّ ما في الخطة حين يلزم الإسناد.** فكّك الطلب إلى مسائله القانونية (حتى ثماني)، ولكل مسألةٍ طبقتها:
+  - substantive: الحكم الموضوعي (الاستحقاق، الالتزام، الجزاء) في النظام الخاص بالنزاع.
+  - procedural: الاختصاص، وشكل الدعوى وإجراءاتها، والمواعيد، وطرق الاعتراض.
+  - evidence: عبء الإثبات ووسائله وحجّيتها.
+  - general: الأحكام العامة التي يقوم عليها النظام الخاص (أحكام الالتزام والعقد والتعويض في نظام المعاملات المدنية مثلاً).
+  - regulation: ما فصّلته اللائحة التنفيذية للنظام.
+  القضية الموضوعية تستند عادةً إلى أكثر من طبقة: صحيفة الدعوى تحتاج الموضوعي والإجرائي، وكثيراً ما تحتاج الإثبات والأحكام العامة. فلا تقصر المسائل على الموضوعي. ولكل مسألةٍ استعلامٌ أو اثنان بألفاظ النصوص النظامية لا بألفاظ السؤال، وفي laws الأسماء الرسمية الكاملة للأنظمة التي يُبحث فيها عنها. والاستشارة البسيطة مسألةٌ أو اثنتان.
+- **explicit_articles:** كل مادةٍ ذكرها المستخدم برقمها ونظامها («المادة 77 من نظام العمل»)، وإلا مصفوفة فارغة. لا تضع مادةً لم يذكرها.
+- **domain:** مجال القضية من القائمة. وما لا يدخل فيها: «أخرى».
 - **target_regulations مهمّ:** اذكر فيه كل نظام أو لائحة يتوقّف عليه الإسناد في هذه المسألة، بالاسم الرسمي الكامل كما يُنشر («نظام العمل»، «اللائحة التنفيذية لنظام العمل»، «نظام المعاملات المدنية»). المنصّة تقارن هذه الأسماء بقاعدة المعرفة وتعرض على المستخدم طلب إضافة ما ينقص منها، فاسمٌ ناقص أو مختصَر يُضيّع هذه الفرصة. لا تضع فيه أسماء تخمينية لا تتطلّبها المسألة.`;
+
+/**
+ * مجالات القضايا — مفاتيحُ خريطة الإسناد (`grounding_map.domain`).
+ * والقائمة هنا لا في الخريطة: المُخطِّط يحتاجها ولو لم يُعتمد في الخريطة شيء بعد.
+ */
+export const LEGAL_DOMAINS = [
+  'عمالي',
+  'تجاري',
+  'شركات',
+  'مدني',
+  'أحوال شخصية',
+  'تنفيذ',
+  'جزائي',
+  'إداري',
+  'تحكيم',
+  'حماية البيانات',
+  'أخرى',
+] as const;
+
+const LAYERS = ['substantive', 'procedural', 'evidence', 'general', 'regulation'] as const;
+
+const str = { type: 'string' };
+const strs = { type: 'array', items: str };
+
+/** مخطّط الخطة — كل حقلٍ مطلوب، فلا يُسقط المُخطِّط حقلاً ولا يزيد. */
+const PLAN_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'consultation_type', 'needs_knowledge_base', 'kb_queries', 'needs_internet_search', 'internet_queries',
+    'needs_uploaded_files', 'target_regulations', 'needs_fiqh_sources', 'fiqh_queries', 'clarifying_questions',
+    'output_format', 'domain', 'issues', 'explicit_articles',
+  ],
+  properties: {
+    consultation_type: {
+      type: 'string',
+      enum: [
+        'litigation.statement_of_claim', 'litigation.reply_memo', 'litigation.objection', 'litigation.judgment_analysis',
+        'contract', 'policy', 'consultation', 'document_review', 'legal_basis',
+      ],
+    },
+    needs_knowledge_base: { type: 'boolean' },
+    kb_queries: strs,
+    needs_internet_search: { type: 'boolean' },
+    internet_queries: strs,
+    needs_uploaded_files: { type: 'boolean' },
+    target_regulations: strs,
+    needs_fiqh_sources: { type: 'boolean' },
+    fiqh_queries: strs,
+    clarifying_questions: strs,
+    output_format: { type: 'string', enum: ['text', 'docx'] },
+    domain: { type: 'string', enum: [...LEGAL_DOMAINS] },
+    issues: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'layer', 'queries', 'laws'],
+        properties: { title: str, layer: { type: 'string', enum: [...LAYERS] }, queries: strs, laws: strs },
+      },
+    },
+    explicit_articles: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['law', 'article'],
+        properties: { law: str, article: str },
+      },
+    },
+  },
+};
 
 export async function runPlanner(
   env: Env,
@@ -55,15 +139,27 @@ ${historyBlock}رسالة المستخدم الحالية:
 ${userMessage}`;
 
   try {
-    const { text, raw } = await callClaude(env, {
+    const request = {
       model: env.PLANNER_MODEL,
-      system: PLANNER_SYSTEM,
-      messages: [{ role: 'user', content: context }],
+      system: PLANNER_SYSTEM(),
+      messages: [{ role: 'user' as const, content: context }],
       // توجيهٌ لا اجتهاد: خرجُه JSON قصير، وهو على مسار كل دور محادثة.
       // و`low` على Opus 5 قويٌّ لهذا الصنف، وأقلُّ زمناً قبل بدء التوليد.
-      effort: 'low',
-      max_tokens: 4096,
-    });
+      effort: 'low' as const,
+      max_tokens: 8192,
+    };
+    /* مخرجٌ منظَّم أولاً. وإن رُدّ الطلب لعلّةٍ في المخطّط نفسه (400) — حقلٌ لا
+       يقبله الـAPI — فالطلب نفسه بلا مخطّط، والتقاطُ JSON من النصّ كما كان: خطةٌ
+       بلا ضمان المخطّط أنفع من خطةٍ احتياطية لا استعلام فيها. */
+    let result: { text: string; raw: any };
+    try {
+      result = await callClaude(env, { ...request, format: PLAN_SCHEMA });
+    } catch (e) {
+      if (!/Claude API 400/.test(String((e as Error)?.message))) throw e;
+      console.error('planner schema rejected — retrying without structured output');
+      result = await callClaude(env, request);
+    }
+    const { text, raw } = result;
     await logUsage(env, { userId, kind: 'planner', model: env.PLANNER_MODEL, ...usageFromRaw(raw) });
     const plan = extractJson(text);
     return normalize(plan, selectedType, hasAttachments, forceInternet);
@@ -109,6 +205,23 @@ function normalize(
     // ثلاثةٌ سقفاً: كلُّ استعلامٍ نداءُ شبكةٍ إلى كلّ مصدرٍ مفعَّل، ثم تضمين.
     fiqh_queries: Array.isArray(p.fiqh_queries) ? p.fiqh_queries.slice(0, 3) : [],
     clarifying_questions: Array.isArray(p.clarifying_questions) ? p.clarifying_questions : [],
+    domain: typeof p.domain === 'string' && (LEGAL_DOMAINS as readonly string[]).includes(p.domain) ? p.domain : 'أخرى',
+    // ثماني مسائل سقفاً، واستعلامان لكلٍّ منها، وثلاثة أنظمة: كل استعلامٍ بحثٌ في
+    // كل نظامٍ مسمّى، والسقف يُبقي الدور في حدود زمنه.
+    issues: (Array.isArray(p.issues) ? p.issues : [])
+      .filter((i) => i && typeof i.title === 'string' && (LAYERS as readonly string[]).includes(i.layer))
+      .slice(0, 8)
+      .map((i) => ({
+        title: i.title,
+        layer: i.layer,
+        queries: (Array.isArray(i.queries) ? i.queries : []).filter((q) => typeof q === 'string' && q.trim()).slice(0, 2),
+        laws: (Array.isArray(i.laws) ? i.laws : []).filter((l) => typeof l === 'string' && l.trim()).slice(0, 3),
+      }))
+      .filter((i) => i.queries.length),
+    explicit_articles: (Array.isArray(p.explicit_articles) ? p.explicit_articles : [])
+      .filter((a) => a && typeof a.law === 'string' && a.article != null)
+      .slice(0, 10)
+      .map((a) => ({ law: a.law, article: String(a.article) })),
     /* `legal_basis` مخرَجُه خريطةُ إسنادٍ عن نصٍّ قائم لا مستندٌ يُصاغ، فيبقى
        `text` ولو قال المُخطِّط غيره. وبقيّةُ الأنواع على ما كانت. */
     output_format:

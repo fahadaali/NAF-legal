@@ -34,6 +34,12 @@ app.post('/retrieve', async (c) => {
     plan,
     queries: gathered.queries,
     anchors: gathered.anchors.length,
+    groups: gathered.groups.map((g) => ({
+      kind: g.kind,
+      title: g.title,
+      layer: g.layer ?? null,
+      keys: g.results.map((r) => r.key ?? r.documentId),
+    })),
     results: gathered.results.map((r) => ({
       key: r.key ?? r.documentId,
       source: r.source ?? 'document',

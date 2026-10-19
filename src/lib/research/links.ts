@@ -209,7 +209,7 @@ export function parseRefs(textNorm: string): ParsedRef[] {
 
 // ── الحفظ والحلّ ──
 
-interface KnownLaw {
+export interface KnownLaw {
   lawId: string;
   titleNorm: string;
   parentLawId: string | null;
@@ -217,7 +217,7 @@ interface KnownLaw {
 }
 
 /** الأنظمة المعروفة — لحلّ العنوان المسمّى إلى معرّف. */
-async function knownLaws(env: Env): Promise<KnownLaw[]> {
+export async function knownLaws(env: Env): Promise<KnownLaw[]> {
   const rows = await env.DB.prepare(
     `SELECT law_id, MAX(law_title) AS law_title, MAX(parent_law_id) AS parent_law_id, MAX(doc_type) AS doc_type
      FROM legal_chunks WHERE law_id IS NOT NULL GROUP BY law_id`

@@ -2,7 +2,8 @@
 //
 // موضعٌ واحد يمرّ به دور المحادثة ومسارُ القياس (`routes/eval.ts`) معاً: ما يُقاس
 // هو ما يجري فعلاً، لا نسخةٌ منه تفترق عنه بأوّل تعديل.
-import { retrieve, type RagResult } from '../rag';
+import { retrieve, formatRagContext, type RagResult } from '../rag';
+import { layeredRetrieve, formatLayeredContext, type ResearchGroup } from './layered';
 import { extractAnchors, BASIS_PER_ANCHOR, type BasisAnchor } from '../basis';
 import type { RetrievalTrace } from './trace';
 import type { Env, PlannerOutput } from '../../types';
@@ -24,6 +25,10 @@ export interface GatherInput {
 
 export interface Gathered {
   results: RagResult[];
+  /** السياق جاهزاً للبرومبت — مجمّعاً تحت المسائل حين يجري المحرّك الطبقي. */
+  context: string;
+  /** المجموعات كما رتّبها المحرّك الطبقي — فارغةٌ في المسار القديم. */
+  groups: ResearchGroup[];
   /** مواضع الاستدلال — تُملأ في «الاستدلال النظامي» وحده. */
   anchors: BasisAnchor[];
   queries: string[];
@@ -33,7 +38,7 @@ export async function gatherLegalContext(env: Env, input: GatherInput): Promise<
   const { plan, message, trace } = input;
   if (!plan.needs_knowledge_base) {
     trace?.add({ stage: 'skipped', detail: 'needs_knowledge_base=false' });
-    return { results: [], anchors: [], queries: [] };
+    return { results: [], context: '', groups: [], anchors: [], queries: [] };
   }
 
   /* «استدلال نظامي» يمرّ بتمريرتين، وغيرُه بواحدة.
@@ -45,6 +50,30 @@ export async function gatherLegalContext(env: Env, input: GatherInput): Promise<
     const source = [message, ...(input.attachmentsText ?? [])].join('\n\n');
     anchors = await extractAnchors(env, source, input.userId);
     trace?.add({ stage: 'anchors', count: anchors.length });
+  }
+
+  /* ══ المحرّك الطبقي ══
+     حين يفكّك المُخطِّط الطلب إلى مسائل — أو تُستخرج مواضعُ «الاستدلال النظامي» —
+     يُبحث لكل مسألةٍ في طبقتها وأنظمتها، وتُتبع الإحالات، وتُستكمل الطبقات المطلوبة.
+     ومواضع الاستدلال مسائلُ موضوعية، لكلٍّ منها أربعُ موادّ. */
+  const issues = anchors.length
+    ? anchors.map((a) => ({ title: a.claim || a.quote, layer: 'substantive' as const, queries: [a.query], laws: [] }))
+    : plan.issues ?? [];
+  if (issues.length) {
+    const layered = await layeredRetrieve(env, {
+      plan,
+      message,
+      issues,
+      perIssue: anchors.length ? BASIS_PER_ANCHOR : undefined,
+      trace,
+    });
+    return {
+      results: layered.results,
+      context: formatLayeredContext(layered.groups),
+      groups: layered.groups,
+      anchors,
+      queries: issues.flatMap((i) => i.queries),
+    };
   }
 
   /* وإن لم يكتب المُخطِّط استعلاماً — تعذّر فعاد بخطّته الاحتياطية، أو أغفلها —
@@ -64,5 +93,5 @@ export async function gatherLegalContext(env: Env, input: GatherInput): Promise<
     ? await retrieve(env, queries, BASIS_PER_ANCHOR, anchors.length * BASIS_PER_ANCHOR, trace)
     : await retrieve(env, queries, DEFAULT_TOP_K, DEFAULT_TOP_K, trace);
   trace?.add({ stage: 'result', count: results.length });
-  return { results, anchors, queries };
+  return { results, context: formatRagContext(results), groups: [], anchors, queries };
 }

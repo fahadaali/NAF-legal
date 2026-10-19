@@ -186,7 +186,7 @@ export async function retrieve(
  * على أنه الحكم. فتُجمع هنا نصّاً واحداً بأسطرها، ويبقى المعرّفُ معرّفَ أوّل
  * جزء: استدعاؤه يفتح المادة بأجزائها كلِّها.
  */
-function joinArticleParts(hits: LegalHit[]): LegalHit[] {
+export function joinArticleParts(hits: LegalHit[]): LegalHit[] {
   const out: LegalHit[] = [];
   for (const h of hits) {
     const last = out[out.length - 1];
@@ -220,7 +220,7 @@ function joinArticleParts(hits: LegalHit[]): LegalHit[] {
   return out;
 }
 
-function fromLegalHit(h: LegalHit): RagResult {
+export function fromLegalHit(h: LegalHit): RagResult {
   return {
     // `text` وحده. ولو وُضع `embed_text` هنا لتلوّث الاستشهاد بسياق زائد.
     text: h.text,
@@ -343,11 +343,19 @@ async function effectiveDocumentIds(env: Env, ids: string[]): Promise<Set<string
  */
 
 // تنسيق سياق RAG لإدراجه في البرومبت مع الإسناد
+/** مقطعٌ واحد في السياق: رقمُه وسطرُ مصدره وتنبيهاتُه ثم نصُّه. */
+export function formatRagBlock(r: RagResult, n: number): string {
+  return `[${n}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`;
+}
+
 export function formatRagContext(results: RagResult[]): string {
   if (!results.length) return '';
-  const blocks = results
-    .map((r, i) => `[${i + 1}] المصدر: ${citationLine(r)}\n${noticeLines(r)}${r.text}`)
-    .join('\n\n---\n\n');
+  const blocks = results.map((r, i) => formatRagBlock(r, i + 1)).join('\n\n---\n\n');
+  return wrapRagContext(blocks);
+}
+
+/** الوسم وتعليماته حول المقاطع — موضعٌ واحد لنصّ التعليمات. */
+export function wrapRagContext(blocks: string): string {
   return `<سياق_نظامي>\nالمقاطع التالية مسترجَعة من قاعدة المعرفة النظامية الرسمية. استند إليها، واستشهد بها في المتن باسم النظام ورقم المادة وحدهما. وما في سطر مصدره من أداةٍ وتاريخ و«بصيغتها بعد …» وصفحةٍ ونسخة فلا يُنقل إلى المتن إلا ما يطلبه توجيه المهمة نصّاً؛ ونسخةُ المادة المعدَّلة تُذكر في «ملاحظات للمحامي» كما وردت. وما سبقه سطرٌ يبدأ بـ«تنبيه:» فالتنبيه جزءٌ منه لا يُفصل عنه، وهو للمحامي لا لمن يُوجَّه إليه المستند: اعمل بمقتضاه فلا تعرض النصّ على أنه الجاري، وانقله بنصّه مع الاستشهاد في قسم «ملاحظات للمحامي» لا في متن المستند. وما نبّه التنبيه أن نصَّه أصليٌّ لم يُدمج تعديلُه فلا تصغ نصَّه النافذ من عندك: اترك مكانه في المتن خانةً بين معقوفين تسمّيه، وقل في «ملاحظات للمحامي» إن النصّ النافذ غير متاح في قاعدة المعرفة، وأحِل إلى سجل التعديلات.\n\n${blocks}\n</سياق_نظامي>`;
 }
 

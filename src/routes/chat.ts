@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
-import { formatRagContext, type RagResult } from '../lib/rag';
+import { type RagResult } from '../lib/rag';
 import { gatherLegalContext } from '../lib/research/gather';
 import { newTrace, saveTrace } from '../lib/research/trace';
 import { buildAnchorsBlock, type BasisAnchor } from '../lib/basis';
@@ -208,7 +208,7 @@ app.post('/:conversationId', async (c) => {
     });
     results = gathered.results;
     anchors = gathered.anchors;
-    ragContext = formatRagContext(results);
+    ragContext = gathered.context;
     citations = results.map(toCitation);
   } catch (e: any) {
     // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ والأثر:

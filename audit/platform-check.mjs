@@ -470,4 +470,92 @@ await t.check('«العامل» يجد «للعامل» و«والعامل» و�
   assert.equal((await routes.searchLegal(env, 'العامل', { limit: 10 })).length, 3);
 });
 
+console.log('\nالمحرّك الطبقي');
+
+async function layeredFixture() {
+  const db = await makeDb();
+  db.q('INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)', 'u1', 'u1@x', '-', 1);
+  db.q('INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', 'c1', 'u1', 'محادثة', 1, 1);
+  const env = { ...ENV_BASE, DB: db.DB, KV: makeKv() };
+  await routes.upsertLegalChunks(env, routes.parseJsonl([
+    law({ id: 'labor:1', law_id: 'labor', law_title: 'نظام العمل', article_no: '1', text: 'يُقصد بالألفاظ والعبارات الآتية المعاني المبينة أمامها: العامل: كل شخص طبيعي يعمل لمصلحة صاحب العمل.' }),
+    law({ id: 'labor:77', law_id: 'labor', law_title: 'نظام العمل', article_no: '77', text: 'إذا أُنهي العقد لسبب غير مشروع استحق الطرف المتضرر تعويضاً، مع مراعاة المادة (76) من نظام المرافعات الشرعية.' }),
+    law({ id: 'labor:84', law_id: 'labor', law_title: 'نظام العمل', article_no: '84', text: 'إذا انتهت علاقة العمل وجب على صاحب العمل أن يدفع إلى العامل مكافأة عن مدة خدمته.' }),
+    law({ id: 'mur:31', law_id: 'murafaat', law_title: 'نظام المرافعات الشرعية', article_no: '31', text: 'تختص المحاكم العمالية بالنظر في المنازعات العمالية.' }),
+    law({ id: 'mur:76', law_id: 'murafaat', law_title: 'نظام المرافعات الشرعية', article_no: '76', text: 'الدفع ببطلان صحيفة الدعوى يُبدى قبل أي طلب أو دفاع.' }),
+    law({ id: 'ith:5', law_id: 'ithbat', law_title: 'نظام الإثبات', article_no: '5', text: 'على المدعي أن يثبت ما يدعيه من حق، وللمدعى عليه نفيه.' }),
+  ].join('\n')).rows);
+  await routes.extractPendingLinks(env, 100);
+  await routes.stemPending(env);
+  // طبقة الإثبات معتمدةً مطلوبة؛ والأحكام العامة مسودّةٌ لا يقرؤها المحرّك.
+  db.q("UPDATE grounding_map SET status = 'approved', required = 1 WHERE domain = 'عمالي' AND layer = 'evidence'");
+  return { db, env };
+}
+
+const LAYERED_PLAN = {
+  consultation_type: 'litigation.statement_of_claim', needs_knowledge_base: true, kb_queries: [],
+  needs_internet_search: false, internet_queries: [], needs_uploaded_files: false,
+  target_regulations: ['نظام العمل'], needs_fiqh_sources: false, fiqh_queries: [], clarifying_questions: [],
+  output_format: 'docx', domain: 'عمالي',
+  issues: [
+    { title: 'التعويض عن الفصل', layer: 'substantive', queries: ['تعويض إنهاء العقد لسبب غير مشروع'], laws: ['نظام العمل'] },
+    { title: 'الاختصاص', layer: 'procedural', queries: ['اختصاص المحاكم العمالية'], laws: ['نظام المرافعات الشرعية'] },
+  ],
+  explicit_articles: [{ law: 'نظام العمل', article: '84' }],
+};
+
+await t.check('المُخطِّط يطلب مخرجاً منظَّماً بمخطّط الخطة، ويعود إلى النصّ إن رُدّ المخطّط', async () => {
+  const { env } = await layeredFixture();
+  let first = true;
+  const fake = fakeAnthropic((b) => {
+    if (!isPlanner(b)) return { text: 'رد' };
+    if (b.output_config?.format && first) { first = false; return { status: 400 }; }
+    return { text: JSON.stringify(LAYERED_PLAN) };
+  });
+  try {
+    await sendTurn(env, 'صحيفة دعوى عمالية');
+    const planners = fake.calls.filter(isPlanner);
+    assert.equal(planners[0].output_config.format.type, 'json_schema');
+    assert.ok(planners[0].output_config.format.schema.properties.issues, 'المخطّط بلا شجرة المسائل');
+    assert.equal(planners.at(-1).output_config.format, undefined, 'لم يُعد الطلب بلا مخطّط');
+    assert.match(generationText(fake.calls.find(isGeneration)), /المسألة: الاختصاص/);
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('السياق تحت المسائل والطبقات: المذكورة بأرقامها، والمحصور في كل نظام، والطبقة المطلوبة، والإحالة، والتعريفات', async () => {
+  const { env, db } = await layeredFixture();
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: JSON.stringify(LAYERED_PLAN) } : { text: 'رد' }));
+  try {
+    await sendTurn(env, 'موكّلي فُصل دون سبب مشروع، أريد صحيفة دعوى عمالية');
+    const ctx = generationText(fake.calls.find(isGeneration));
+    for (const [label, re] of [
+      ['المادة المذكورة برقمها', /موادّ ذكرها المحامي[\s\S]*?نظام العمل — المادة 84/],
+      ['المسألة الموضوعية', /المسألة: التعويض عن الفصل \(موضوعي\)[\s\S]*?المادة 77/],
+      ['المسألة الإجرائية', /المسألة: الاختصاص \(إجرائي\)[\s\S]*?نظام المرافعات الشرعية — المادة 31/],
+      ['الطبقة المطلوبة في الخريطة المعتمدة', /استكمال طبقة إثبات[\s\S]*?نظام الإثبات — المادة 5/],
+      ['المادة المحال إليها', /موادّ تحيل إليها الموادّ أعلاه[\s\S]*?نظام المرافعات الشرعية — المادة 76/],
+      ['التعريفات', /تعريفات النظام[\s\S]*?نظام العمل — المادة 1/],
+    ]) assert.match(ctx, re, `غائب: ${label}`);
+    // والأثر يحفظ ما جرى لكل مسألة.
+    const steps = JSON.parse(db.q('SELECT steps_json FROM retrieval_traces')[0].steps_json);
+    assert.ok(steps.filter((s) => s.stage === 'issue').length === 2);
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('مدخل الخريطة المسودّة لا يُقرأ: لا استكمال لطبقةٍ لم يعتمدها محامٍ', async () => {
+  const { env, db } = await layeredFixture();
+  db.q("UPDATE grounding_map SET status = 'draft' WHERE domain = 'عمالي'");
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: JSON.stringify(LAYERED_PLAN) } : { text: 'رد' }));
+  try {
+    await sendTurn(env, 'سؤال');
+    assert.doesNotMatch(generationText(fake.calls.find(isGeneration)), /استكمال طبقة إثبات/);
+  } finally {
+    fake.restore();
+  }
+});
+
 t.done();

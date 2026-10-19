@@ -3915,6 +3915,43 @@ export async function getArticle(
   return withAttachments(env, await withParts(env, siblings, scope), scope);
 }
 
+/**
+ * مقاطعُ بمفاتيحها الداخلية، بترتيبها — بالتصفية الافتراضية نفسها، وبأجزاء موادّها.
+ * لتتبّع الإحالات (`legal_article_links.to_seq`): المحال إليه الملغى لا يعود منها.
+ */
+export async function getHitsBySeqs(env: Env, seqs: number[]): Promise<LegalHit[]> {
+  const unique = [...new Set(seqs)].slice(0, 90);
+  if (!unique.length) return [];
+  const filters = buildFilters({});
+  const rows = await env.DB.prepare(
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE c.seq IN (${unique.map(() => '?').join(',')})${filters.sql}`
+  )
+    .bind(...unique, ...filters.binds)
+    .all<HitRow>();
+  const bySeq = new Map((rows.results ?? []).map((r) => [r.seq, toHit(r)]));
+  const ordered = unique.map((s) => bySeq.get(s)).filter((h): h is LegalHit => !!h);
+  return withParts(env, ordered, {});
+}
+
+/**
+ * مادةُ التعريفات في نظام — «يُقصد بالألفاظ والعبارات الآتية…».
+ *
+ * الحكم يُقرأ بمعاني ألفاظه، والمعاني في مادة التعريفات لا في مادة الحكم.
+ */
+export async function getDefinitionsArticle(env: Env, lawId: string): Promise<LegalHit | null> {
+  const filters = buildFilters({ lawId, withRegulations: false });
+  const row = await env.DB.prepare(
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c
+     WHERE (c.text_norm LIKE '%يقصد بالالفاظ%' OR c.text_norm LIKE '%يقصد بالكلمات%'
+            OR c.text_norm LIKE '%يقصد بالعبارات%' OR c.text_norm LIKE '%يقصد بالمصطلحات%')${filters.sql}
+     ORDER BY c.seq LIMIT 1`
+  )
+    .bind(...filters.binds)
+    .first<HitRow>();
+  if (!row) return null;
+  return (await withParts(env, [toHit(row)], { lawId }))[0] ?? null;
+}
+
 /** مقطع بمعرّفه. التصفية سارية هنا أيضاً — الاستشهاد لا يستثنى من الشرط. */
 export async function getChunkById(
   env: Env,

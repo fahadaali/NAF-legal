@@ -3,7 +3,8 @@
 // الاستيراد للمسؤول وحده، والبحث لكل من دخل. والتصفية على السريان لا تُقرَّر
 // هنا: `lib/legal.ts` يحملها في SQL نفسه، فما يُكتب في هذا الملف لا يستطيع
 // تجاوزها ولو أراد.
-import { extractPendingLinks } from '../lib/research/links';
+import { extractPendingLinks, knownLaws, resolveNamed } from '../lib/research/links';
+import { LEGAL_DOMAINS } from '../lib/planner';
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
@@ -239,6 +240,78 @@ app.post('/import', requireAdmin, async (c) => {
 });
 
 /** تصريف ما ينتظر التضمين يدوياً (بعد تهيئة الفهرس المتجهي مثلاً). */
+// ── خريطة الإسناد ──
+//
+// لكل مجالٍ الأنظمةُ التي تقوم عليها قضاياه في كل طبقة. المحرّك الطبقي لا يقرأ إلا
+// المعتمد، والاعتماد قرارُ محامٍ يُسجَّل باسمه في سجل التدقيق.
+
+const GROUNDING_LAYERS = ['substantive', 'procedural', 'evidence', 'general', 'regulation'];
+const GROUNDING_STATUSES = ['draft', 'approved', 'retired'];
+
+app.get('/grounding-map', requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT id, domain, layer, law_title, required, status, note, reviewed_by, reviewed_at, created_at
+     FROM grounding_map ORDER BY domain, layer, law_title`
+  ).all<Record<string, any>>();
+  // ويُقال لكل مدخلٍ هل يُطابق عنوانُه نظاماً في القاعدة: مدخلٌ لا يُحلّ لا يعمل.
+  const laws = await knownLaws(c.env);
+  return c.json({
+    domains: LEGAL_DOMAINS,
+    entries: (rows.results ?? []).map((r) => ({ ...r, law_id: resolveNamed(r.law_title, laws) })),
+  });
+});
+
+app.post('/grounding-map', requireAdmin, async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  const domain = String(b.domain ?? '').trim();
+  const layer = String(b.layer ?? '');
+  const lawTitle = String(b.law_title ?? '').trim();
+  if (!(LEGAL_DOMAINS as readonly string[]).includes(domain) || !GROUNDING_LAYERS.includes(layer) || !lawTitle) {
+    return c.json({ error: 'المجال والطبقة وعنوان النظام مطلوبة' }, 400);
+  }
+  const id = uuid();
+  await c.env.DB.prepare(
+    `INSERT INTO grounding_map (id, domain, layer, law_title, required, status, note, created_at)
+     VALUES (?, ?, ?, ?, ?, 'draft', ?, ?)`
+  )
+    .bind(id, domain, layer, lawTitle, b.required === false ? 0 : 1, b.note ?? null, Date.now())
+    .run();
+  await audit(c, 'grounding.add', id, { domain, layer, law_title: lawTitle });
+  return c.json({ ok: true, id });
+});
+
+app.patch('/grounding-map/:id', requireAdmin, async (c) => {
+  const id = c.req.param('id') ?? '';
+  const b = await c.req.json().catch(() => ({}));
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (b.status !== undefined) {
+    if (!GROUNDING_STATUSES.includes(b.status)) return c.json({ error: 'حالة غير معروفة' }, 400);
+    sets.push('status = ?', 'reviewed_by = ?', 'reviewed_at = ?');
+    binds.push(b.status, c.get('user').email ?? c.get('user').id, Date.now());
+  }
+  if (b.required !== undefined) {
+    sets.push('required = ?');
+    binds.push(b.required ? 1 : 0);
+  }
+  if (typeof b.law_title === 'string' && b.law_title.trim()) {
+    // عنوانٌ تغيّر مدخلٌ جديد في حكمه: يعود مسودّةً حتى يُعتمد ثانيةً.
+    sets.push('law_title = ?', "status = CASE WHEN status = 'approved' THEN 'draft' ELSE status END");
+    binds.push(b.law_title.trim());
+  }
+  if (b.note !== undefined) {
+    sets.push('note = ?');
+    binds.push(b.note);
+  }
+  if (!sets.length) return c.json({ error: 'لا تغيير' }, 400);
+  const res = await c.env.DB.prepare(`UPDATE grounding_map SET ${sets.join(', ')} WHERE id = ?`)
+    .bind(...binds, id)
+    .run();
+  if (!res.meta.changes) return c.json({ error: 'غير موجودة' }, 404);
+  await audit(c, 'grounding.update', id, b);
+  return c.json({ ok: true });
+});
+
 /** استخراج الإحالات بين المواد الآن — بدل انتظار نبضة الـCron. */
 app.post('/links/extract', requireAdmin, async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 2000) || 2000, 1), 5000);
