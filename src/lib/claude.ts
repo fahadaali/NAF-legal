@@ -71,6 +71,15 @@ export interface ClaudeCallOptions {
   effort?: ClaudeEffort;
   tools?: any[];
   tool_choice?: any;
+  /**
+   * تخزينٌ مؤقّت لبادئة الطلب: البرومبت، والسجلّ حتى آخر رسالةٍ قبل الحالية.
+   *
+   * للمحادثة: كل دورٍ يعيد إرسال البرومبت والسجلّ كاملين، وكانا يُدفعان بسعر
+   * المدخلات كاملاً في كل مرّة. والسياق النظاميّ والمرفقاتُ تُلحق بالرسالة
+   * الأخيرة وحدها، فما قبلها ثابتٌ بين دورٍ وآخر — وهو ما يُخزَّن. والقراءة
+   * من المخزَّن بجزءٍ يسير من السعر.
+   */
+  cache?: boolean;
 }
 
 /**
@@ -106,6 +115,25 @@ function sanitizeMessages(messages: ClaudeMessage[]): ClaudeMessage[] {
   return kept.slice(start);
 }
 
+/**
+ * نقطةُ تخزينٍ على آخر رسالةٍ قبل الحالية.
+ *
+ * في الدور التالي تصير هذه البادئة جزءاً من سجلٍّ أطول، فيُقرأ ما خُزِّن منها
+ * ويُكتب ما زاد بعدها وحده. والرسالةُ الأخيرة لا تُوسم: فيها السياق النظاميّ
+ * لهذا الدور، ولا يتكرّر.
+ */
+function withHistoryBreakpoint(messages: ClaudeMessage[]): ClaudeMessage[] {
+  if (messages.length < 2) return messages;
+  const i = messages.length - 2;
+  const m = messages[i];
+  const blocks: any[] =
+    typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : (m.content as any[]).map((b) => ({ ...b }));
+  blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: 'ephemeral' } };
+  const out = messages.slice();
+  out[i] = { ...m, content: blocks } as ClaudeMessage;
+  return out;
+}
+
 /** جسمُ الطلب — موضعٌ واحد يبنيه للاستدعاءين، فما صحّ لأحدهما صحّ للآخر. */
 function buildBody(opts: ClaudeCallOptions, defaultMaxTokens: number, stream: boolean): string {
   const messages = sanitizeMessages(opts.messages);
@@ -119,7 +147,12 @@ function buildBody(opts: ClaudeCallOptions, defaultMaxTokens: number, stream: bo
   if (FALLBACK_ENABLED) body.fallbacks = FALLBACK_MODE;
   // الحقول الاختيارية تُحذف ولا تُرسل فارغة: `system` فارغ و`tools` فارغة
   // كلاهما 400، والإغفال هو ما يعنيه غيابُها أصلاً.
-  if (opts.system?.trim()) body.system = opts.system;
+  if (opts.system?.trim()) {
+    body.system = opts.cache
+      ? [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }]
+      : opts.system;
+  }
+  if (opts.cache) body.messages = withHistoryBreakpoint(messages);
   body.output_config = { effort: opts.effort ?? DEFAULT_EFFORT };
   if (opts.tools?.length) body.tools = opts.tools;
   if (opts.tool_choice) body.tool_choice = opts.tool_choice;
@@ -150,13 +183,71 @@ async function apiError(res: Response, stage: string): Promise<Error> {
   return new Error(`Claude API ${res.status}: ${body.slice(0, 300)}`);
 }
 
+/**
+ * ما يستحقّ إعادة الطلب: حدُّ المعدّل، وازدحامُ الخدمة، وأعطالها العابرة.
+ *
+ * وكان أيُّ واحدٍ منها يصل المحامي «تعذّر توليد الرد» من أوّل مرّة، أو يُسقط
+ * المُخطِّط إلى خطّته الاحتياطية بصمت. وما عداها — طلبٌ مرفوض، مفتاحٌ ناقص —
+ * يتكرّر بتكراره، فلا يُعاد.
+ */
+const RETRYABLE_STATUS = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
+/** محاولاتٌ للطلب الواحد، بتأخيرٍ متضاعف بينها. */
+const RETRY_DELAYS_MS = [0, 1500, 4000];
+
+/** أقصى ما يُنتظر لـ`retry-after` — أطولُ منه يُترك للمحاولة التالية من المستخدم. */
+const MAX_RETRY_AFTER_MS = 15_000;
+
+/** مهلةُ الطلب غير المتدفّق كاملاً، ومهلةُ وصول ترويسة الطلب المتدفّق. */
+const CALL_TIMEOUT_MS = 180_000;
+const STREAM_CONNECT_TIMEOUT_MS = 90_000;
+
+/**
+ * مهلةُ الصمت في البثّ: لا حدثَ يصل في هذه المدّة يعني اتصالاً معلّقاً.
+ *
+ * الخادم يرسل `ping` دورياً والتفكيرُ يتدفّق أحداثاً، فصمتٌ بهذا الطول ليس
+ * تفكيراً طويلاً بل انقطاعٌ لم يُعلَن — وبدون المهلة ينتظر الدور إلى الأبد.
+ */
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function retryAfterMs(res: Response): number | null {
+  const v = res.headers.get('retry-after');
+  if (!v) return null;
+  const secs = Number(v);
+  return Number.isFinite(secs) ? Math.min(secs * 1000, MAX_RETRY_AFTER_MS) : null;
+}
+
+/** يرسل الطلب ويعيده على الأعطال العابرة. يعيد آخر ردٍّ أو يرمي آخر خطأ شبكة. */
+async function postWithRetry(env: Env, body: string, timeoutMs: number): Promise<Response> {
+  let lastError: unknown;
+  for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
+    if (RETRY_DELAYS_MS[i]) await sleep(RETRY_DELAYS_MS[i]);
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: headers(env),
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.ok || !RETRYABLE_STATUS.has(res.status) || i === RETRY_DELAYS_MS.length - 1) return res;
+      const wait = retryAfterMs(res);
+      await res.body?.cancel().catch(() => {});
+      console.error(`claude ${res.status} — retrying (${i + 1}/${RETRY_DELAYS_MS.length - 1})`);
+      if (wait) await sleep(wait);
+    } catch (e) {
+      // مهلةٌ أو انقطاعُ شبكة قبل الردّ — عارضٌ يُعاد.
+      lastError = e;
+      console.error(`claude request failed — ${(e as Error)?.name ?? ''}: ${(e as Error)?.message ?? e}`);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 // استدعاء غير متدفّق يعيد النص الكامل (يُستخدم للمُخطِّط والتصنيف)
 export async function callClaude(env: Env, opts: ClaudeCallOptions): Promise<{ text: string; raw: any }> {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: headers(env),
-    body: buildBody(opts, 4096, false),
-  });
+  const res = await postWithRetry(env, buildBody(opts, 4096, false), CALL_TIMEOUT_MS);
 
   if (!res.ok) throw await apiError(res, 'call');
   const data = (await res.json()) as any;
@@ -236,11 +327,9 @@ export function isRetryableEmptyTurn(o: StreamOutcome): boolean {
 
 // استدعاء متدفّق (SSE) — يعيد مجرى مقاطع النص لعرضها تدريجيًا، ومآلَ الدور
 export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<ClaudeStream> {
-  const upstream = await fetch(API_URL, {
-    method: 'POST',
-    headers: headers(env),
-    body: buildBody(opts, 8192, true),
-  });
+  // مهلةُ الاتصال تخصّ وصول الترويسة وحدها: بعدها تحكم مهلةُ الصمت أدناه، والبثّ
+  // الطويل لا يُقطع لطوله.
+  const upstream = await postWithRetry(env, buildBody(opts, 8192, true), STREAM_CONNECT_TIMEOUT_MS);
 
   if (!upstream.ok || !upstream.body) throw await apiError(upstream, 'stream');
 
@@ -272,7 +361,16 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<C
        يُبلَغ في مجرًى متجمّد. */
     async pull(controller) {
       while (true) {
-        const { done, value } = await reader.read();
+        let idle: any;
+        const { done, value } = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            idle = setTimeout(() => {
+              reader.cancel('idle timeout').catch(() => {});
+              reject(new Error(`claude stream idle for ${STREAM_IDLE_TIMEOUT_MS / 1000}s`));
+            }, STREAM_IDLE_TIMEOUT_MS);
+          }),
+        ]).finally(() => clearTimeout(idle));
         if (done) {
           // السجلّ يحمل التشخيص كاملاً، والشاشة تحمل ما يُفيد القارئ.
           if (!outcome.sawText) {
@@ -309,7 +407,12 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<C
               if (kind) outcome.blocks.push(kind);
               if (kind === 'web_search_tool_result') emit('search', { active: true });
             } else if (parsed.type === 'message_start' && parsed.message?.usage) {
-              emit('usage', { input_tokens: parsed.message.usage.input_tokens ?? 0 });
+              const u = parsed.message.usage;
+              emit('usage', {
+                input_tokens: u.input_tokens ?? 0,
+                cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+                cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+              });
             } else if (parsed.type === 'message_delta') {
               if (parsed.delta?.stop_reason) outcome.stopReason = parsed.delta.stop_reason;
               if (parsed.delta?.stop_details?.category) outcome.refusalCategory = parsed.delta.stop_details.category;

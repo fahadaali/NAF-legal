@@ -352,6 +352,7 @@ app.post('/:conversationId', async (c) => {
       tools: ATTEMPTS[i].withTools ? tools : undefined,
       effort: ATTEMPTS[i].effort,
       max_tokens: ATTEMPTS[i].max_tokens,
+      cache: true,
     });
 
   let firstAttempt: ClaudeStream;
@@ -371,6 +372,8 @@ app.post('/:conversationId', async (c) => {
   let fullText = '';
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
   const encoder = new TextEncoder();
   const userId = user.id;
 
@@ -437,6 +440,8 @@ app.post('/:conversationId', async (c) => {
                 // العدّادات تُجمع لا تُستبدل: محاولتان تُدفَعان كلتاهما.
                 if (payload.input_tokens) inputTokens += payload.input_tokens;
                 if (payload.output_tokens) outputTokens += payload.output_tokens;
+                if (payload.cache_read_input_tokens) cacheReadTokens += payload.cache_read_input_tokens;
+                if (payload.cache_creation_input_tokens) cacheWriteTokens += payload.cache_creation_input_tokens;
               }
             } catch {}
           }
@@ -562,6 +567,8 @@ app.post('/:conversationId', async (c) => {
         model: env.GENERATION_MODEL,
         inputTokens,
         outputTokens,
+        cacheReadTokens,
+        cacheWriteTokens,
         consultationType: plan.consultation_type,
       });
     } catch (e: any) {

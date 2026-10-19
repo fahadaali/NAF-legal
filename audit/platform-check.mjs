@@ -187,4 +187,51 @@ await t.check('الاسترجاع: سقفٌ لكل استعلام وسقفٌ ل�
   assert.equal(all.length, 2, `المتوقع اثنتان (واحدة لكل استعلام)، والواقع ${all.length}`);
 });
 
+console.log('\nعميل Claude');
+
+await t.check('التوليد يخزّن البرومبت والسجلّ مؤقّتاً، ولا يخزّن الرسالة الأخيرة', async () => {
+  const { env, db } = await chatFixture();
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('h1','c1','user','سؤال سابق',1)");
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('h2','c1','assistant','جواب سابق',2)");
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: '{"needs_knowledge_base": false}' } : { text: 'رد' }));
+  try {
+    await sendTurn(env, 'سؤال جديد');
+    const gen = fake.calls.find(isGeneration);
+    assert.ok(Array.isArray(gen.system) && gen.system[0].cache_control, 'البرومبت بلا نقطة تخزين');
+    const msgs = gen.messages;
+    const prev = msgs[msgs.length - 2].content;
+    assert.ok(Array.isArray(prev) && prev[prev.length - 1].cache_control, 'آخر رسالة في السجلّ بلا نقطة تخزين');
+    assert.equal(typeof msgs[msgs.length - 1].content, 'string', 'الرسالة الحالية وُسمت');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('ازدحام الخدمة (529) يُعاد ولا يُسقط المُخطِّط إلى خطّته الاحتياطية', async () => {
+  const { env } = await chatFixture();
+  let plannerHits = 0;
+  const fake = fakeAnthropic((b) => {
+    if (isPlanner(b)) return ++plannerHits === 1 ? { status: 529 } : { text: '{"needs_knowledge_base": false, "kb_queries": []}' };
+    return { text: 'رد' };
+  });
+  try {
+    await sendTurn(env, 'سؤال');
+    assert.equal(plannerHits, 2, `المُخطِّط طُلب ${plannerHits} مرّة`);
+    const gen = fake.calls.find(isGeneration);
+    assert.doesNotMatch(generationText(gen), /سياق_نظامي/, 'خطة المُخطِّط لم تُعتمد');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('سجلّ الاستخدام يحفظ رموز التخزين المؤقّت ويسعّرها بسعرها', async () => {
+  const { env, db } = await chatFixture();
+  const lib = await bundle('platform-usage', `export { logUsage, computeCost } from './usage';`);
+  await lib.logUsage(env, { kind: 'generation', model: 'claude-opus-5-5', inputTokens: 1000, outputTokens: 0, cacheReadTokens: 100000 });
+  const row = db.q("SELECT cache_read_tokens, cost_usd FROM usage_events WHERE kind = 'generation'")[0];
+  assert.equal(row.cache_read_tokens, 100000);
+  // 1000 × 4$ + 100000 × 0.20$ لكل مليون = 0.004 + 0.02
+  assert.ok(Math.abs(row.cost_usd - 0.024) < 1e-9, `الكلفة ${row.cost_usd}`);
+});
+
 t.done();
