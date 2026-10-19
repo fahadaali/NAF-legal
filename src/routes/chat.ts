@@ -5,6 +5,8 @@ import { uuid } from '../lib/crypto';
 import { runPlanner } from '../lib/planner';
 import { type RagResult } from '../lib/rag';
 import { gatherLegalContext } from '../lib/research/gather';
+import { formatLayeredContext, TOTAL_MAX, type ResearchGroup, type ResearchGap } from '../lib/research/layered';
+import { saveMemo, latestMemo, getOwnedMemo, hydrateMemo, memoGroups } from '../lib/research/memo';
 import { newTrace, saveTrace } from '../lib/research/trace';
 import { buildAnchorsBlock, type BasisAnchor } from '../lib/basis';
 import { enabledSources } from '../lib/sources';
@@ -45,6 +47,9 @@ app.use('*', requireAuth);
  * الأدوات فلا وقفةَ أداةٍ أصلاً. وهي لا تقع إلا حين لا يأتي نصّ، فلا تُضاعف
  * كلفة الدور الناجح.
  */
+/** موادُّ مذكرة الدور السابق التي تُعاد في سؤال المتابعة. */
+const PRIOR_MEMO_MAX = 20;
+
 const ATTEMPTS: { effort: ClaudeEffort; max_tokens: number; withTools: boolean }[] = [
   // الحدُّ سقفٌ للتفكير والنص معاً، والمخرَج صحيفةُ دعوى أو مذكرة قد تطول.
   // والبثّ مُفعَّل فلا يُخشى عليه من مهلة الاتصال.
@@ -74,7 +79,7 @@ app.use('/:conversationId', async (c, next) => {
 app.post('/:conversationId', async (c) => {
   const user = c.get('user');
   const conversationId = c.req.param('conversationId');
-  const { message, force_internet, bilingual, attachment_ids, reply_length } = await c.req.json().catch(() => ({}));
+  const { message, force_internet, bilingual, attachment_ids, reply_length, memo_id } = await c.req.json().catch(() => ({}));
   if (!message?.trim()) return c.json({ error: 'الرسالة فارغة' }, 400);
 
   // تحقّق الملكية
@@ -166,6 +171,11 @@ app.post('/:conversationId', async (c) => {
   // [1] المُخطِّط
   const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet, user.id, history.results);
 
+  /* مذكرةُ بحثٍ اختارها المحامي — بناها `POST /api/research` وعدّلها أو اعتمدها:
+     يُصاغ منها وحدها بلا بحثٍ جديد، ولا استيضاح — المسائل حُسمت في المذكرة. */
+  const chosenMemo = typeof memo_id === 'string' && memo_id ? await getOwnedMemo(c.env, memo_id, user.id) : null;
+  if (chosenMemo) plan.clarifying_questions = [];
+
   // حالة الاستيضاح: أوقف التوليد واطرح الأسئلة (§3, §5)
   if (plan.clarifying_questions.length > 0) {
     const clarifyText =
@@ -198,22 +208,66 @@ app.post('/:conversationId', async (c) => {
   let anchors: BasisAnchor[] = [];
   const trace = newTrace();
   let results: RagResult[] = [];
+  let groups: ResearchGroup[] = [];
+  let gaps: ResearchGap[] = [];
   try {
-    const gathered = await gatherLegalContext(c.env, {
-      plan,
-      message,
-      attachmentsText: (attByMessage.get(userMsgId) ?? []).map((a) => a.parsed_text),
-      userId: user.id,
-      trace,
-    });
-    results = gathered.results;
-    anchors = gathered.anchors;
-    ragContext = gathered.context;
+    if (chosenMemo) {
+      const h = await hydrateMemo(c.env, chosenMemo, { max: TOTAL_MAX });
+      groups = h.groups;
+      gaps = chosenMemo.gaps;
+      trace.add({ stage: 'memo', detail: chosenMemo.id, count: h.groups.reduce((n, g) => n + g.results.length, 0) });
+      if (h.dropped) trace.add({ stage: 'memo-dropped', count: h.dropped });
+    } else {
+      const gathered = await gatherLegalContext(c.env, {
+        plan,
+        message,
+        attachmentsText: (attByMessage.get(userMsgId) ?? []).map((a) => a.parsed_text),
+        userId: user.id,
+        trace,
+      });
+      anchors = gathered.anchors;
+      gaps = gathered.gaps;
+      groups = gathered.groups.length
+        ? gathered.groups
+        : gathered.results.length
+          ? [{ kind: 'issue', title: 'نتائج البحث', results: gathered.results }]
+          : [];
+
+      /* ══ سؤال المتابعة يرث مذكرة ما قبله ══
+         الرسالة تُحفظ بنصّها وحده، فكان «عدّل الفقرة الثانية» يُصاغ بلا الموادّ التي
+         بُنيت عليها المسودّة — وكثيراً ما لا يرى المُخطِّط فيه حاجةً إلى بحثٍ أصلاً.
+         فموادُّ المذكرة السابقة تُعاد بعد موادّ هذا الدور، بنصّها الجاري. */
+      const prior = await latestMemo(c.env, conversationId);
+      if (prior) {
+        const have = new Set(groups.flatMap((g) => g.results.map((r) => r.key ?? r.documentId)));
+        const h = await hydrateMemo(c.env, prior, {
+          exclude: have,
+          max: PRIOR_MEMO_MAX,
+          kind: 'memo',
+          titlePrefix: 'من مذكرة البحث السابقة — ',
+        });
+        groups = [...groups, ...h.groups];
+        trace.add({ stage: 'memo-carried', detail: prior.id, count: h.groups.reduce((n, g) => n + g.results.length, 0) });
+      }
+    }
+    results = groups.flatMap((g) => g.results);
+    ragContext = formatLayeredContext(groups);
     citations = results.map(toCitation);
   } catch (e: any) {
     // قاعدة معرفة غير مهيّأة بعد — نتابع دون RAG، ونقول ذلك في السجلّ والأثر:
     // ردٌّ بلا إسناد يبدو في الشاشة ردّاً عادياً، والفرق يظهر هناك وحده.
     console.error('retrieval failed:', trace.fail('retrieval', e));
+  }
+
+  // مذكرة هذا الدور — تُعاد في الدور التالي، ويُرسل ملخّصها للواجهة.
+  let memoId: string | null = chosenMemo?.id ?? null;
+  if (!chosenMemo && (groups.length || gaps.length)) {
+    memoId = await saveMemo(c.env, { conversationId, messageId: userMsgId, groups: memoGroups(groups), gaps }).catch(
+      (e: any) => {
+        console.error('save memo failed:', e?.message ?? e);
+        return null;
+      }
+    );
   }
   if (trace.failed) console.error('retrieval degraded:', JSON.stringify(trace.steps.filter((s) => s.error)));
   await saveTrace(c.env, {
@@ -405,6 +459,7 @@ app.post('/:conversationId', async (c) => {
       /* صفّان لا صفّ: خلطُ كتب الفقه بمواد الأنظمة في سطر «المصادر» يُلغي
          في الشاشة الفرقَ الذي حُفظ في البرومبت. */
       await send('meta', { messageId: asstId, plan, citations, fiqhCitations });
+      if (memoId) await send('memo', { id: memoId, groups: memoGroups(groups), gaps });
 
       /** يمرّر أحداث محاولةٍ كما هي إلى الواجهة، ويجمع نصّها وعدّاداتها. */
       const pump = async (attempt: ClaudeStream): Promise<StreamOutcome> => {

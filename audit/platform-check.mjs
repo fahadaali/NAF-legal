@@ -38,6 +38,7 @@ const routes = await bundle(
    export { normalizeArabic, lightStem } from '../lib/arabic';
    export { stemPending } from '../lib/research/stem';
    export { searchLegal } from '../lib/legal';
+   export { default as research } from './research';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -556,6 +557,85 @@ await t.check('مدخل الخريطة المسودّة لا يُقرأ: لا ا
   } finally {
     fake.restore();
   }
+});
+
+console.log('\nمذكرة البحث');
+
+async function sendWith(env, body) {
+  const ctx = makeCtx();
+  const res = await routes.chatApp.request('/api/chat/c1', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }, env, ctx);
+  const text = res.body ? await res.text() : '';
+  await ctx.settle();
+  return { res, text };
+}
+
+await t.check('كل دورٍ يحفظ مذكرته ويرسل ملخّصها، وسؤال المتابعة يرث موادّها بنصّها الجاري', async () => {
+  const { env, db } = await layeredFixture();
+  let turn = 0;
+  const fake = fakeAnthropic((b) => {
+    if (isPlanner(b)) return { text: JSON.stringify(++turn === 1 ? LAYERED_PLAN : { ...LAYERED_PLAN, needs_knowledge_base: false, issues: [], explicit_articles: [] }) };
+    return { text: 'رد' };
+  });
+  try {
+    const first = await sendWith(env, { message: 'صحيفة دعوى' });
+    assert.match(first.text, /event: memo/, 'لم يُرسل ملخّص المذكرة');
+    assert.equal(db.q('SELECT COUNT(*) AS n FROM research_memos')[0].n, 1);
+    // عُدّلت المادة 77 بعد بناء المذكرة: تعود بنصّها الجديد.
+    db.q("UPDATE legal_chunks SET text = 'نصٌّ معدَّل للمادة السابعة والسبعين' WHERE id = 'labor:77'");
+    await sendWith(env, { message: 'عدّل الفقرة الثانية لتكون أوجز' });
+    const gen = fake.calls.filter(isGeneration).at(-1);
+    const ctx = generationText(gen);
+    assert.match(ctx, /من مذكرة البحث السابقة/, 'لم تُورَث المذكرة');
+    assert.match(ctx, /نصٌّ معدَّل للمادة السابعة والسبعين/, 'عادت المادة بنصّها القديم');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('بناء المذكرة دون صياغة، وتعديل أسانيدها نسخةً جديدة، والصياغة منها وحدها', async () => {
+  const { env, db } = await layeredFixture();
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: JSON.stringify(LAYERED_PLAN) } : { text: 'رد' }));
+  try {
+    const built = await (await routes.research.request('/c1', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'صحيفة دعوى عمالية' }),
+    }, env)).json();
+    assert.equal(built.memo.status, 'draft');
+    assert.equal(fake.calls.filter(isGeneration).length, 0, 'صاغ وهو مطلوبٌ منه البحث وحده');
+    const keys = built.memo.groups.flatMap((g) => g.items.map((i) => i.key));
+    assert.ok(keys.includes('legal:labor:84'));
+
+    const edited = await (await routes.research.request(`/memos/${built.memo.id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ remove: ['legal:labor:84'], add: ['labor:1'] }),
+    }, env)).json();
+    assert.equal(edited.memo.version, 2);
+    const ekeys = edited.memo.groups.flatMap((g) => g.items.map((i) => i.key));
+    assert.ok(!ekeys.includes('legal:labor:84') && ekeys.includes('legal:labor:1'));
+    assert.equal(db.q('SELECT COUNT(*) AS n FROM research_memos')[0].n, 2, 'عُدّلت النسخة الأولى في مكانها');
+
+    await routes.research.request(`/memos/${edited.memo.id}/approve`, { method: 'POST' }, env);
+    const before = fake.calls.length;
+    await sendWith(env, { message: 'صُغ الصحيفة', memo_id: edited.memo.id });
+    const gen = fake.calls.slice(before).find(isGeneration);
+    const ctx = generationText(gen);
+    assert.doesNotMatch(ctx, /نظام العمل — المادة 84/, 'صيغ من مادةٍ حذفها المحامي');
+    assert.match(ctx, /نظام العمل — المادة 1/);
+    const steps = JSON.parse(db.q('SELECT steps_json FROM retrieval_traces ORDER BY created_at DESC LIMIT 1')[0].steps_json);
+    assert.ok(steps.some((x) => x.stage === 'memo') && !steps.some((x) => x.stage === 'issue'), 'بحث من جديد بدل الصياغة من المذكرة');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('مذكرةُ محادثة مستخدمٍ آخر لا تُقرأ ولا يُصاغ منها', async () => {
+  const { env, db } = await layeredFixture();
+  db.q("INSERT INTO users (id, email, password_hash, created_at) VALUES ('u2','u2@x','-',1)");
+  db.q("INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES ('c2','u2','غيري',1,1)");
+  db.q(`INSERT INTO research_memos (id, conversation_id, version, groups_json, gaps_json, status, created_at)
+        VALUES ('m2','c2',1,'[{"kind":"issue","title":"x","layer":null,"items":[{"key":"legal:labor:84","seq":3,"title":"t"}]}]','[]','approved',1)`);
+  assert.equal((await routes.research.request('/memos/m2', {}, env)).status, 404);
 });
 
 t.done();

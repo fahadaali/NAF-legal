@@ -63,7 +63,8 @@ const LAYER_TERMS: Record<GroundingLayer, string> = {
   regulation: '',
 };
 
-export type GroupKind = 'issue' | 'explicit' | 'coverage' | 'linked' | 'definitions';
+/** `memo`: موادُّ مذكرة البحث في دورٍ سابق، تُعاد في سؤال المتابعة. */
+export type GroupKind = 'issue' | 'explicit' | 'coverage' | 'linked' | 'definitions' | 'memo';
 
 export interface ResearchGroup {
   kind: GroupKind;
@@ -72,8 +73,16 @@ export interface ResearchGroup {
   results: RagResult[];
 }
 
+/** ما لم يُوجد له سند — يُقال للمحامي ولا يُملأ. */
+export interface ResearchGap {
+  kind: 'issue' | 'layer' | 'explicit';
+  title: string;
+  layer?: GroundingLayer;
+}
+
 export interface LayeredResult {
   groups: ResearchGroup[];
+  gaps: ResearchGap[];
   /** الموادّ كلُّها بترتيبها في السياق، بلا تكرار. */
   results: RagResult[];
 }
@@ -189,13 +198,16 @@ export async function layeredRetrieve(env: Env, input: LayeredInput): Promise<La
 
   // ── ٢) الموادّ المذكورة بأرقامها ──
   const explicit: Item[] = [];
+  const unresolvedExplicit: string[] = [];
   for (const a of plan.explicit_articles ?? []) {
     const lawId = resolve(a.law);
-    if (!lawId) {
+    const hits = lawId ? joinArticleParts(await getArticle(env, { lawId, articleNo: a.article }).catch(() => [])) : [];
+    if (!hits.length) {
+      // نظامٌ لا يُعرف، أو مادةٌ لا توجد فيه أو ليست نافذة — تُقال ولا تُخمَّن.
+      unresolvedExplicit.push(`${a.law} — المادة ${a.article}`);
       trace?.add({ stage: 'explicit-unresolved', detail: `${a.law} ${a.article}` });
       continue;
     }
-    const hits = joinArticleParts(await getArticle(env, { lawId, articleNo: a.article }).catch(() => []));
     explicit.push(...hits.slice(0, 2).map((hit) => ({ hit, result: fromLegalHit(hit) })));
   }
   trace?.add({ stage: 'explicit', count: explicit.length });
@@ -286,7 +298,15 @@ export async function layeredRetrieve(env: Env, input: LayeredInput): Promise<La
 
   const results = groups.flatMap((g) => g.results);
   trace?.add({ stage: 'result', count: results.length });
-  return { groups, results };
+
+  const gaps: ResearchGap[] = [
+    ...issueGroups.filter((g) => !g.items.length).map((g) => ({ kind: 'issue' as const, title: g.issue.title, layer: g.issue.layer })),
+    ...coverage
+      .filter((c) => !c.items.length)
+      .map((c) => ({ kind: 'layer' as const, title: lawTitle.get(c.lawId) ?? c.lawId, layer: c.layer })),
+    ...unresolvedExplicit.map((t) => ({ kind: 'explicit' as const, title: t })),
+  ];
+  return { groups, gaps, results };
 }
 
 /** عنوانُ المجموعة في السياق. */

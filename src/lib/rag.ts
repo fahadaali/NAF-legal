@@ -70,6 +70,8 @@ export interface RagResult {
   articleRef?: string;
   /** مفتاح المقطع للدمج — معرّف المتجه للوثائق، ومعرّف العقد للمقاطع. */
   key?: string;
+  /** المفتاح الداخلي لأوّل أجزاء المادة — به تُستعاد في الدور التالي بنصّها الجاري. */
+  seq?: number;
   // ── ما يزيد في المقاطع المستوردة (للاستشهاد الدقيق) ──
   source?: 'legal' | 'document';
   lawId?: string;
@@ -230,6 +232,7 @@ export function fromLegalHit(h: LegalHit): RagResult {
     articleRef: articleRefOf(h),
     // بمعرّف المادة لا الجزء: المادة الواحدة لا تُعدّ في الدمج مرّتين.
     key: `legal:${articleBaseId(h.id)}`,
+    seq: h.seq,
     source: 'legal',
     lawId: h.lawId ?? undefined,
     docType: h.docType ?? undefined,

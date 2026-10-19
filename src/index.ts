@@ -6,6 +6,7 @@ import ssoRoutes from './routes/ssoCallback';
 import mcpOAuthRoutes from './routes/mcpOAuth';
 import memberRoutes from './routes/members';
 import evalRoutes from './routes/eval';
+import researchRoutes from './routes/research';
 import conversationRoutes from './routes/conversations';
 import chatRoutes from './routes/chat';
 import fileRoutes from './routes/files';
@@ -192,6 +193,7 @@ app.route('/api/regulation-requests', regulationRequestRoutes);
 app.route('/api/legal', legalRoutes);
 app.route('/api/members', memberRoutes);
 app.route('/api/eval', evalRoutes);
+app.route('/api/research', researchRoutes);
 
 // أي مسار /api غير معروف
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));
