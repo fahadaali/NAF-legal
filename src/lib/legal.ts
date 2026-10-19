@@ -34,7 +34,7 @@
 // ٧) **أخوات الرقم الواحد.** استدعاء مادةٍ برقمها يردّ كل من يحمل رقمها
 //    مرتّبةً بـ`duplicate_index`، لا الأولى وحدها: المرسوم المعدِّل يُدخل
 //    مادةً جديدة برقم مادةٍ قائمة، وردُّ الأولى يُخفي الثانية بلا أثر.
-import { normalizeArabic, normalizeArticleNo, extractArticleNo, ftsMatchExpression } from './arabic';
+import { normalizeArabic, normalizeArticleNo, extractArticleNo, ftsMatchExpression, stemMatchExpression } from './arabic';
 import { toHijri } from './hijri';
 import { embed, embedBatch } from './embed';
 import { uuid } from './crypto';
@@ -3752,6 +3752,33 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     } catch (e: any) {
       // فهرس لفظي غير مهيّأ (هجرة لم تُطبَّق بعد) — يبقى الدلاليّ وحده.
       opts.onSignal?.({ stage: 'lexical', error: String(e?.message ?? e) });
+    }
+  }
+
+  // ── المسار اللفظي على الجذوع ──
+  // «العامل» لا يطابق «للعامل» في الفهرس الأول. ونتائجُ هذا الفهرس تُلحق بقائمة
+  // الأول بعد آخرها: ما وجده الأول يبقى في ترتيبه، والجذوعُ تزيد ما فاته وحده.
+  const stemMatch = stemMatchExpression(query);
+  if (stemMatch) {
+    try {
+      const rows = await env.DB.prepare(
+        `SELECT ${HIT_COLUMNS}, bm25(legal_fts_stem) AS lex
+         FROM legal_fts_stem JOIN legal_chunks c ON c.seq = legal_fts_stem.rowid
+         WHERE legal_fts_stem MATCH ?${filters.sql}
+         ORDER BY lex ASC LIMIT ?`
+      )
+        .bind(stemMatch, ...filters.binds, candidates)
+        .all<HitRow>();
+      const extra = (rows.results ?? []).map(toHit);
+      const lexical = lists.find((l) => l.name === 'lexical');
+      const have = new Set((lexical?.hits ?? []).map((h) => h.seq));
+      const added = extra.filter((h) => !have.has(h.seq));
+      if (lexical) lexical.hits.push(...added);
+      else if (added.length) lists.push({ name: 'lexical', hits: added });
+      opts.onSignal?.({ stage: 'stem', count: added.length });
+    } catch (e: any) {
+      // الهجرة 0037 لم تُطبَّق بعد — يبقى الفهرس الأول وحده.
+      opts.onSignal?.({ stage: 'stem', error: String(e?.message ?? e) });
     }
   }
 

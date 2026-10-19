@@ -35,7 +35,9 @@ const routes = await bundle(
    export { isOfficialUrl } from './admin';
    export { default as evalRoutes } from './eval';
    export { extractPendingLinks, parseRefs, ordinalToNumber } from '../lib/research/links';
-   export { normalizeArabic } from '../lib/arabic';
+   export { normalizeArabic, lightStem } from '../lib/arabic';
+   export { stemPending } from '../lib/research/stem';
+   export { searchLegal } from '../lib/legal';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -437,6 +439,35 @@ await t.check('الاستخراج يحلّ الإحالة إلى مادة نظا
   // حذفُ المحال إليه يُعيد الإحالة معلّقة.
   db.q("DELETE FROM legal_chunks WHERE id = 'mur:76'");
   assert.equal(db.q("SELECT to_seq FROM legal_article_links WHERE to_article_no = '76'")[0].to_seq, null);
+});
+
+console.log('\nالبحث اللفظي على الجذوع');
+
+await t.check('الجذع الخفيف ينزع السوابق المتصلة واللواحق الشائعة', async () => {
+  for (const [w, st] of [['العامل', 'عامل'], ['للعامل', 'عامل'], ['والعامل', 'عامل'], ['بالعقد', 'عقد'], ['اجره', 'اجر'], ['المحكمه', 'محكم'], ['فللعامل', 'عامل']]) {
+    assert.equal(routes.lightStem(w), st, w);
+  }
+  // القصير يبقى: «ولد» لا تصير «لد».
+  assert.equal(routes.lightStem('ولد'), 'ولد');
+});
+
+await t.check('«العامل» يجد «للعامل» و«والعامل» و«فللعامل» بعد ملء الجذوع، وترتيب الفهرس الأول باقٍ', async () => {
+  const db = await makeDb();
+  const env = { ...ENV_BASE, DB: db.DB, KV: makeKv() };
+  const texts = ['يستحق العامل أجره كاملاً', 'تلتزم المنشأة بدفع الأجر للعامل', 'إذا انتهى العقد فللعامل مكافأة', 'والعامل يلتزم بالتعليمات'];
+  await routes.upsertLegalChunks(env, routes.parseJsonl(texts.map((t, i) =>
+    law({ id: `l:${i + 1}`, law_id: 'l', law_title: 'نظام العمل', article_no: String(i + 1), text: t })).join('\n')).rows);
+  const before = await routes.searchLegal(env, 'العامل', { limit: 10 });
+  assert.equal(before.length, 1);
+  const r = await routes.stemPending(env);
+  assert.equal(r.remaining, 0);
+  const after = await routes.searchLegal(env, 'العامل', { limit: 10 });
+  assert.equal(after.length, 4, `وجد ${after.length}`);
+  assert.equal(after[0].id, 'l:1', 'تغيّر ترتيب ما وجده الفهرس الأول');
+  // نصٌّ تغيّر يُفرَّغ جذعُه ويخرج من الفهرس حتى يُعاد حسابه.
+  db.q("UPDATE legal_chunks SET text_norm = 'نص اخر' WHERE id = 'l:2'");
+  assert.equal(db.q("SELECT text_stem FROM legal_chunks WHERE id = 'l:2'")[0].text_stem, null);
+  assert.equal((await routes.searchLegal(env, 'العامل', { limit: 10 })).length, 3);
 });
 
 t.done();

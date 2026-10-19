@@ -5,6 +5,7 @@ import { notify } from './lib/notify';
 import { dualDate } from './lib/hijri';
 import { embedPending, vectorHealth, vectorCheck, recoverStaleBatches } from './lib/legal';
 import { extractPendingLinks } from './lib/research/links';
+import { stemPending } from './lib/research/stem';
 import type { Env } from './types';
 
 /**
@@ -410,6 +411,13 @@ export async function runLinkExtraction(env: Env): Promise<void> {
     if (r.processed) console.log(`links: ${r.processed} chunks, ${r.links} refs, ${r.resolved} resolved, ${r.remaining} left`);
   } catch (e: any) {
     console.error('link extraction failed:', e?.message ?? e);
+  }
+  // وجذوعُ الفهرس اللفظي الثاني في النبضة نفسها — حسابٌ في الشيفرة بلا نموذج.
+  try {
+    const r = await stemPending(env, LINKS_PER_TICK);
+    if (r.stemmed) console.log(`stems: ${r.stemmed} chunks, ${r.remaining} left`);
+  } catch (e: any) {
+    console.error('stem backfill failed:', e?.message ?? e);
   }
 }
 
