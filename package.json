@@ -17,6 +17,7 @@
     "check:mcp": "node audit/mcp-client-check.mjs",
     "check:external": "node audit/external-adapters-check.mjs",
     "check:oauth": "node audit/oauth-check.mjs",
+    "check:platform": "node --no-warnings audit/platform-check.mjs",
     "import:legal": "node scripts/import-legal.mjs",
     "seed": "wrangler d1 execute naf_legal --local --file=./migrations/0002_seed.sql",
     "icons": "node scripts/build-app-icons.mjs web/public/brand/naf-mark.svg web/src/naf/naf-theme.css web/public/icons",

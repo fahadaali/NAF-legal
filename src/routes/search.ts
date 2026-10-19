@@ -94,7 +94,10 @@ app.get('/', async (c) => {
        WHERE c.user_id = ? AND ${globCondition('m.content', patterns)}${folderCond}
        ORDER BY m.created_at DESC LIMIT ?`
     )
-      .bind(user.id, q, ...patterns, ...folderArg, LIMIT)
+      // بترتيب ظهور العلامات في نصّ الاستعلام: علامةُ المقتطف في SELECT قبل
+      // علامة المالك في WHERE. وكانت معكوسةً فيقع الاستعلام في `user_id` فلا
+      // يطابق صفّاً، ويرجع كل بحثٍ في المحادثات والمخرجات فارغاً.
+      .bind(q, user.id, ...patterns, ...folderArg, LIMIT)
       .all();
     chats = rows.results ?? [];
   }
@@ -112,7 +115,10 @@ app.get('/', async (c) => {
        WHERE c.user_id = ? AND ${globCondition('d.content', patterns)}${folderCond}
        ORDER BY d.created_at DESC LIMIT ?`
     )
-      .bind(user.id, q, ...patterns, ...folderArg, LIMIT)
+      // بترتيب ظهور العلامات في نصّ الاستعلام: علامةُ المقتطف في SELECT قبل
+      // علامة المالك في WHERE. وكانت معكوسةً فيقع الاستعلام في `user_id` فلا
+      // يطابق صفّاً، ويرجع كل بحثٍ في المحادثات والمخرجات فارغاً.
+      .bind(q, user.id, ...patterns, ...folderArg, LIMIT)
       .all();
     outputs = rows.results ?? [];
   }

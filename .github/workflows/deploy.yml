@@ -64,6 +64,7 @@ jobs:
           npm run check:mcp
           npm run check:external
           npm run check:oauth
+          npm run check:platform
 
       - name: بناء الواجهة
         run: npm run build:web
