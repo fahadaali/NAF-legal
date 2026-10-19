@@ -99,13 +99,46 @@ app.patch('/:id', async (c) => {
 });
 
 // حذف
+/**
+ * حذف محادثةٍ يحذف ما يتبعها كلَّه: ملفاتِ العميل في R2، والصفوفَ المعلَّقة برسائلها.
+ *
+ * كان الحذف يقع على صفّ المحادثة وحده، فتتبعه الرسائل والمرفقات بالتتالي في D1
+ * وتبقى ملفاتُ العميل نفسُها في R2 بلا صفٍّ يدلّ عليها ولا أحدٍ يعرف أنها بقيت —
+ * مستنداتٌ قانونية لعميلٍ طلب صاحبُها حذفها. ونُسخُ المسودّة وتقييماتُها
+ * واعتمادُها ومشاركاتُها بلا مفتاحٍ أجنبيّ، فكانت تبقى يتيمة.
+ */
 app.delete('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const res = await c.env.DB.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?')
+  const owned = await c.env.DB.prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?')
     .bind(id, user.id)
-    .run();
-  if (!res.meta.changes) return c.json({ error: 'غير موجودة' }, 404);
+    .first();
+  if (!owned) return c.json({ error: 'غير موجودة' }, 404);
+
+  const files = await c.env.DB.prepare(
+    `SELECT r2_key FROM attachments WHERE conversation_id = ?
+     UNION SELECT e.r2_key FROM exports e JOIN messages m ON m.id = e.message_id WHERE m.conversation_id = ?`
+  )
+    .bind(id, id)
+    .all<{ r2_key: string | null }>();
+
+  const ofMessages = 'SELECT id FROM messages WHERE conversation_id = ?';
+  await c.env.DB.batch([
+    c.env.DB.prepare(`DELETE FROM draft_versions WHERE message_id IN (${ofMessages})`).bind(id),
+    c.env.DB.prepare(`DELETE FROM message_feedback WHERE message_id IN (${ofMessages})`).bind(id),
+    c.env.DB.prepare(`DELETE FROM message_approvals WHERE message_id IN (${ofMessages})`).bind(id),
+    c.env.DB.prepare(`DELETE FROM shares WHERE message_id IN (${ofMessages})`).bind(id),
+    c.env.DB.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').bind(id, user.id),
+  ]);
+
+  // الملفات بعد الصفوف: لو انقطع الحذف بينهما بقي ملفٌّ بلا صفّ، وهو ما كان يقع
+  // دائماً — لا صفٌّ يشير إلى ملفٍّ محذوف.
+  const keys = (files.results ?? []).map((r) => r.r2_key).filter((k): k is string => !!k);
+  if (keys.length) {
+    c.executionCtx.waitUntil(
+      c.env.R2.delete(keys).catch((e: any) => console.error('r2 cleanup failed:', e?.message ?? e))
+    );
+  }
   return c.json({ ok: true });
 });
 

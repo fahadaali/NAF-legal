@@ -4,7 +4,7 @@
 //   npm run check:platform
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { ROOT, bundle, makeDb, makeKv, makeCtx, fakeAnthropic, suite } from './harness.mjs';
+import { ROOT, bundle, makeDb, makeKv, makeR2, makeCtx, fakeAnthropic, suite } from './harness.mjs';
 
 const t = suite('فحوص المنصة');
 
@@ -24,6 +24,10 @@ const routes = await bundle(
   `export { default as search } from './search';
    export { parseJsonl, upsertLegalChunks } from '../lib/legal';
    export { retrieve } from '../lib/rag';
+   export { default as files } from './files';
+   export { default as folders } from './folders';
+   export { default as conversations } from './conversations';
+   export { isOfficialUrl } from './admin';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -232,6 +236,75 @@ await t.check('سجلّ الاستخدام يحفظ رموز التخزين ال
   assert.equal(row.cache_read_tokens, 100000);
   // 1000 × 4$ + 100000 × 0.20$ لكل مليون = 0.004 + 0.02
   assert.ok(Math.abs(row.cost_usd - 0.024) < 1e-9, `الكلفة ${row.cost_usd}`);
+});
+
+console.log('\nالأمان');
+
+async function uploadAs(env, name, type, bytes = 'محتوى') {
+  const fd = new FormData();
+  fd.append('file', new File([bytes], name, { type }));
+  fd.append('text', 'نصٌّ مستخرج');
+  const ctx = makeCtx();
+  const res = await routes.files.request('/upload/c1', { method: 'POST', body: fd }, env, ctx);
+  await ctx.settle();
+  return res;
+}
+
+await t.check('نوع الملف المرفوع من الخادم لا من المتصفّح، ويُقدَّم بـnosniff وsandbox', async () => {
+  const { env, db } = await chatFixture();
+  const R2 = makeR2();
+  const res = await uploadAs({ ...env, R2 }, 'تقرير.pdf', 'text/html', '<script>alert(1)</script>');
+  assert.equal(res.status, 200);
+  const att = db.q('SELECT id, mime FROM attachments')[0];
+  assert.equal(att.mime, 'application/pdf', `خُزِّن ${att.mime}`);
+  // صفٌّ قديم خُزِّن بنوعٍ أعلنه المتصفّح: يُعاد اشتقاقه عند التقديم.
+  db.q("INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, created_at) VALUES ('old','c1','k-old','x.txt','text/html',1,1)");
+  await R2.put('k-old', '<script>1</script>');
+  const served = await routes.files.request('/attachments/old/file', {}, { ...env, R2 });
+  assert.equal(served.headers.get('content-type'), 'text/plain; charset=utf-8');
+  assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(served.headers.get('content-security-policy'), 'sandbox');
+});
+
+await t.check('ملفٌّ بنوعٍ غير مدعوم يُرفض', async () => {
+  const { env } = await chatFixture();
+  const res = await uploadAs({ ...env, R2: makeR2() }, 'page.html', 'text/html');
+  assert.equal(res.status, 415);
+});
+
+await t.check('لا تُربط محادثةٌ بقضية مستخدمٍ آخر', async () => {
+  const { env, db } = await chatFixture();
+  db.q("INSERT INTO users (id, email, password_hash, created_at) VALUES ('u2','u2@x','-',1)");
+  db.q("INSERT INTO case_folders (id, user_id, name, created_at) VALUES ('f2','u2','قضية غيري',1)");
+  const res = await routes.folders.request('/assign', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ conversation_id: 'c1', folder_id: 'f2' }),
+  }, env);
+  assert.equal(res.status, 404);
+  assert.equal(db.q("SELECT folder_id FROM conversations WHERE id = 'c1'")[0].folder_id, null);
+});
+
+await t.check('حذف المحادثة يحذف ملفاتها من R2 وما تعلّق برسائلها', async () => {
+  const { env, db } = await chatFixture();
+  const R2 = makeR2();
+  await R2.put('uploads/u1/c1/a', 'x');
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('m1','c1','assistant','مسودة',1)");
+  db.q("INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, created_at) VALUES ('a1','c1','uploads/u1/c1/a','a.pdf','application/pdf',1,1)");
+  db.q("INSERT INTO draft_versions (id, message_id, version, content, created_at) VALUES ('d1','m1',1,'مسودة',1)");
+  const ctx = makeCtx();
+  const res = await routes.conversations.request('/c1', { method: 'DELETE' }, { ...env, R2 }, ctx);
+  await ctx.settle();
+  assert.equal(res.status, 200);
+  assert.equal(R2._map.size, 0, 'بقي ملفُّ العميل في R2');
+  assert.equal(db.q('SELECT COUNT(*) AS n FROM draft_versions')[0].n, 0, 'بقيت نسخ المسودّة يتيمة');
+});
+
+await t.check('الاستيعاب من رابط: مصادر رسمية بـhttps وحدها', async () => {
+  assert.equal(routes.isOfficialUrl('https://laws.boe.gov.sa/x'), true);
+  assert.equal(routes.isOfficialUrl('https://www.uqn.gov.sa/a'), true);
+  assert.equal(routes.isOfficialUrl('http://laws.boe.gov.sa/x'), false);
+  assert.equal(routes.isOfficialUrl('https://boe.gov.sa.evil.test/x'), false);
+  assert.equal(routes.isOfficialUrl('https://evil.test/?u=boe.gov.sa'), false);
 });
 
 t.done();

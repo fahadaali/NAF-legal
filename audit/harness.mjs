@@ -200,3 +200,28 @@ export function makeCtx() {
     settle: () => Promise.all(pending),
   };
 }
+
+/** بديل R2 في الذاكرة: put/get/delete بمفتاحٍ أو مصفوفة مفاتيح. */
+export function makeR2() {
+  const m = new Map();
+  return {
+    async put(k, v, opts = {}) {
+      const bytes = typeof v === 'string' ? new TextEncoder().encode(v) : new Uint8Array(v instanceof ArrayBuffer ? v : v.buffer ?? v);
+      m.set(k, { bytes, httpMetadata: opts.httpMetadata ?? {} });
+    },
+    async get(k) {
+      const o = m.get(k);
+      if (!o) return null;
+      return {
+        body: new Blob([o.bytes]).stream(),
+        httpMetadata: o.httpMetadata,
+        text: async () => new TextDecoder().decode(o.bytes),
+        arrayBuffer: async () => o.bytes.buffer,
+      };
+    },
+    async delete(k) {
+      for (const key of Array.isArray(k) ? k : [k]) m.delete(key);
+    },
+    _map: m,
+  };
+}

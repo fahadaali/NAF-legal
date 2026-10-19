@@ -279,6 +279,14 @@ app.post('/documents/:id/versions', async (c) => {
   const effectiveFrom = form.get('effective_from')?.toString() ?? null;
   const note = form.get('note')?.toString() ?? null;
   if (!(file instanceof File)) return c.json({ error: 'لم يُرفَق ملف النسخة الجديدة' }, 400);
+  // حدّا رفع الوثيقة نفسهما: كان هذا المسار وحده بلا حدٍّ للحجم ولا للنوع، فيبلغ
+  // ملفٌّ ضخمٌ أو غيرُ مقروءٍ R2 والاستخراجَ باسم «نسخة أحدث».
+  if (file.size > MAX_SIZE) return c.json({ error: 'حجم الملف يتجاوز الحد (15MB)' }, 413);
+  {
+    const ext = (file.name.split('.').pop() ?? '').toLowerCase();
+    const isDocx = ext === 'docx' || file.type.includes('officedocument.wordprocessingml');
+    if (!ALLOWED_EXT.includes(ext) && !isDocx) return c.json({ error: 'يُقبل هنا PDF و Word والنصّ و Markdown' }, 415);
+  }
 
   // 1) احفظ النص والملف الحاليين كنسخة سابقة (effective_to = الآن)
   const oldText = await c.env.R2.get(`kb-text/${id}.txt`);
