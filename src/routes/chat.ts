@@ -420,7 +420,16 @@ app.post('/:conversationId', async (c) => {
 
   let firstAttempt: ClaudeStream;
   try {
-    firstAttempt = await openAttempt(0);
+    try {
+      firstAttempt = await openAttempt(0);
+    } catch (e: any) {
+      /* كتلُ `search_result` رُدّت بـ400: يُعاد الطلب مرّةً والسياقُ نصٌّ كما كان قبلها.
+         صياغةٌ بلا مواضع إسناد خيرٌ من «تعذّر توليد الرد» على كل دورٍ فيه موادّ. */
+      if (!contextBlocks.length || !/Claude API 400/.test(String(e?.message))) throw e;
+      console.error('search_result context rejected — retrying with text context:', e?.message ?? e);
+      messages[messages.length - 1] = { role: 'user', content: `${ragContext}${tail}`.trim() };
+      firstAttempt = await openAttempt(0);
+    }
   } catch (e: any) {
     // السبب يُسجَّل ولا يُعرض. هذه الجملة هي كل ما يراه المستخدم حين تنقطع
     // خدمة Claude، فتُقرأ خطأَ صلاحيات أو خللاً في حسابه — وما يفرّق بين

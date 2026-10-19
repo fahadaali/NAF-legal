@@ -773,4 +773,23 @@ await t.check('Claude يبحث بالأدوات ويُكمل المذكرة — 
   }
 });
 
+await t.check('رُدّت كتل search_result بـ400: يُعاد الطلب والسياقُ نصٌّ، ولا يتعذّر الردّ', async () => {
+  const { env, db } = await layeredFixture();
+  const fake = fakeAnthropic((b) => {
+    if (isPlanner(b)) return { text: JSON.stringify(LAYERED_PLAN) };
+    if (isGeneration(b)) return Array.isArray(b.messages.at(-1).content) ? { status: 400 } : { text: 'ردٌّ من سياقٍ نصّي' };
+    return { text: 'عنوان' };
+  });
+  try {
+    const { res } = await sendWith(env, { message: 'صحيفة دعوى عمالية' });
+    assert.equal(res.status, 200);
+    const gens = fake.calls.filter(isGeneration);
+    assert.equal(gens.length, 2);
+    assert.match(gens[1].messages.at(-1).content, /<سياق_نظامي>[\s\S]*المسألة: الاختصاص/);
+    assert.equal(db.q("SELECT content FROM messages WHERE role = 'assistant'")[0].content, 'ردٌّ من سياقٍ نصّي');
+  } finally {
+    fake.restore();
+  }
+});
+
 t.done();
