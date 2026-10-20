@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { writeFile, mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
-import { ROOT, bundle, makeDb, makeKv, makeR2, makeCtx, fakeAnthropic, suite } from './harness.mjs';
+import { ROOT, bundle, makeDb, makeKv, makeR2, makeCtx, makeVectors, fakeAnthropic, suite } from './harness.mjs';
 
 const t = suite('فحوص المنصة');
 
@@ -39,6 +39,10 @@ const routes = await bundle(
    export { stemPending } from '../lib/research/stem';
    export { searchLegal } from '../lib/legal';
    export { default as research } from './research';
+   export { ingestDocument } from '../ingest';
+   export { searchDocuments, reindexDocuments } from '../lib/research/documents';
+   export { tagPendingArticles, retagAll } from '../lib/research/issues';
+   export { ResearchRunner } from '../research-runner';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -92,7 +96,9 @@ await t.check('بحث المخرجات يجد نسخة المسودّة', async 
 
 const ENV_BASE = {
   ANTHROPIC_API_KEY: 'test',
-  PLANNER_MODEL: 'claude-opus-5-5',
+  PLANNER_MODEL: 'claude-haiku-5-5',
+  ANALYSIS_MODEL: 'claude-opus-5-5',
+  TAGGING_MODEL: 'claude-haiku-5-5',
   GENERATION_MODEL: 'claude-opus-5-5',
   EMBEDDING_MODEL: '@cf/baai/bge-m3',
 };
@@ -790,6 +796,231 @@ await t.check('رُدّت كتل search_result بـ400: يُعاد الطلب و
   } finally {
     fake.restore();
   }
+});
+
+console.log('\nفهرس الوثائق المرفوعة');
+
+async function docFixture(withVectors) {
+  const { env, db } = await layeredFixture();
+  const R2 = makeR2();
+  const v = makeVectors();
+  const e = { ...env, R2, ...(withVectors ? { AI: v.AI, VECTORIZE: v.VECTORIZE } : {}) };
+  db.q("INSERT INTO kb_documents (id, title, status, ingest_status, chunk_count, created_at) VALUES ('d1','تعميم وزارة الموارد البشرية بشأن الإجازات','active','ready',2,1)");
+  await R2.put('kb-text/d1.txt', 'يستحق للعامل إجازة سنوية مدفوعة الأجر لا تقل عن واحد وعشرين يوماً.');
+  return { env: e, db, v };
+}
+
+await t.check('بلا فهرسٍ متجهي: مقاطع الوثيقة في D1 والبحث اللفظيّ يجدها بجذوعها، والوثيقة «منتظرة» لا «جاهزة»', async () => {
+  const { env, db } = await docFixture(false);
+  assert.equal(await routes.ingestDocument(env, 'd1'), 'pending');
+  assert.equal(db.q("SELECT COUNT(*) AS n FROM kb_doc_chunks WHERE document_id = 'd1'")[0].n, 1);
+  const hits = await routes.searchDocuments(env, 'إجازة العامل');
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].source, 'document');
+  assert.match(hits[0].key, /^doc:d1:0$/);
+  // وثيقةٌ نُسخت لا يعود منها مقطع.
+  db.q("UPDATE kb_documents SET status = 'repealed' WHERE id = 'd1'");
+  assert.equal((await routes.searchDocuments(env, 'إجازة العامل')).length, 0);
+});
+
+await t.check('بفهرسٍ متجهي: المتجهات في مساحة documents، والقديمة تُحذف، والوثيقة بنسخة الفهرسة الجديدة', async () => {
+  const { env, db, v } = await docFixture(true);
+  // متجهٌ قديم في المساحة الافتراضية من فهرسة ما قبل الهجرة 0040.
+  await v.VECTORIZE.upsert([{ id: 'd1:0', values: v.vec('قديم'), metadata: { document_id: 'd1', text: 'قديم' } }]);
+  assert.equal(await routes.ingestDocument(env, 'd1'), 'ready');
+  assert.ok(v.log.deletes.includes('d1:0'), 'بقي المتجه القديم');
+  assert.deepEqual(v.log.upserts.at(-1), { id: 'doc:d1:0', namespace: 'documents' });
+  assert.equal(db.q("SELECT index_version FROM kb_documents WHERE id = 'd1'")[0].index_version, 2);
+  const hits = await routes.searchDocuments(env, 'الإجازة السنوية', { queryVector: v.vec('الإجازة السنوية') });
+  assert.equal(hits[0]?.key, 'doc:d1:0');
+});
+
+await t.check('إعادة الفهرسة في الخلفية تلتقط ما فُهرس بالطريقة القديمة وحده', async () => {
+  const { env, db } = await docFixture(true);
+  db.q("INSERT INTO kb_documents (id, title, status, ingest_status, index_version, created_at) VALUES ('d2','جديدة','active','ready',2,2)");
+  const n = await routes.reindexDocuments(env, routes.ingestDocument);
+  assert.equal(n, 1);
+  assert.equal(db.q("SELECT index_version FROM kb_documents WHERE id = 'd1'")[0].index_version, 2);
+});
+
+await t.check('المحرّك الطبقي يضمّ مقاطع الوثائق في مجموعتها، والمذكرة تستعيدها في سؤال المتابعة', async () => {
+  const { env, db } = await docFixture(false);
+  await routes.ingestDocument(env, 'd1');
+  const plan = { ...LAYERED_PLAN, issues: [{ title: 'الإجازة السنوية', layer: 'substantive', queries: ['إجازة سنوية للعامل'], laws: ['نظام العمل'] }], explicit_articles: [] };
+  let turn = 0;
+  const fake = fakeAnthropic((b) => {
+    if (isPlanner(b)) return { text: JSON.stringify(++turn === 1 ? plan : { ...plan, needs_knowledge_base: false, issues: [] }) };
+    return { text: 'رد' };
+  });
+  try {
+    await sendWith(env, { message: 'كم الإجازة السنوية؟' });
+    assert.match(generationText(fake.calls.filter(isGeneration)[0]), /من الوثائق المرفوعة[\s\S]*تعميم وزارة الموارد البشرية/);
+    await sendWith(env, { message: 'أوجز' });
+    assert.match(generationText(fake.calls.filter(isGeneration)[1]), /من مذكرة البحث السابقة[\s\S]*إجازة سنوية مدفوعة الأجر/);
+  } finally {
+    fake.restore();
+  }
+});
+
+console.log('\nقائمة المسائل ووسم الموادّ');
+
+const isTagger = (b) => !b.stream && String(b.system ?? '').includes('تَسِم موادَّ الأنظمة');
+
+await t.check('القائمة مسودّة: لا توسيم ولا نداء نموذج، والمُخطِّط لا يُطلب منه مفتاح مسألة', async () => {
+  const { env } = await layeredFixture();
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: JSON.stringify(LAYERED_PLAN) } : { text: 'رد' }));
+  try {
+    const r = await routes.tagPendingArticles(env, 40);
+    assert.ok(r.skipped, 'جرى توسيمٌ بقائمةٍ غير معتمدة');
+    assert.equal(fake.calls.filter(isTagger).length, 0);
+    await sendWith(env, { message: 'سؤال' });
+    const planner = fake.calls.find(isPlanner);
+    assert.equal(planner.output_config.format.schema.properties.issues.items.properties.issue_key, undefined);
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('بعد الاعتماد: التوسيم بالمعتمد وحده، والمحرّك يجد مادة المسألة وإن لم يشترك نصُّها مع الاستعلام', async () => {
+  const { env, db } = await layeredFixture();
+  await routes.upsertLegalChunks(env, routes.parseJsonl(law({
+    id: 'mur:187', law_id: 'murafaat', law_title: 'نظام المرافعات الشرعية', article_no: '187',
+    text: 'مدة الاعتراض بطلب الاستئناف ثلاثون يوماً من تاريخ تسلّم صورة الحكم.',
+  })).rows);
+  db.q("UPDATE legal_issue_vocab SET status = 'approved' WHERE key IN ('appeal_deadlines', 'end_of_service')");
+  const seq187 = db.q("SELECT seq FROM legal_chunks WHERE id = 'mur:187'")[0].seq;
+  const fake = fakeAnthropic((b) => {
+    if (isTagger(b)) {
+      const seqs = [...b.messages[0].content.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
+      return { text: JSON.stringify({ items: seqs.map((seq) => ({ seq, issues: seq === seq187 ? ['appeal_deadlines', 'invented_key'] : [] })) }) };
+    }
+    if (isPlanner(b)) {
+      return { text: JSON.stringify({ ...LAYERED_PLAN, explicit_articles: [], issues: [
+        { title: 'ميعاد الاستئناف', layer: 'procedural', queries: ['متى ينتهي حق الطعن'], laws: ['نظام المرافعات الشرعية'], issue_key: 'appeal_deadlines' },
+      ] }) };
+    }
+    return { text: 'رد' };
+  });
+  try {
+    const r = await routes.tagPendingArticles(env, 100);
+    assert.equal(r.remaining, 0);
+    const tags = db.q('SELECT seq, issue_key FROM legal_article_issues').map((r) => ({ ...r }));
+    assert.deepEqual(tags, [{ seq: seq187, issue_key: 'appeal_deadlines' }], 'وُسمت بمفتاحٍ غير معتمد');
+    const tagger = fake.calls.find(isTagger);
+    assert.deepEqual(tagger.output_config.format.schema.properties.items.items.properties.issues.items.enum.sort(), ['appeal_deadlines', 'end_of_service']);
+
+    await sendWith(env, { message: 'متى ينتهي حق الطعن على الحكم؟' });
+    const planner = fake.calls.find(isPlanner);
+    assert.ok(planner.output_config.format.schema.properties.issues.items.properties.issue_key.enum.includes('appeal_deadlines'));
+    assert.match(generationText(fake.calls.find(isGeneration)), /المسألة: ميعاد الاستئناف[\s\S]*نظام المرافعات الشرعية — المادة 187/);
+
+    // إلغاء اعتماد المسألة يُسقط حصرَها.
+    db.q("UPDATE legal_issue_vocab SET status = 'retired' WHERE key = 'appeal_deadlines'");
+    assert.equal((await routes.searchLegal(env, '', { lawId: 'murafaat', issueKey: 'appeal_deadlines' })).length, 0);
+  } finally {
+    fake.restore();
+  }
+});
+
+// ── البحث في الخلفية ──
+
+/** بديلُ ربط Durable Object: كائنٌ لكل اسم، بتخزينٍ في الذاكرة ومنبّهٍ يُسجَّل ولا يُطلق. */
+function fakeRunners(getEnv) {
+  const objects = new Map();
+  return {
+    objects,
+    idFromName: (name) => name,
+    get(id) {
+      if (!objects.has(id)) {
+        const data = new Map();
+        const state = {
+          alarmAt: null,
+          storage: {
+            get: async (k) => data.get(k),
+            put: async (k, v) => void data.set(k, v),
+            deleteAll: async () => data.clear(),
+            setAlarm: async (t) => void (state.alarmAt = t),
+          },
+        };
+        objects.set(id, { state, runner: new routes.ResearchRunner(state, getEnv()), data });
+      }
+      const o = objects.get(id);
+      return { fetch: (url, init) => o.runner.fetch(new Request(url, init)) };
+    },
+  };
+}
+
+await t.check('البحث في الخلفية: مهمّةٌ تُحفظ وتعود فوراً، والمنبّه يبني مذكرتها، وتقدّمها لصاحبها وحده', async () => {
+  const { env, db } = await layeredFixture();
+  const ns = fakeRunners(() => env);
+  env.RESEARCH = ns;
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: JSON.stringify(LAYERED_PLAN) } : { text: 'رد' }));
+  try {
+    const res = await routes.research.request('/c1', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'صحيفة دعوى عمالية', async: true }),
+    }, env);
+    assert.equal(res.status, 202);
+    const { job_id } = await res.json();
+    assert.equal(fake.calls.length, 0, 'بنى في الطلب وكان عليه أن يحفظ المهمّة ويعود');
+    assert.equal(db.q('SELECT status FROM research_jobs WHERE id = ?', job_id)[0].status, 'queued');
+    const obj = ns.objects.get(job_id);
+    assert.ok(obj.state.alarmAt, 'لم يُضبط المنبّه');
+
+    await obj.runner.alarm();
+    const job = { ...db.q('SELECT * FROM research_jobs WHERE id = ?', job_id)[0] };
+    assert.equal(job.status, 'done');
+    assert.ok(job.memo_id && JSON.parse(job.progress_json).steps > 0);
+    assert.equal(obj.data.size, 0, 'بقي في تخزين الكائن ما لا حاجة إليه');
+
+    const got = await (await routes.research.request(`/jobs/${job_id}`, {}, env)).json();
+    assert.equal(got.job.status, 'done');
+    assert.equal(got.memo.status, 'draft');
+    assert.ok(got.memo.groups.flatMap((g) => g.items.map((i) => i.key)).includes('legal:labor:84'));
+
+    // منبّهٌ يُعاد بعد تمامها لا يبني ثانيةً.
+    const calls = fake.calls.length;
+    await obj.data.set('jobId', job_id);
+    await obj.runner.alarm();
+    assert.equal(fake.calls.length, calls, 'أُعيد البناء لمهمّةٍ تمّت');
+
+    // ما تفتح به الواجهةُ المادة: معرّفُ المقطع ونظامُه ورقمُها مع كل مادة.
+    const item = got.memo.groups.flatMap((g) => g.items).find((i) => i.key === 'legal:labor:84');
+    assert.equal(item.lawId, 'labor');
+    assert.equal(item.articleNo, '84');
+    assert.ok(item.id && item.lawTitle);
+    assert.equal(got.job.message, 'صحيفة دعوى عمالية');
+
+    // من عاد إلى المحادثة يجد مهمّته — حتى يُصاغ بعدها شيء.
+    assert.equal((await (await routes.research.request('/conversations/c1/job', {}, env)).json()).job_id, job_id);
+    db.q(`INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('later', 'c1', 'user', 'صُغ', ?)`, Date.now() + 1000);
+    assert.equal((await (await routes.research.request('/conversations/c1/job', {}, env)).json()).job_id, null, 'عادت مهمّةٌ صيغ بعدها');
+
+    globalThis.__naf_user = { id: 'u2', email: 'b@x', role: 'admin' };
+    assert.equal((await routes.research.request(`/jobs/${job_id}`, {}, env)).status, 404, 'قرأ مهمّة غيره');
+    assert.equal((await (await routes.research.request('/conversations/c1/job', {}, env)).json()).job_id, null, 'رأى مهمّة غيره');
+  } finally {
+    delete globalThis.__naf_user;
+    fake.restore();
+  }
+});
+
+await t.check('مهمّةٌ لم يتحرّك تقدّمها تُعرض متعطّلة، وتعذُّر بدء المنفّذ لا يتركها «منتظرة»', async () => {
+  const { env, db } = await layeredFixture();
+  env.RESEARCH = { idFromName: (n) => n, get: () => ({ fetch: async () => { throw new Error('unavailable'); } }) };
+  const res = await routes.research.request('/c1', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'سؤال', async: true }),
+  }, env);
+  assert.equal(res.status, 503);
+  const { job_id } = await res.json();
+  assert.equal(db.q('SELECT status FROM research_jobs WHERE id = ?', job_id)[0].status, 'failed');
+
+  db.q(`INSERT INTO research_jobs (id, conversation_id, user_id, message, status, created_at, updated_at)
+        VALUES ('old', 'c1', 'u1', 'سؤال', 'running', 1, 1)`);
+  const got = await (await routes.research.request('/jobs/old', {}, env)).json();
+  assert.equal(got.job.status, 'failed');
+  assert.equal(got.job.error, 'research_stalled');
 });
 
 t.done();

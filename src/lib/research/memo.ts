@@ -5,6 +5,7 @@
 // لا تعود منها، ومادةٌ عُدِّلت تعود بنصّها الجديد.
 import { getHitsBySeqs } from '../legal';
 import { fromLegalHit, joinArticleParts } from '../rag';
+import { getDocumentChunks } from './documents';
 import type { ResearchGap, ResearchGroup, GroupKind } from './layered';
 import type { Env, GroundingLayer } from '../../types';
 
@@ -13,6 +14,12 @@ export interface MemoItem {
   seq: number | null;
   /** «نظام العمل — المادة 77» — للعرض والمراجعة. */
   title: string;
+  /** ما تُفتح به المادة في نافذة المصدر. اختياريّةٌ: مذكراتٌ حُفظت قبلها لا تحملها. */
+  source?: 'legal' | 'document';
+  id?: string;
+  lawId?: string;
+  lawTitle?: string;
+  articleNo?: string;
 }
 
 export interface MemoGroup {
@@ -49,6 +56,11 @@ export function memoGroups(groups: ResearchGroup[]): MemoGroup[] {
         key: r.key ?? r.documentId,
         seq: r.seq ?? null,
         title: [r.title, r.articleRef].filter(Boolean).join(' — '),
+        source: r.source,
+        id: r.documentId,
+        lawId: r.lawId,
+        lawTitle: r.title,
+        articleNo: r.articleNo,
       })),
     }));
 }
@@ -134,17 +146,21 @@ export async function hydrateMemo(
 ): Promise<{ groups: ResearchGroup[]; dropped: number }> {
   const exclude = opts.exclude ?? new Set<string>();
   let budget = opts.max ?? 60;
-  const wanted = memo.groups.flatMap((g) => g.items).filter((i) => i.seq != null && !exclude.has(i.key));
+  const items = memo.groups.flatMap((g) => g.items).filter((i) => !exclude.has(i.key));
+  const wanted = items.filter((i) => i.seq != null);
   const hits = joinArticleParts(await getHitsBySeqs(env, wanted.map((i) => i.seq!)));
   const bySeq = new Map(hits.map((h) => [h.seq, fromLegalHit(h)]));
+  // ومقاطعُ الوثائق المرفوعة بمعرّفاتها — من وثائق ما زالت سارية.
+  const docs = await getDocumentChunks(env, items.filter((i) => i.key.startsWith('doc:')).map((i) => i.key));
+  const byKey = new Map(docs.map((r) => [r.key!, r]));
   let dropped = 0;
   const seen = new Set(exclude);
   const groups: ResearchGroup[] = [];
   for (const g of memo.groups) {
     const results = [];
     for (const it of g.items) {
-      if (it.seq == null || seen.has(it.key) || budget <= 0) continue;
-      const r = bySeq.get(it.seq);
+      if (seen.has(it.key) || budget <= 0) continue;
+      const r = it.seq != null ? bySeq.get(it.seq) : byKey.get(it.key);
       if (!r) {
         dropped++;
         continue;

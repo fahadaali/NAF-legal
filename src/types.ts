@@ -10,6 +10,8 @@ export interface Env {
   // ولا يقرؤه أحد — التفصيل في `lib/rag.ts`.
   VECTORIZE?: VectorizeIndex;
   AI: Ai;
+  /** مهامّ البحث في الخلفية — `ResearchRunner`. اختياريّ: بلا ربطٍ يُبنى البحث في الطلب نفسه. */
+  RESEARCH?: DurableObjectNamespace;
   KV: KVNamespace;
   // مساحة الدخول الموحّد — مستقلّة عن `KV` أعلاه. تكتب فيها الحزمة
   // `sess:` و `jwks:` وحدها، فلا تزاحم مفاتيح حدّ المعدّل (`rl:`).
@@ -17,7 +19,12 @@ export interface Env {
   ASSETS: Fetcher;
   // vars
   APP_NAME: string;
+  /** المُخطِّط والعناوين — توجيهٌ قصير على مسار كل دور. */
   PLANNER_MODEL: string;
+  /** التحقّق، والاستخراج، والبحث المعمّق، والتتبّع — ما يحكم لا ما يوجّه. */
+  ANALYSIS_MODEL: string;
+  /** وسمُ الموادّ بالمسائل. */
+  TAGGING_MODEL: string;
   GENERATION_MODEL: string;
   EMBEDDING_MODEL: string;
   DATA_REGION: string;
@@ -103,4 +110,6 @@ export interface PlannerIssue {
   queries: string[];
   /** أسماء الأنظمة الرسمية التي يُبحث فيها لهذه المسألة. */
   laws: string[];
+  /** مفتاحُ المسألة في القائمة المعتمدة (`legal_issue_vocab`) إن طابقت إحداها. */
+  issue_key?: string;
 }

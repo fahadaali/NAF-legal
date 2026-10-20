@@ -1,6 +1,8 @@
 // تقسيم النص وتوليد التضمينات وتخزينها في Vectorize — §6
 // يُستدعى مباشرةً عبر ctx.waitUntil (بلا Queues لدعم الخطة المجانية).
 import { chunkText, embedBatch } from './lib/rag';
+import { normalizeArabic, stemText } from './lib/arabic';
+import { DOC_NAMESPACE, DOC_INDEX_VERSION } from './lib/research/documents';
 import type { Env } from './types';
 
 /**
@@ -35,30 +37,9 @@ export async function ingestDocument(env: Env, docId: string): Promise<IngestOut
 }
 
 async function runIngest(env: Env, docId: string): Promise<IngestOutcome> {
-  /* بلا فهرس متجهي لا يقع تضمين — والوثيقة تبقى **منتظرة** لا «جاهزة».
-
-     وكانت تُوسم «جاهزة» بـ«المقاطع ٠»، فيقرأ المسؤول نجاحاً حيث لم يقع شيء:
-     `retrieveKbDocuments` في `lib/rag.ts` يردّ فارغاً بلا الفهرس، فالوثيقة
-     لا تبلغ المساعدَ أصلاً. ثم يسأل لماذا لا يجد وثيقةً «جاهزة» رفعها بيده.
-
-     و`pending` هي الحال الصادقة: لم تُضمَّن بعد. والشاشة تقول للمسؤول **لماذا**
-     — «بانتظار الفهرس» — لأنها وحدها تعرف أن الفهرس غير مهيّأ. ولا حالَ رابعة
-     في القاعدة: `ingest_status` محصورٌ بأربعٍ في `CHECK` منذ `0001_init.sql`،
-     وتوسيعُه يعيد بناء الجدول مقابل ما يُشتقّ بلا لبس.
-
-     و`chunk_count` يُصفَّر معها: وثيقةٌ ضُمِّنت ثم أُعيد تضمينها بلا فهرس
-     تبقى تعرض عدد مقاطعها القديم وقد حُذفت متجهاتُه. */
-  if (!env.VECTORIZE) {
-    await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'pending', chunk_count = 0 WHERE id = ?")
-      .bind(docId)
-      .run();
-    return 'pending';
-  }
-  await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'processing' WHERE id = ?").bind(docId).run();
-
-  const doc = await env.DB.prepare('SELECT title, category FROM kb_documents WHERE id = ?')
+  const doc = await env.DB.prepare('SELECT title, category, chunk_count FROM kb_documents WHERE id = ?')
     .bind(docId)
-    .first<{ title: string; category: string | null }>();
+    .first<{ title: string; category: string | null; chunk_count: number | null }>();
   if (!doc) throw new Error('الوثيقة غير موجودة');
 
   const textObj = await env.R2.get(`kb-text/${docId}.txt`);
@@ -67,45 +48,73 @@ async function runIngest(env: Env, docId: string): Promise<IngestOutcome> {
     await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'error' WHERE id = ?").bind(docId).run();
     return 'error';
   }
+  if (env.VECTORIZE) {
+    await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'processing' WHERE id = ?").bind(docId).run();
+  }
 
   const chunks = chunkText(text);
-  // امسح المتجهات القديمة (في حال إعادة التضمين)
-  const oldDoc = await env.DB.prepare('SELECT chunk_count FROM kb_documents WHERE id = ?')
+
+  /* ── المقاطع في D1 أوّلاً ──
+     بنصّها كاملاً، مطبَّعاً ومجذوعاً، فيعمل البحث اللفظيّ فيها ولو بلا فهرسٍ متجهي.
+     وما سبقها من مقاطع الوثيقة يُحذف ومعه متجهاتُه: بمعرّفاته الجديدة وبالقديمة
+     (`<docId>:<i>` في المساحة الافتراضية قبل الهجرة 0040). */
+  const prev = await env.DB.prepare('SELECT id FROM kb_doc_chunks WHERE document_id = ?')
     .bind(docId)
-    .first<{ chunk_count: number }>();
-  if (oldDoc?.chunk_count) {
-    const oldIds = Array.from({ length: oldDoc.chunk_count }, (_, i) => `${docId}:${i}`);
-    await env.VECTORIZE!.deleteByIds(oldIds).catch(() => {});
+    .all<{ id: string }>();
+  const staleIds = [
+    ...(prev.results ?? []).map((r) => r.id),
+    ...Array.from({ length: doc.chunk_count ?? 0 }, (_, i) => `${docId}:${i}`),
+  ];
+  if (env.VECTORIZE && staleIds.length) await env.VECTORIZE.deleteByIds(staleIds).catch(() => {});
+
+  const now = Date.now();
+  const rows = chunks.map((chunk, i) => ({
+    id: `doc:${docId}:${i}`,
+    text: chunk,
+    norm: normalizeArabic(chunk),
+    ref: extractArticleRef(chunk),
+  }));
+  const stmts = [
+    env.DB.prepare('DELETE FROM kb_doc_chunks WHERE document_id = ?').bind(docId),
+    ...rows.map((r, i) =>
+      env.DB.prepare(
+        `INSERT INTO kb_doc_chunks (id, document_id, ord, text, text_norm, text_stem, article_ref, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(r.id, docId, i, r.text, r.norm, stemText(r.norm), r.ref || null, now)
+    ),
+  ];
+  for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+
+  /* بلا فهرس متجهي لا يقع تضمين — والوثيقة تبقى **منتظرة** لا «جاهزة»، وإن كان
+     بحثُها اللفظيّ يعمل الآن من مقاطعها في D1. */
+  if (!env.VECTORIZE) {
+    await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'pending', chunk_count = ? WHERE id = ?")
+      .bind(chunks.length, docId)
+      .run();
+    return 'pending';
   }
 
-  /* ضمّن على دفعات — والوثيقة كلٌّ لا يتجزّأ.
-
-     المقطع في `legal_chunks` صفٌّ قائم بذاته، فتعثّرُ دفعةٍ هناك يترك ما
-     نجح مضمَّناً ويعيد ما فشل. أما الوثيقة فحالُها عمودٌ واحد
-     (`ingest_status`) وعدُّ مقاطعها عمودٌ واحد: فوسمُها «مضمَّنة» ونصفُ
-     مقاطعها بلا متجه يجعلها تُسترجَع ناقصةً ولا شيء يقول ذلك. فإن تعثّرت
-     دفعةٌ رُميت الوثيقةُ كلُّها إلى `error` — تُرى في الجدول، وتُعاد
-     بـ«إعادة تضمين». */
+  /* ضمّن على دفعات — في مساحة `documents` وحدها، فلا تزاحمها موادّ الأنظمة.
+     والوثيقة كلٌّ لا يتجزّأ: إن تعثّرت دفعةٌ رُميت كلُّها إلى `error` — تُرى في
+     الجدول وتُعاد بـ«إعادة تضمين» — ولا تُوسم «جاهزة» ونصفُ مقاطعها بلا متجه. */
   const BATCH = 10;
-  for (let start = 0; start < chunks.length; start += BATCH) {
-    const slice = chunks.slice(start, start + BATCH);
-    const vectors = await embedBatch(env, slice);
-    const toUpsert = slice.map((chunk, i) => ({
-      id: `${docId}:${start + i}`,
-      values: vectors[i],
-      metadata: {
-        document_id: docId,
-        title: doc.title,
-        category: doc.category ?? '',
-        text: chunk.slice(0, 4000),
-        article_ref: extractArticleRef(chunk),
-      },
-    }));
-    await env.VECTORIZE!.upsert(toUpsert);
+  for (let start = 0; start < rows.length; start += BATCH) {
+    const slice = rows.slice(start, start + BATCH);
+    const vectors = await embedBatch(env, slice.map((r) => r.text));
+    await env.VECTORIZE.upsert(
+      slice.map((r, i) => ({
+        id: r.id,
+        values: vectors[i],
+        namespace: DOC_NAMESPACE,
+        metadata: { kind: 'document', document_id: docId, category: doc.category ?? '' },
+      }))
+    );
   }
 
-  await env.DB.prepare("UPDATE kb_documents SET ingest_status = 'ready', chunk_count = ? WHERE id = ?")
-    .bind(chunks.length, docId)
+  await env.DB.prepare(
+    "UPDATE kb_documents SET ingest_status = 'ready', chunk_count = ?, index_version = ? WHERE id = ?"
+  )
+    .bind(chunks.length, DOC_INDEX_VERSION, docId)
     .run();
   return 'ready';
 }

@@ -5,6 +5,7 @@
 // تجاوزها ولو أراد.
 import { extractPendingLinks, knownLaws, resolveNamed } from '../lib/research/links';
 import { LEGAL_DOMAINS } from '../lib/planner';
+import { tagPendingArticles, retagAll } from '../lib/research/issues';
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
@@ -309,6 +310,83 @@ app.patch('/grounding-map/:id', requireAdmin, async (c) => {
     .run();
   if (!res.meta.changes) return c.json({ error: 'غير موجودة' }, 404);
   await audit(c, 'grounding.update', id, b);
+  return c.json({ ok: true });
+});
+
+// ── قائمة المسائل ووسمُ الموادّ بها ──
+
+const ISSUE_LAYERS = GROUNDING_LAYERS;
+
+app.get('/issues', requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT v.key, v.label, v.layer, v.domains, v.description, v.status, v.reviewed_by, v.reviewed_at,
+            (SELECT COUNT(*) FROM legal_article_issues ai WHERE ai.issue_key = v.key) AS articles
+     FROM legal_issue_vocab v ORDER BY v.layer, v.key`
+  ).all();
+  const pending = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM legal_chunks WHERE issues_at IS NULL AND retrieval_status <> 'repealed' AND is_repealed = 0"
+  ).first<{ n: number }>();
+  return c.json({ issues: rows.results ?? [], pending_articles: pending?.n ?? 0 });
+});
+
+app.post('/issues', requireAdmin, async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  const key = String(b.key ?? '').trim();
+  const label = String(b.label ?? '').trim();
+  const description = String(b.description ?? '').trim();
+  if (!/^[a-z][a-z0-9_]{2,60}$/.test(key) || !label || !description || !ISSUE_LAYERS.includes(b.layer)) {
+    return c.json({ error: 'المفتاح والاسم والوصف والطبقة مطلوبة' }, 400);
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO legal_issue_vocab (key, label, layer, domains, description, status, created_at)
+     VALUES (?, ?, ?, ?, ?, 'draft', ?)`
+  )
+    .bind(key, label, b.layer, String(b.domains ?? '*'), description, Date.now())
+    .run();
+  await audit(c, 'issues.add', key, { label });
+  return c.json({ ok: true });
+});
+
+app.patch('/issues/:key', requireAdmin, async (c) => {
+  const key = c.req.param('key') ?? '';
+  const b = await c.req.json().catch(() => ({}));
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (b.status !== undefined) {
+    if (!GROUNDING_STATUSES.includes(b.status)) return c.json({ error: 'حالة غير معروفة' }, 400);
+    sets.push('status = ?', 'reviewed_by = ?', 'reviewed_at = ?');
+    binds.push(b.status, c.get('user').email ?? c.get('user').id, Date.now());
+  }
+  for (const f of ['label', 'description', 'domains'] as const) {
+    if (typeof b[f] === 'string' && b[f].trim()) {
+      sets.push(`${f} = ?`);
+      binds.push(b[f].trim());
+    }
+  }
+  if (b.layer !== undefined) {
+    if (!ISSUE_LAYERS.includes(b.layer)) return c.json({ error: 'طبقة غير معروفة' }, 400);
+    sets.push('layer = ?');
+    binds.push(b.layer);
+  }
+  if (!sets.length) return c.json({ error: 'لا تغيير' }, 400);
+  const res = await c.env.DB.prepare(`UPDATE legal_issue_vocab SET ${sets.join(', ')} WHERE key = ?`)
+    .bind(...binds, key)
+    .run();
+  if (!res.meta.changes) return c.json({ error: 'غير موجودة' }, 404);
+  await audit(c, 'issues.update', key, b);
+  return c.json({ ok: true });
+});
+
+/** وسمُ الموادّ الآن بدل انتظار نبضة الـCron (أربعون في كل نبضة). */
+app.post('/issues/tag', requireAdmin, async (c) => {
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 200) || 200, 1), 1000);
+  return c.json(await tagPendingArticles(c.env, limit));
+});
+
+/** يعيد الموادّ كلَّها إلى الطابور — بعد تعديل القائمة المعتمدة. */
+app.post('/issues/retag', requireAdmin, async (c) => {
+  await retagAll(c.env);
+  await audit(c, 'issues.retag', '*', {});
   return c.json({ ok: true });
 });
 

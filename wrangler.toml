@@ -48,6 +48,17 @@ bucket_name = "naf-legal-files"
 # index_name = "naf-legal-kb"
 # VECTORIZE-BINDINGS-END
 
+# ── مهامّ البحث في الخلفية: Durable Object لكل مهمّة ──
+# البحث المعمّق دقائق من جولات Claude، والمنبّه يُكمله ولو أُغلق المتصفّح.
+# الحالة في جدول `research_jobs`؛ والكائن لا يحفظ إلا معرّف مهمّته.
+[[durable_objects.bindings]]
+name = "RESEARCH"
+class_name = "ResearchRunner"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ResearchRunner"]
+
 # ── الذكاء الاصطناعي للتضمينات Workers AI ──
 [ai]
 binding = "AI"
@@ -97,7 +108,13 @@ APP_NAME = "مستشار ناف"
 # سقفاً للتفكير والنص معاً. والجهد الافتراضي في الـAPI صار `medium` لا `high`،
 # فـ`src/lib/claude.ts` يرسل `high` صراحةً حين لا يحدّد المستدعي جهداً.
 # تفصيل ذلك وأرضيّة الحدّ هناك، ومستوى الجهد لكل استدعاء عند موضعه.
-PLANNER_MODEL = "claude-opus-5-5"
+# المُخطِّط والعناوين على Haiku: توجيهٌ قصير بمخرجٍ منظَّم على مسار كل دور، وسرعتُه
+# تُقدّم أوّل حرفٍ في الردّ. وما يحكم أو يستخرج أو يبحث — التحقّق من الإسناد، ومواضع
+# الاستدلال، والبحث المعمّق، وقراءة الممسوح، وتتبّع الأنظمة — على `ANALYSIS_MODEL`.
+PLANNER_MODEL = "claude-haiku-5-5"
+ANALYSIS_MODEL = "claude-opus-5-5"
+# وسمُ الموادّ بالمسائل: تصنيفٌ مقيَّد بقائمةٍ مضبوطة على آلاف الموادّ.
+TAGGING_MODEL = "claude-haiku-5-5"
 GENERATION_MODEL = "claude-opus-5-5"
 EMBEDDING_MODEL = "@cf/baai/bge-m3"
 DATA_REGION = "auto"

@@ -6,6 +6,9 @@ import { dualDate } from './lib/hijri';
 import { embedPending, vectorHealth, vectorCheck, recoverStaleBatches } from './lib/legal';
 import { extractPendingLinks } from './lib/research/links';
 import { stemPending } from './lib/research/stem';
+import { reindexDocuments } from './lib/research/documents';
+import { tagPendingArticles } from './lib/research/issues';
+import { ingestDocument } from './ingest';
 import type { Env } from './types';
 
 /**
@@ -214,7 +217,7 @@ async function scanOfficialNewRegulations(env: Env): Promise<number> {
 أعِد JSON فقط: {"items":[{"title":"...","summary":"رقم المرسوم/القرار وتاريخه","url":"...","published":"..."}]} بحدّ أقصى 10 عناصر.`;
   try {
     const { text } = await callClaude(env, {
-      model: env.PLANNER_MODEL,
+      model: env.ANALYSIS_MODEL,
       system,
       messages: [{ role: 'user', content: 'ما أحدث الأنظمة واللوائح الجديدة أو المحدَّثة من هيئة الخبراء والمركز الوطني للوثائق؟' }],
       tools: [webSearchTool(['boe.gov.sa', 'laws.boe.gov.sa', 'ncar.gov.sa'])],
@@ -291,7 +294,7 @@ async function checkRegulation(env: Env, title: string): Promise<{ changed: bool
 أعِد JSON فقط: {"changed": true|false, "summary": "ملخّص التغيير مع رقم المرسوم/القرار وتاريخه ورابط المصدر إن وُجد، أو 'لا تغييرات مرصودة'"}`;
 
   const { text } = await callClaude(env, {
-    model: env.PLANNER_MODEL,
+    model: env.ANALYSIS_MODEL,
     system,
     messages: [{ role: 'user', content: `النظام: ${title}\nهل صدر تعديل أو تحديث رسمي حديث عليه؟` }],
     tools: [webSearchTool(TRACKING_DOMAINS)],
@@ -418,6 +421,20 @@ export async function runLinkExtraction(env: Env): Promise<void> {
     if (r.stemmed) console.log(`stems: ${r.stemmed} chunks, ${r.remaining} left`);
   } catch (e: any) {
     console.error('stem backfill failed:', e?.message ?? e);
+  }
+  // ووسمُ الموادّ بالمسائل المعتمدة — لا يقع شيءٌ منه قبل اعتماد القائمة.
+  try {
+    const r = await tagPendingArticles(env, 40);
+    if (r.tagged) console.log(`issues: ${r.tagged} tagged, ${r.remaining} left`);
+  } catch (e: any) {
+    console.error('issue tagging failed:', e?.message ?? e);
+  }
+  // ووثائقُ فُهرست بالطريقة القديمة تُعاد فهرستُها، ثلاثٌ في كل نبضة.
+  try {
+    const n = await reindexDocuments(env, ingestDocument);
+    if (n) console.log(`documents reindexed: ${n}`);
+  } catch (e: any) {
+    console.error('document reindex failed:', e?.message ?? e);
   }
 }
 

@@ -15,6 +15,8 @@ import { logUsage, usageFromRaw } from '../usage';
 import { searchLegal, getArticle, getHitsBySeqs, type LegalHit } from '../legal';
 import { fromLegalHit, joinArticleParts, citationLine, noticeLines, type RagResult } from '../rag';
 import { knownLaws, resolveNamed } from './links';
+import { searchDocuments } from './documents';
+import { embed } from '../embed';
 import type { ResearchGap, ResearchGroup } from './layered';
 import type { RetrievalTrace } from './trace';
 import type { Env, PlannerOutput } from '../../types';
@@ -66,6 +68,19 @@ const TOOLS = [
     },
   },
   {
+    name: 'search_documents',
+    description:
+      'يبحث في الوثائق التي رفعها مسؤول المنصة (نصوصٌ رسمية خارج قاعدة الأنظمة المستوردة، وأخبار أم القرى). ' +
+      'نتائجُها سندٌ يُذكر بمصدره، ومفاتيحُها في source تُستعمل في finish_research.',
+    strict: true,
+    input_schema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['query'],
+      properties: { query: str },
+    },
+  },
+  {
     name: 'finish_research',
     description:
       'يُنهي البحث. add: مفاتيح الموادّ (من source في نتائج الأدوات) التي تُضاف إلى المذكرة لأن المسألة تقوم عليها. ' +
@@ -100,6 +115,7 @@ const SYSTEM = `أنت باحثٌ قانونيّ في منصةٍ سعودية. �
 - الإثبات: عبؤه ووسائله.
 - الأحكام العامة التي يقوم عليها النظام الخاص.
 - اللائحة التنفيذية حيث تفصّل.
+- والوثائقَ المرفوعة (search_documents) حين تتصل بالمسألة.
 وتتبّع إحالات الموادّ المهمّة بـget_related. ولا تُطل: ستُّ جولاتٍ على الأكثر، واستدعِ الأدوات المستقلّة معاً في الجولة الواحدة.
 
 لا تضف في finish_research إلا مفاتيح رأيتها في نتائج الأدوات، ولا مادةً في المذكرة أصلاً. وما بحثتَ عنه فلم تجده فهو فجوة تُذكر، لا مادةٌ تُخمَّن.`;
@@ -133,7 +149,15 @@ export interface DeepResearchResult {
 
 export async function deepResearch(
   env: Env,
-  input: { message: string; plan: PlannerOutput; groups: ResearchGroup[]; userId?: string; trace?: RetrievalTrace }
+  input: {
+    message: string;
+    plan: PlannerOutput;
+    groups: ResearchGroup[];
+    userId?: string;
+    trace?: RetrievalTrace;
+    /** يُنادى بعد كل جولة — لتقدّم المهمّة في الخلفية. */
+    onRound?: (round: number) => Promise<void>;
+  }
 ): Promise<DeepResearchResult> {
   const { trace } = input;
   const laws = await knownLaws(env).catch(() => []);
@@ -183,6 +207,23 @@ export async function deepResearch(
         trace?.add({ stage: 'agent-related', detail: key, count: hits.length });
         return hits.length ? asSearchResults(hits, seen) : 'لا إحالات من هذه المادة.';
       }
+      case 'search_documents': {
+        const q = String(args.query ?? '');
+        const vec = env.VECTORIZE ? await embed(env, q).catch(() => undefined) : undefined;
+        const docs = await searchDocuments(env, q, { limit: TOOL_RESULTS, queryVector: vec });
+        trace?.add({ stage: 'agent-documents', query: q, count: docs.length });
+        if (!docs.length) return 'لا نتائج في الوثائق المرفوعة لهذه العبارة.';
+        return docs.map((r) => {
+          seen.set(r.key!, { result: r });
+          return {
+            type: 'search_result',
+            source: r.key,
+            title: citationLine(r),
+            content: [{ type: 'text', text: r.text }],
+            citations: { enabled: false },
+          };
+        });
+      }
       default:
         return 'أداةٌ غير معروفة.';
     }
@@ -193,14 +234,14 @@ export async function deepResearch(
   while (rounds < MAX_ROUNDS && !finish) {
     rounds++;
     const { raw } = await callClaude(env, {
-      model: env.PLANNER_MODEL,
+      model: env.ANALYSIS_MODEL,
       system: SYSTEM,
       messages,
       tools: TOOLS,
       effort: 'medium',
       max_tokens: 16000,
     });
-    await logUsage(env, { userId: input.userId, kind: 'research', model: env.PLANNER_MODEL, ...usageFromRaw(raw) });
+    await logUsage(env, { userId: input.userId, kind: 'research', model: env.ANALYSIS_MODEL, ...usageFromRaw(raw) });
     const content: any[] = raw?.content ?? [];
     const calls = content.filter((b) => b.type === 'tool_use');
     if (!calls.length) break; // أنهى بلا finish_research — يُعتدّ بما رأى ولا يُضاف شيء.
@@ -226,6 +267,7 @@ export async function deepResearch(
     );
     // النتائج كلُّها في رسالةٍ واحدة — تفريقها يعلّم النموذج ترك الاستدعاء المتوازي.
     messages.push({ role: 'user', content: results });
+    await input.onRound?.(rounds).catch(() => {});
   }
   trace?.add({ stage: 'agent-rounds', count: rounds });
 

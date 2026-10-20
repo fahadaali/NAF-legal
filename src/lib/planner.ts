@@ -1,6 +1,7 @@
 // المُخطِّط (Planner) — §5: يحلّل رسالة المستخدم وينتج خطة JSON
 import { callClaude } from './claude';
 import { logUsage, usageFromRaw } from './usage';
+import { approvedIssues } from './research/issues';
 import type { Env, PlannerOutput, ConsultationType } from '../types';
 
 const PLANNER_SYSTEM = () => `أنت مُخطِّط توجيه لمنصّة استشارات قانونية سعودية. مهمّتك تحليل رسالة المستخدم ونوع الاستشارة المختار، وإنتاج خطة تنفيذ بصيغة JSON فقط دون أي نص إضافي.
@@ -66,7 +67,8 @@ const str = { type: 'string' };
 const strs = { type: 'array', items: str };
 
 /** مخطّط الخطة — كل حقلٍ مطلوب، فلا يُسقط المُخطِّط حقلاً ولا يزيد. */
-const PLAN_SCHEMA = {
+function planSchema(issueKeys: string[]) {
+  return {
   type: 'object',
   additionalProperties: false,
   required: [
@@ -98,8 +100,15 @@ const PLAN_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['title', 'layer', 'queries', 'laws'],
-        properties: { title: str, layer: { type: 'string', enum: [...LAYERS] }, queries: strs, laws: strs },
+        required: issueKeys.length ? ['title', 'layer', 'queries', 'laws', 'issue_key'] : ['title', 'layer', 'queries', 'laws'],
+        properties: {
+          title: str,
+          layer: { type: 'string', enum: [...LAYERS] },
+          queries: strs,
+          laws: strs,
+          // مسألةٌ من القائمة المعتمدة أو `none` — ولا يُطلب الحقل بلا قائمة.
+          ...(issueKeys.length ? { issue_key: { type: 'string', enum: [...issueKeys, 'none'] } } : {}),
+        },
       },
     },
     explicit_articles: {
@@ -112,7 +121,8 @@ const PLAN_SCHEMA = {
       },
     },
   },
-};
+  };
+}
 
 export async function runPlanner(
   env: Env,
@@ -138,10 +148,19 @@ export async function runPlanner(
 ${historyBlock}رسالة المستخدم الحالية:
 ${userMessage}`;
 
+  /* القائمة المعتمدة تُعرض على المُخطِّط ليختار لكل مسألةٍ مفتاحها — وبلا اعتمادٍ لا
+     تُعرض ولا يُطلب الحقل، فيبقى المُخطِّط كما كان. */
+  const issues = await approvedIssues(env);
+  const issuesBlock = issues.length
+    ? `\n\n**issue_key:** لكل مسألةٍ مفتاحُها من هذه القائمة إن طابقتها، وإلا none:\n${issues
+        .map((i) => `- ${i.key}: ${i.label}`)
+        .join('\n')}`
+    : '';
+
   try {
     const request = {
       model: env.PLANNER_MODEL,
-      system: PLANNER_SYSTEM(),
+      system: PLANNER_SYSTEM() + issuesBlock,
       messages: [{ role: 'user' as const, content: context }],
       // توجيهٌ لا اجتهاد: خرجُه JSON قصير، وهو على مسار كل دور محادثة.
       // و`low` على Opus 5 قويٌّ لهذا الصنف، وأقلُّ زمناً قبل بدء التوليد.
@@ -153,7 +172,7 @@ ${userMessage}`;
        بلا ضمان المخطّط أنفع من خطةٍ احتياطية لا استعلام فيها. */
     let result: { text: string; raw: any };
     try {
-      result = await callClaude(env, { ...request, format: PLAN_SCHEMA });
+      result = await callClaude(env, { ...request, format: planSchema(issues.map((i) => i.key)) });
     } catch (e) {
       if (!/Claude API 400/.test(String((e as Error)?.message))) throw e;
       console.error('planner schema rejected — retrying without structured output');
@@ -216,6 +235,7 @@ function normalize(
         layer: i.layer,
         queries: (Array.isArray(i.queries) ? i.queries : []).filter((q) => typeof q === 'string' && q.trim()).slice(0, 2),
         laws: (Array.isArray(i.laws) ? i.laws : []).filter((l) => typeof l === 'string' && l.trim()).slice(0, 3),
+        ...(typeof i.issue_key === 'string' && i.issue_key !== 'none' ? { issue_key: i.issue_key } : {}),
       }))
       .filter((i) => i.queries.length),
     explicit_articles: (Array.isArray(p.explicit_articles) ? p.explicit_articles : [])

@@ -117,7 +117,7 @@ async function extractViaClaude(env: Env, buf: ArrayBuffer, mediaType: string, k
       : { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } };
 
   const { text, raw } = await callClaude(env, {
-    model: env.PLANNER_MODEL,
+    model: env.ANALYSIS_MODEL,
     effort: 'low', // نقلٌ حرفيّ للنص، لا تحليل — فلا وجه لإنفاق تفكيرٍ عليه
     max_tokens: EXTRACT_MAX_TOKENS,
     messages: [{ role: 'user', content: [block as any, { type: 'text', text: TRANSCRIBE }] }],
@@ -167,7 +167,7 @@ export async function ocrPages(env: Env, images: { bytes: ArrayBuffer; mime: str
       content.push({ type: 'text', text: instruction });
 
       const { text, raw } = await callClaude(env, {
-        model: env.PLANNER_MODEL,
+        model: env.ANALYSIS_MODEL,
         effort: 'low',
         max_tokens: EXTRACT_MAX_TOKENS,
         messages: [{ role: 'user', content }],
