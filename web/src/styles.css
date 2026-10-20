@@ -1250,3 +1250,130 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
   background: var(--warning-soft); color: var(--warning-strong);
   border-radius: var(--radius-md); line-height: var(--leading-relaxed, 1.9);
 }
+
+/* ══ مذكرة البحث ══
+ *
+ * بطاقةٌ داخل فقاعة الردّ لا نافذة: المسائلُ وموادّها تُقرأ مع السؤال الذي بُنيت له.
+ * والموادّ شاراتُ «المصادر» نفسها (`.citation-chip`) — الشيء الواحد بمظهرٍ واحد. */
+.research-memo {
+  margin-top: var(--space-3); padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.research-memo-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.research-memo-title {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 700; color: var(--foreground);
+}
+.research-memo-count {
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.research-memo-group-title {
+  display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 600; color: var(--foreground);
+}
+.research-memo-items { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.research-memo-items li { display: inline-flex; align-items: center; gap: var(--space-1); }
+/* المستبعدة قبل الحفظ: مشطوبةٌ لا مخفيّة — يُرى ما سيخرج قبل أن يخرج. */
+.research-memo-items li.is-excluded .citation-chip { text-decoration: line-through; color: var(--muted-foreground); }
+.research-memo-exclude { padding: var(--space-1) var(--space-2); }
+.research-memo-exclude[aria-pressed='true'] { border-color: var(--destructive); color: var(--destructive-strong); background: var(--destructive-soft); }
+.research-memo-gaps {
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg);
+  background: var(--warning-soft); color: var(--foreground);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height);
+}
+.research-memo-gaps .research-memo-group-title { color: var(--warning-strong); }
+.research-memo-gaps ul { margin: var(--space-1) 0 0; padding-inline-start: var(--space-5); }
+.research-memo-gap-line { margin: 0; color: var(--muted-foreground); }
+.research-memo-error {
+  display: inline-flex; align-items: center; gap: var(--space-2); margin: 0;
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--destructive-strong);
+}
+.research-memo .msg-actions { margin-top: 0; }
+.research-memo .msg-actions button:disabled { opacity: 0.6; transform: none; }
+.research-memo-pending { font-variant-numeric: tabular-nums; }
+
+/* المذكرة مطويّةً تحت ردٍّ محفوظ. */
+.research-memo-disclosure { margin-top: var(--space-2); }
+.research-memo-disclosure > summary {
+  display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer;
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground);
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-lg);
+}
+.research-memo-disclosure > summary:hover { color: var(--primary); }
+
+/* ══ البحث في الخلفية ══ */
+.research-job { display: flex; flex-direction: column; gap: var(--space-2); }
+.research-job-progress { display: flex; flex-direction: column; gap: var(--space-2); }
+.research-job-hint, .research-job-lost {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground);
+}
+.research-job-lost { color: var(--warning-strong); }
+.research-job-steps {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground);
+}
+.research-job-steps li { display: inline-flex; align-items: center; gap: var(--space-2); }
+.research-job-failed {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg);
+  background: var(--destructive-soft); color: var(--destructive-strong);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height);
+}
+.research-job-failed > span { display: inline-flex; align-items: center; gap: var(--space-2); }
+.research-job-done { margin: 0; font-size: var(--text-sm); line-height: var(--text-sm--line-height); color: var(--muted-foreground); }
+
+/* المذكرة المختارة للدور التالي — شارةٌ فوق الصندوق كالمرفق. */
+.memo-chip {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2); border: 1px solid var(--primary); border-radius: var(--radius-lg);
+  background: var(--primary-soft); color: var(--primary-strong);
+  font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 600;
+}
+.memo-chip-remove {
+  display: inline-flex; align-items: center; background: none; border: none; padding: 0;
+  color: inherit; cursor: pointer; border-radius: var(--radius-sm);
+}
+.deep-toggle:disabled { opacity: 0.6; transform: none; }
+.composer-hint.research-error { color: var(--destructive-strong); display: flex; align-items: center; gap: var(--space-2); }
+
+/* ══ علامة الإسناد داخل النصّ ══
+ *
+ * رقمٌ مرتفع بعد الجملة المسنودة. الرقم من `data-n` لا من نصٍّ في الشجرة — فلا
+ * يمسّ إزاحات التظليل ولا ما يُنسخ من الردّ — واسمُه لقارئ الشاشة في `aria-label`. */
+.cite-mark {
+  display: inline-block; vertical-align: super; margin-inline-start: var(--space-1);
+  padding-inline: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--muted); color: var(--primary-strong);
+  font: inherit; font-size: var(--text-xs); line-height: var(--text-xs--line-height); font-weight: 600;
+  font-variant-numeric: tabular-nums; text-align: center; cursor: default;
+}
+.cite-mark::before { content: attr(data-n); }
+button.cite-mark { cursor: pointer; }
+button.cite-mark:hover { border-color: var(--primary); }
+
+/* ══ ما يراجعه المحامون: خريطة الإسناد وقائمة المسائل ══ */
+.review-list-counts { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+.review-list-counts bdi { font-variant-numeric: tabular-nums; }
+.review-list-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.review-list-warn {
+  display: flex; align-items: center; gap: var(--space-1); margin-top: var(--space-1);
+  font-size: var(--text-xs); line-height: var(--text-xs--line-height); color: var(--warning-strong);
+}
+.review-list-strong { font-weight: 600; }
+.data-table td bdi { font-variant-numeric: tabular-nums; }
+
+/* البطاقة داخل فقاعة الردّ: أنماطُ markdown في `.msg-content` (عناوين وقوائم) لا
+   تبلغها — المذكرة واجهةٌ لا نصٌّ مولَّد، فتُعرض كما تُعرض تحت الردّ تماماً. */
+.msg-content .research-memo h4.research-memo-group-title {
+  margin: 0 0 var(--space-2); font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 600; color: var(--foreground);
+}
+.msg-content .research-memo-gaps h4.research-memo-group-title { color: var(--warning-strong); }
+.msg-content .research-memo ul, .research-memo-gaps ul { list-style: none; margin: var(--space-1) 0 0; padding: 0; }
+.msg-content .research-memo ul.research-memo-items { margin: 0; }
+.msg-content .research-memo li { margin: 0; }
+.msg-content .research-memo p { margin: 0; }
+.msg-content .research-job ul.research-job-steps { list-style: none; margin: 0; padding: 0; }

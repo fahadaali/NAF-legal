@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, Message, Attachment, Folder, ConsultConfig, type Citation, type Highlight } from '../lib/api';
+import { api, Message, Attachment, Folder, ConsultConfig, type Citation, type Highlight, type ResearchMemo as Memo } from '../lib/api';
 import { CONSULTATIONS, labelFor } from '../lib/consultations';
 import { renderMarkdown, splitDocTitle, stripLawyerNotes, copyDraft } from '../lib/markdown';
 import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
@@ -22,6 +22,10 @@ import type { ArticleRef, KnownLaw } from '../lib/articleLinks';
 import SelectionToolbar, { type SelectionAnchor } from './SelectionToolbar';
 import SourceModal, { isOpenableCitation } from './SourceModal';
 import AttachmentViewer from './AttachmentViewer';
+import { MemoDisclosure } from './ResearchMemo';
+import ResearchJobCard from './ResearchJobCard';
+import type { CitationSpan } from '../lib/citeMarks';
+import { RT, citeMarkLabel } from '../lib/researchTerms';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD, ICON_LG } from '../lib/icons';
 import { preloadPdfReader } from '../lib/extractText';
 import { mapPool, uploadAttachment, UPLOAD_CONCURRENCY } from '../lib/uploadAttachment';
@@ -46,6 +50,18 @@ interface UiMessage extends Message {
   verification?: { verified: boolean; unsupported: string[]; note: string } | null;
   // أنظمة يتطلّبها الإسناد ولا وجود لها في قاعدة المعرفة
   missingRegulations?: string[];
+  /** مذكرة البحث التي بُني عليها الردّ. */
+  memoId?: string;
+  /** مواضعُ الإسناد في نصّ الردّ — تُرسم علاماتٍ تفتح موادّها. */
+  citationSpans?: CitationSpan[];
+}
+
+/** الوثيقة المرفوعة تُرقَّم في النصّ ولا تُفتح: لا مادةَ لها في القاعدة. */
+const DOC_SOURCE_LABEL = 'هذا المصدر وثيقةٌ مرفوعة إلى قاعدة المعرفة';
+
+/** مفتاحُ الاستشهاد كما يكتبه الخادم في مواضع الإسناد (`legal:<معرّف المادة>`). */
+function citationKey(c: Citation): string | null {
+  return c.source === 'legal' && c.id ? `legal:${c.id.split('#')[0]}` : null;
 }
 
 /**
@@ -130,6 +146,12 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   const [generating, setGenerating] = useState(false);
   /** المصدر المفتوح في النافذة، إن فُتح. */
   const [source, setSource] = useState<Citation | null>(null);
+  /* البحث المعمّق: مهمّةٌ في الخلفية تبني مذكرةً يراجعها المحامي قبل الصياغة.
+     `memoForNext` المذكرة التي يُصاغ منها الدورُ التالي — تُختار من بطاقتها. */
+  const [deep, setDeep] = useState(false);
+  const [researchJob, setResearchJob] = useState<{ id: string; question: string } | null>(null);
+  const [researchError, setResearchError] = useState<string | null>(null);
+  const [memoForNext, setMemoForNext] = useState<string | null>(null);
   /** المرفق المفتوح في النافذة العائمة، إن فُتح. */
   const [openAttachment, setOpenAttachment] = useState<Attachment | null>(null);
   const [highlights, setHighlights] = useState<Highlight[]>([]);
@@ -184,7 +206,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       setConvFolder((r.conversation as any).folder_id ?? '');
       setGenerating(!!r.generating);
       const msgs = r.messages.map((m) => {
-        let citations, fiqhCitations, clarifying, verification, missingRegulations;
+        let citations, fiqhCitations, clarifying, verification, missingRegulations, memoId, citationSpans;
         try {
           const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
           citations = meta.citations;
@@ -192,8 +214,10 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           clarifying = meta.clarifying;
           verification = meta.verification;
           missingRegulations = meta.missing_regulations;
+          memoId = meta.memo_id;
+          citationSpans = meta.citation_spans;
         } catch {}
-        return { ...m, citations, fiqhCitations, clarifying, verification, missingRegulations };
+        return { ...m, citations, fiqhCitations, clarifying, verification, missingRegulations, memoId, citationSpans };
       });
       setMessages(msgs);
       /* ما في صندوق الكتابة لا يُستبدل بما عند الخادم، بل يُضمّ إليه.
@@ -226,6 +250,22 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       // محادثةٌ لم تُجلب لا تُفرَّغ: ما على الشاشة أصدق من شاشةٍ خاوية.
     }
   }, [conversationId]);
+
+  /* بحثٌ في الخلفية بدأه صاحبه ثم غادر: يُعاد إليه حيث تركه. ومهمّةٌ بعدها رسالةٌ
+     في المحادثة قد طُويت — الخادم لا يعيدها. */
+  useEffect(() => {
+    if (!conversationId || readOnly) return;
+    let live = true;
+    api
+      .pendingResearchJob(conversationId)
+      .then((r) => {
+        if (live && r.job_id) setResearchJob((j) => j ?? { id: r.job_id!, question: '' });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [conversationId, readOnly]);
 
   useEffect(() => {
     if (conversationId) {
@@ -343,6 +383,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       clarifying: stream.clarifying,
       verification: stream.verification,
       missingRegulations: stream.missingRegulations,
+      memoId: stream.memoId,
       streaming: stream.streaming,
     });
     return list;
@@ -395,6 +436,50 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     }
     return map;
   }, [shown]);
+
+  /* علاماتُ الإسناد في نصّ كل ردّ: اسمُ المادة لقارئ الشاشة، وهل تُفتح، وما يفتحها.
+     دوالُّ ثابتةٌ لكل رسالة — أثرُ `MessageContent` يُعاد عند تغيّرها. */
+  const citeByMessage = useMemo(() => {
+    const map = new Map<string, { label: (k: string) => string; openable: (k: string) => boolean; open: (k: string) => void }>();
+    for (const m of shown) {
+      if (!m.citationSpans?.length) continue;
+      const byKey = new Map<string, Citation>();
+      for (const c of m.citations ?? []) {
+        const k = citationKey(c);
+        if (k && !byKey.has(k)) byKey.set(k, c);
+      }
+      map.set(m.id, {
+        label: (k) => {
+          if (k.startsWith('doc:')) return DOC_SOURCE_LABEL;
+          const c = byKey.get(k);
+          return citeMarkLabel(c ? `${c.title}${c.ref ? ` — ${c.ref}` : ''}` : k.replace(/^legal:/, ''));
+        },
+        openable: (k) => k.startsWith('legal:'),
+        open: (k) => {
+          const c = byKey.get(k);
+          setSource(c ?? { title: '', id: k.replace(/^legal:/, ''), source: 'legal', score: 0 });
+        },
+      });
+    }
+    return map;
+  }, [shown]);
+
+  /** سؤالُ المستخدم الذي سبق ردّاً — يُعرض في الصندوق حين يُصاغ من مذكرته ثانيةً. */
+  const questionBefore = useCallback(
+    (id: string) => {
+      const i = shown.findIndex((m) => m.id === id);
+      for (let j = i - 1; j >= 0; j--) if (shown[j].role === 'user') return shown[j].content;
+      return '';
+    },
+    [shown]
+  );
+
+  /** «صياغة من المذكرة»: الدور التالي يُصاغ منها وحدها، وسؤالُها في الصندوق ليُرسَل أو يُعدَّل. */
+  const draftFromMemo = useCallback((memo: Memo, question: string) => {
+    setMemoForNext(memo.id);
+    setInput((v) => (v.trim() ? v : question));
+    textarea.current?.focus();
+  }, []);
 
   /* ══ المرفقات: بابان لا واحد ══
    *
@@ -714,7 +799,45 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     // دورٌ سابق انقطع فبقي معروضاً: يُمسح عند بدء التالي لا قبله.
     if (getChatStream(conversationId)) clearChatStream(conversationId);
     pinned.current = true;
-    startChatStream({ conversationId, message: text, internet, bilingual, replyLength, attachmentIds: sentIds });
+    const memoId = memoForNext ?? undefined;
+    setMemoForNext(null);
+    // صياغةٌ من مذكرة بحثٍ في الخلفية تطوي بطاقتها: الردُّ يحمل المذكرة بعدها.
+    if (memoId) setResearchJob(null);
+    startChatStream({ conversationId, message: text, internet, bilingual, replyLength, attachmentIds: sentIds, memoId });
+  };
+
+  /**
+   * بحثٌ معمّق بلا صياغة: مهمّةٌ في الخلفية تبني مذكرةً يراجعها المحامي ثم يصوغ منها.
+   *
+   * المرفقات تبقى في الصندوق: البحث يقرؤها بمعرّفاتها، وتُختم برسالة الصياغة
+   * حين تُرسَل — هي سؤالُ المحامي، والبحثُ تمهيدٌ له.
+   */
+  const startResearch = async (text: string) => {
+    if (!conversationId) return;
+    setResearchError(null);
+    setInput('');
+    if (textarea.current) textarea.current.style.height = 'auto';
+    try {
+      const r = await api.startResearch(conversationId, {
+        message: text,
+        deep: true,
+        attachmentIds: pendingAttachments.map((a) => a.id).filter((id) => !id.startsWith('local:')),
+      });
+      setResearchJob({ id: r.job_id, question: text });
+      pinned.current = true;
+    } catch {
+      setInput(text);
+      setResearchError(RT.startFailed);
+    }
+  };
+
+  const submit = () => {
+    const text = input.trim();
+    if (deep && !memoForNext && text && !sending && !generatingElsewhere && !attachmentsBusy) {
+      void startResearch(text);
+      return;
+    }
+    send();
   };
 
   // تسجيل صوتي للوقائع ثم تفريغه عربيًا (§3)
@@ -903,6 +1026,11 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                       laws={lawsByMessage.get(m.id) ?? NO_LAWS}
                       linkable={!m.streaming}
                       onOpenArticle={openArticle}
+                      content={m.content}
+                      citeSpans={m.citationSpans}
+                      citeLabel={citeByMessage.get(m.id)?.label}
+                      citeOpenable={citeByMessage.get(m.id)?.openable}
+                      onOpenCite={citeByMessage.get(m.id)?.open}
                     />
                   )}
                   {m.clarifying && <div className="clarify-note"><Icon.awaitingClarification size={ICON_SM} aria-hidden /> بانتظار توضيحك للمتابعة</div>}
@@ -978,6 +1106,15 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                     </div>
                   )}
                 </div>
+                {/* المذكرة مطويّةً تحت الردّ: من أين جاء، ومنها يُعدَّل السند ويُصاغ ثانيةً. */}
+                {m.role === 'assistant' && !m.streaming && m.memoId && persistedIds.has(m.id) && (
+                  <MemoDisclosure
+                    memoId={m.memoId}
+                    onOpenSource={setSource}
+                    onDraft={readOnly ? undefined : (memo) => draftFromMemo(memo, questionBefore(m.id))}
+                    disabled={sending || generatingElsewhere}
+                  />
+                )}
                 {m.role === 'assistant' && !m.streaming && m.content && !m.clarifying && persistedIds.has(m.id) && (
                   <div className="msg-actions">
                     <a href={api.exportUrl(m.id, 'docx')} download>
@@ -998,6 +1135,42 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             </div>
           ))}
 
+          {/* بحثٌ معمّق في الخلفية: سؤالُه، ثم مرحلتُه، ثم مذكرتُه للمراجعة. والسؤال لم
+              يُحفظ رسالةً بعد — يُحفظ حين يُصاغ من المذكرة. */}
+          {researchJob && (
+            <>
+              {researchJob.question && (
+                <div className="msg user">
+                  <div className="msg-avatar">أنت</div>
+                  <div className="msg-body">
+                    <div className="msg-role">أنت</div>
+                    <div className="msg-content">
+                      <div className="msg-text">{researchJob.question}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="msg assistant">
+                <div className="msg-avatar">ن</div>
+                <div className="msg-body">
+                  <div className="msg-role">مستشار ناف</div>
+                  <div className="msg-content">
+                    <ResearchJobCard
+                      key={researchJob.id}
+                      jobId={researchJob.id}
+                      onOpenSource={setSource}
+                      onDraft={draftFromMemo}
+                      onRetry={(question) => void startResearch(question)}
+                      onLoaded={(question) =>
+                        setResearchJob((j) => (j && !j.question ? { ...j, question } : j))
+                      }
+                      disabled={sending || generatingElsewhere}
+                    />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
           {/* دورٌ يجري في الخادم وبثُّه ذهب مع الصفحة: يُقال ذلك ولا تُترك
               المحادثة ساكنةً فيُعاد السؤال على سؤالٍ يُجاب. */}
           {generatingElsewhere && (
@@ -1050,7 +1223,29 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           )}
           {/* القائمة فوق الصندوق لا داخله: الصندوق يحمل خمسة أزرار وحقلاً
               وزرَّ إرسال، وسابعٌ فيه يكسر عرض ٣٧٥ بكسل. */}
+          {memoForNext && (
+            <div className="attachments-row">
+              <span className="memo-chip">
+                <Icon.researchMemo size={ICON_SM} aria-hidden /> {RT.memo}
+                <button type="button" className="memo-chip-remove" onClick={() => setMemoForNext(null)} title="إلغاء" aria-label="إلغاء">
+                  <Icon.close size={ICON_SM} aria-hidden />
+                </button>
+              </span>
+            </div>
+          )}
           <div className="composer-controls">
+            {/* مفتاحٌ بنصّه لا أيقونةٌ وحدها في الصندوق: الصندوق ممتلئ عند ٣٧٥ بكسل،
+                والبحث المعمّق يغيّر ما يقع بعد الإرسال فيُقال باسمه. */}
+            <button
+              type="button"
+              className={`btn-sm deep-toggle ${deep ? 'primary' : ''}`}
+              aria-pressed={deep}
+              title={RT.deepHint}
+              disabled={!!memoForNext}
+              onClick={() => setDeep((v) => !v)}
+            >
+              <Icon.deepResearch size={ICON_SM} aria-hidden /> {RT.deepResearch}
+            </button>
             <label className="reply-length">
               طول الرد
               <select
@@ -1123,7 +1318,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  send();
+                  submit();
                 }
               }}
               placeholder="اكتب رسالتك… (Enter للإرسال، Shift+Enter لسطر جديد)"
@@ -1131,14 +1326,25 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             />
             <button
               className="send-btn"
-              onClick={() => send()}
+              onClick={submit}
               disabled={sending || generatingElsewhere || attachmentsBusy || !input.trim()}
             >
               {sending ? <span className="spinner" /> : <Icon.send size={ICON_MD} aria-hidden />}
             </button>
           </div>
+          {researchError && (
+            <div className="composer-hint research-error" role="alert">
+              <Icon.failed size={ICON_SM} aria-hidden /> {researchError}
+            </div>
+          )}
           <div className="composer-hint">
-            {internet ? <><Icon.webSearch size={ICON_SM} aria-hidden /> البحث في الإنترنت مُفعَّل</> : 'يعتمد الرد على قاعدة المعرفة النظامية'}
+            {deep && !memoForNext ? (
+              <><Icon.deepResearch size={ICON_SM} aria-hidden /> {RT.deepHint}</>
+            ) : internet ? (
+              <><Icon.webSearch size={ICON_SM} aria-hidden /> البحث في الإنترنت مُفعَّل</>
+            ) : (
+              'يعتمد الرد على قاعدة المعرفة النظامية'
+            )}
           </div>
         </div>
       </div>
