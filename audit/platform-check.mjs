@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { writeFile, mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
-import { ROOT, bundle, makeDb, makeKv, makeR2, makeCtx, fakeAnthropic, suite } from './harness.mjs';
+import { ROOT, bundle, makeDb, makeKv, makeR2, makeCtx, makeVectors, fakeAnthropic, suite } from './harness.mjs';
 
 const t = suite('فحوص المنصة');
 
@@ -39,6 +39,8 @@ const routes = await bundle(
    export { stemPending } from '../lib/research/stem';
    export { searchLegal } from '../lib/legal';
    export { default as research } from './research';
+   export { ingestDocument } from '../ingest';
+   export { searchDocuments, reindexDocuments } from '../lib/research/documents';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -788,6 +790,70 @@ await t.check('رُدّت كتل search_result بـ400: يُعاد الطلب و
     assert.equal(gens.length, 2);
     assert.match(gens[1].messages.at(-1).content, /<سياق_نظامي>[\s\S]*المسألة: الاختصاص/);
     assert.equal(db.q("SELECT content FROM messages WHERE role = 'assistant'")[0].content, 'ردٌّ من سياقٍ نصّي');
+  } finally {
+    fake.restore();
+  }
+});
+
+console.log('\nفهرس الوثائق المرفوعة');
+
+async function docFixture(withVectors) {
+  const { env, db } = await layeredFixture();
+  const R2 = makeR2();
+  const v = makeVectors();
+  const e = { ...env, R2, ...(withVectors ? { AI: v.AI, VECTORIZE: v.VECTORIZE } : {}) };
+  db.q("INSERT INTO kb_documents (id, title, status, ingest_status, chunk_count, created_at) VALUES ('d1','تعميم وزارة الموارد البشرية بشأن الإجازات','active','ready',2,1)");
+  await R2.put('kb-text/d1.txt', 'يستحق للعامل إجازة سنوية مدفوعة الأجر لا تقل عن واحد وعشرين يوماً.');
+  return { env: e, db, v };
+}
+
+await t.check('بلا فهرسٍ متجهي: مقاطع الوثيقة في D1 والبحث اللفظيّ يجدها بجذوعها، والوثيقة «منتظرة» لا «جاهزة»', async () => {
+  const { env, db } = await docFixture(false);
+  assert.equal(await routes.ingestDocument(env, 'd1'), 'pending');
+  assert.equal(db.q("SELECT COUNT(*) AS n FROM kb_doc_chunks WHERE document_id = 'd1'")[0].n, 1);
+  const hits = await routes.searchDocuments(env, 'إجازة العامل');
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].source, 'document');
+  assert.match(hits[0].key, /^doc:d1:0$/);
+  // وثيقةٌ نُسخت لا يعود منها مقطع.
+  db.q("UPDATE kb_documents SET status = 'repealed' WHERE id = 'd1'");
+  assert.equal((await routes.searchDocuments(env, 'إجازة العامل')).length, 0);
+});
+
+await t.check('بفهرسٍ متجهي: المتجهات في مساحة documents، والقديمة تُحذف، والوثيقة بنسخة الفهرسة الجديدة', async () => {
+  const { env, db, v } = await docFixture(true);
+  // متجهٌ قديم في المساحة الافتراضية من فهرسة ما قبل الهجرة 0040.
+  await v.VECTORIZE.upsert([{ id: 'd1:0', values: v.vec('قديم'), metadata: { document_id: 'd1', text: 'قديم' } }]);
+  assert.equal(await routes.ingestDocument(env, 'd1'), 'ready');
+  assert.ok(v.log.deletes.includes('d1:0'), 'بقي المتجه القديم');
+  assert.deepEqual(v.log.upserts.at(-1), { id: 'doc:d1:0', namespace: 'documents' });
+  assert.equal(db.q("SELECT index_version FROM kb_documents WHERE id = 'd1'")[0].index_version, 2);
+  const hits = await routes.searchDocuments(env, 'الإجازة السنوية', { queryVector: v.vec('الإجازة السنوية') });
+  assert.equal(hits[0]?.key, 'doc:d1:0');
+});
+
+await t.check('إعادة الفهرسة في الخلفية تلتقط ما فُهرس بالطريقة القديمة وحده', async () => {
+  const { env, db } = await docFixture(true);
+  db.q("INSERT INTO kb_documents (id, title, status, ingest_status, index_version, created_at) VALUES ('d2','جديدة','active','ready',2,2)");
+  const n = await routes.reindexDocuments(env, routes.ingestDocument);
+  assert.equal(n, 1);
+  assert.equal(db.q("SELECT index_version FROM kb_documents WHERE id = 'd1'")[0].index_version, 2);
+});
+
+await t.check('المحرّك الطبقي يضمّ مقاطع الوثائق في مجموعتها، والمذكرة تستعيدها في سؤال المتابعة', async () => {
+  const { env, db } = await docFixture(false);
+  await routes.ingestDocument(env, 'd1');
+  const plan = { ...LAYERED_PLAN, issues: [{ title: 'الإجازة السنوية', layer: 'substantive', queries: ['إجازة سنوية للعامل'], laws: ['نظام العمل'] }], explicit_articles: [] };
+  let turn = 0;
+  const fake = fakeAnthropic((b) => {
+    if (isPlanner(b)) return { text: JSON.stringify(++turn === 1 ? plan : { ...plan, needs_knowledge_base: false, issues: [] }) };
+    return { text: 'رد' };
+  });
+  try {
+    await sendWith(env, { message: 'كم الإجازة السنوية؟' });
+    assert.match(generationText(fake.calls.filter(isGeneration)[0]), /من الوثائق المرفوعة[\s\S]*تعميم وزارة الموارد البشرية/);
+    await sendWith(env, { message: 'أوجز' });
+    assert.match(generationText(fake.calls.filter(isGeneration)[1]), /من مذكرة البحث السابقة[\s\S]*إجازة سنوية مدفوعة الأجر/);
   } finally {
     fake.restore();
   }

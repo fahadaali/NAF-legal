@@ -14,12 +14,12 @@ import {
   articleBaseId,
   AMENDMENT_NOTICE,
   DEFERRED_NOTICE,
-  EFFECTIVE_STATUSES,
   RETRIEVAL_WARNING,
   type LegalHit,
 } from './legal';
 import { embed } from './embed';
 import type { RetrievalTrace } from './research/trace';
+import { searchDocuments } from './research/documents';
 import type { Env } from '../types';
 
 // تُعاد من هنا حفاظاً على مستورديها القائمين (`ingest.ts`).
@@ -152,12 +152,14 @@ export async function retrieve(
       // جدول المقاطع غير مهيّأ بعد (هجرة لم تُطبَّق) — نتابع بالوثائق وحدها.
       trace?.fail('legal', e, q);
     }
-    // الوثائق المرفوعة — دلاليّ وحده، فهي غير مفهرسة لفظياً.
-    if (queryVector) {
-      const docs = await retrieveDocuments(env, queryVector, topK);
-      trace?.add({ stage: 'documents', query: q, count: docs.length });
-      if (docs.length) lists.push(docs);
-    }
+    // الوثائق المرفوعة — هجينٌ كذلك (`research/documents.ts`).
+    const docs = await searchDocuments(env, q, {
+      limit: topK,
+      queryVector,
+      onSignal: trace ? (sig) => trace.add({ ...sig, query: q }) : undefined,
+    });
+    trace?.add({ stage: 'documents', query: q, count: docs.length });
+    if (docs.length) lists.push(docs);
   }
 
   const merged = new Map<string, RagResult>();
@@ -267,63 +269,6 @@ export function fromLegalHit(h: LegalHit): RagResult {
 function articleRefOf(h: LegalHit): string | undefined {
   if (h.isAnnex || h.isAttachment || h.isMukarrar) return h.articleLabel ?? undefined;
   return h.articleNo ? `المادة ${h.articleNo}` : undefined;
-}
-
-/**
- * الوثائق المرفوعة: بحث دلاليّ في `VECTORIZE` ثم إسقاط ما وثيقتُه منسوخة.
- *
- * الإسقاط هنا لا في الواجهة، للسبب نفسه: تقريرٌ أو أتمتة تستدعي الاسترجاع
- * مباشرةً لا تمرّ بواجهةٍ أصلاً.
- */
-async function retrieveDocuments(env: Env, queryVector: number[], topK: number): Promise<RagResult[]> {
-  if (!env.VECTORIZE) return [];
-  let matches: VectorizeMatches;
-  try {
-    matches = await env.VECTORIZE.query(queryVector, { topK, returnMetadata: 'all' });
-  } catch {
-    return [];
-  }
-
-  const found: { docId: string; result: RagResult }[] = [];
-  for (const m of matches.matches ?? []) {
-    // متجهات المقاطع المستوردة تُسترجَع من مسارها الهجين لا من هنا.
-    if (m.id.startsWith('legal:')) continue;
-    const meta = (m.metadata ?? {}) as any;
-    const docId = String(meta.document_id ?? '');
-    found.push({
-      docId,
-      result: {
-        text: meta.text ?? '',
-        score: m.score,
-        documentId: docId,
-        title: meta.title ?? 'نظام',
-        articleRef: meta.article_ref || undefined,
-        key: m.id,
-        source: 'document',
-      },
-    });
-  }
-  if (!found.length) return [];
-
-  const effective = await effectiveDocumentIds(env, [...new Set(found.map((f) => f.docId).filter(Boolean))]);
-  return found.filter((f) => !f.docId || effective.has(f.docId)).map((f) => f.result);
-}
-
-/** معرّفات الوثائق السارية من بين المعطاة. حالةٌ غير مضبوطة تُعامَل كسارية. */
-async function effectiveDocumentIds(env: Env, ids: string[]): Promise<Set<string>> {
-  if (!ids.length) return new Set();
-  const marks = ids.map(() => '?').join(',');
-  const statuses = EFFECTIVE_STATUSES.map(() => '?').join(',');
-  try {
-    const rows = await env.DB.prepare(
-      `SELECT id FROM kb_documents WHERE id IN (${marks}) AND (status IS NULL OR status IN (${statuses}))`
-    )
-      .bind(...ids, ...EFFECTIVE_STATUSES)
-      .all<{ id: string }>();
-    return new Set((rows.results ?? []).map((r) => r.id));
-  } catch {
-    return new Set(ids);
-  }
 }
 
 /* ══ فهرس المحادثات المتجهي — أُسقط ══

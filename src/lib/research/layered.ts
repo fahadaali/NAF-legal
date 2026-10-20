@@ -35,6 +35,7 @@ import {
   type RagResult,
 } from '../rag';
 import { knownLaws, resolveNamed, type KnownLaw } from './links';
+import { searchDocuments } from './documents';
 import type { RetrievalTrace } from './trace';
 import type { Env, GroundingLayer, PlannerIssue, PlannerOutput } from '../../types';
 
@@ -56,6 +57,8 @@ const SCOPED_LIMIT = 4;
 const SCOPED_LAWS_MAX = 3;
 const COVERAGE_PER_LAW = 2;
 const LINKS_MAX = 8;
+/** مقاطعُ الوثائق المرفوعة في السياق. */
+const DOCS_MAX = 5;
 const RRF_K = 60;
 
 /**
@@ -73,7 +76,8 @@ const LAYER_TERMS: Record<GroundingLayer, string> = {
 };
 
 /** `memo`: موادُّ مذكرة البحث في دورٍ سابق، تُعاد في سؤال المتابعة. */
-export type GroupKind = 'issue' | 'explicit' | 'coverage' | 'linked' | 'definitions' | 'memo';
+/** `documents`: من الوثائق المرفوعة — سندٌ من خارج قاعدة الأنظمة، يُعرض وحده. */
+export type GroupKind = 'issue' | 'explicit' | 'coverage' | 'linked' | 'definitions' | 'memo' | 'documents';
 
 export interface ResearchGroup {
   kind: GroupKind;
@@ -276,6 +280,27 @@ export async function layeredRetrieve(env: Env, input: LayeredInput): Promise<La
     if (def && !chosenKeys.has(keyOf(def))) definitions = [{ hit: def, result: fromLegalHit(def) }];
   }
 
+  // ── الوثائق المرفوعة — بأوّل استعلامٍ لكل مسألة، مدموجةً بالرتب ──
+  const docLists = await Promise.all(
+    issues.map((i) =>
+      i.queries[0]
+        ? searchDocuments(env, i.queries[0], { limit: 3, queryVector: vectors.get(i.queries[0]), onSignal: signal(i.queries[0]) }).catch(
+            () => [] as RagResult[]
+          )
+        : Promise.resolve([] as RagResult[])
+    )
+  );
+  const docMerged = new Map<string, RagResult>();
+  for (const list of docLists) {
+    list.forEach((r, rank) => {
+      const cur = docMerged.get(r.key!);
+      if (cur) cur.score += 1 / (RRF_K + rank);
+      else docMerged.set(r.key!, { ...r, score: 1 / (RRF_K + rank) });
+    });
+  }
+  const documents = [...docMerged.values()].sort((a, b) => b.score - a.score).slice(0, DOCS_MAX);
+  trace?.add({ stage: 'documents', count: documents.length });
+
   // ── التجميع بلا تكرار، بسقفٍ واحد ──
   const seen = new Set<string>();
   let budget = TOTAL_MAX;
@@ -302,6 +327,11 @@ export async function layeredRetrieve(env: Env, input: LayeredInput): Promise<La
       results: take(c.items),
     });
   }
+  push({
+    kind: 'documents',
+    title: 'من الوثائق المرفوعة',
+    results: take(documents.map((result) => ({ hit: null as unknown as LegalHit, result }))),
+  });
   push({ kind: 'linked', title: 'موادّ تحيل إليها الموادّ أعلاه', results: take(linked) });
   push({ kind: 'definitions', title: 'تعريفات النظام', results: take(definitions) });
 

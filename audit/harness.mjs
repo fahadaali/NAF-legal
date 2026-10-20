@@ -234,3 +234,48 @@ export function makeR2() {
     _map: m,
   };
 }
+
+/**
+ * بديلا Workers AI وVectorize — متجهُ حقيبة كلمات بمقاس الإنتاج (1024)، وفهرسٌ في
+ * الذاكرة يحترم المساحات (`namespace`) ويسجّل ما رُفع وما حُذف.
+ */
+export function makeVectors() {
+  const DIM = 1024;
+  const vec = (text) => {
+    const v = new Array(DIM).fill(0);
+    for (const t of String(text).split(/[^\p{L}\p{N}]+/u)) {
+      if (!t) continue;
+      let h = 0;
+      for (const ch of t) h = (h * 31 + ch.codePointAt(0)) % DIM;
+      v[h] += 1;
+    }
+    const n = Math.hypot(...v) || 1;
+    return v.map((x) => x / n);
+  };
+  const store = new Map();
+  const log = { upserts: [], deletes: [] };
+  const AI = { run: async (_m, { text }) => ({ data: text.map(vec) }) };
+  const VECTORIZE = {
+    async upsert(vs) {
+      for (const v of vs) {
+        store.set(v.id, v);
+        log.upserts.push({ id: v.id, namespace: v.namespace });
+      }
+      return { ids: vs.map((v) => v.id) };
+    },
+    async deleteByIds(ids) {
+      for (const id of ids) store.delete(id);
+      log.deletes.push(...ids);
+      return { ids };
+    },
+    async query(q, { topK = 5, namespace } = {}) {
+      const matches = [...store.values()]
+        .filter((v) => (namespace ? v.namespace === namespace : !v.namespace))
+        .map((v) => ({ id: v.id, score: v.values.reduce((s, x, i) => s + x * q[i], 0), metadata: v.metadata }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topK);
+      return { matches, count: matches.length };
+    },
+  };
+  return { AI, VECTORIZE, store, log, vec };
+}

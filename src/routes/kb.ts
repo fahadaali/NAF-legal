@@ -181,8 +181,14 @@ app.delete('/documents/:id', async (c) => {
     .first<{ r2_key: string; chunk_count: number }>();
   if (!doc) return c.json({ error: 'غير موجودة' }, 404);
 
-  // حذف المتجهات
-  const ids = Array.from({ length: doc.chunk_count ?? 0 }, (_, i) => `${id}:${i}`);
+  // حذف المتجهات: بمعرّفاتها في مساحة الوثائق، وبالقديمة قبل الهجرة 0040.
+  const fresh = await c.env.DB.prepare('SELECT id FROM kb_doc_chunks WHERE document_id = ?')
+    .bind(id)
+    .all<{ id: string }>();
+  const ids = [
+    ...(fresh.results ?? []).map((r) => r.id),
+    ...Array.from({ length: doc.chunk_count ?? 0 }, (_, i) => `${id}:${i}`),
+  ];
   if (ids.length) await c.env.VECTORIZE?.deleteByIds(ids).catch(() => {});
   if (doc.r2_key) await c.env.R2.delete(doc.r2_key).catch(() => {});
   await c.env.R2.delete(`kb-text/${id}.txt`).catch(() => {});

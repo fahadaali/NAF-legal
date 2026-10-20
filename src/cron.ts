@@ -6,6 +6,8 @@ import { dualDate } from './lib/hijri';
 import { embedPending, vectorHealth, vectorCheck, recoverStaleBatches } from './lib/legal';
 import { extractPendingLinks } from './lib/research/links';
 import { stemPending } from './lib/research/stem';
+import { reindexDocuments } from './lib/research/documents';
+import { ingestDocument } from './ingest';
 import type { Env } from './types';
 
 /**
@@ -418,6 +420,13 @@ export async function runLinkExtraction(env: Env): Promise<void> {
     if (r.stemmed) console.log(`stems: ${r.stemmed} chunks, ${r.remaining} left`);
   } catch (e: any) {
     console.error('stem backfill failed:', e?.message ?? e);
+  }
+  // ووثائقُ فُهرست بالطريقة القديمة تُعاد فهرستُها، ثلاثٌ في كل نبضة.
+  try {
+    const n = await reindexDocuments(env, ingestDocument);
+    if (n) console.log(`documents reindexed: ${n}`);
+  } catch (e: any) {
+    console.error('document reindex failed:', e?.message ?? e);
   }
 }
 
