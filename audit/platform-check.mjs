@@ -984,8 +984,21 @@ await t.check('البحث في الخلفية: مهمّةٌ تُحفظ وتعو�
     await obj.runner.alarm();
     assert.equal(fake.calls.length, calls, 'أُعيد البناء لمهمّةٍ تمّت');
 
+    // ما تفتح به الواجهةُ المادة: معرّفُ المقطع ونظامُه ورقمُها مع كل مادة.
+    const item = got.memo.groups.flatMap((g) => g.items).find((i) => i.key === 'legal:labor:84');
+    assert.equal(item.lawId, 'labor');
+    assert.equal(item.articleNo, '84');
+    assert.ok(item.id && item.lawTitle);
+    assert.equal(got.job.message, 'صحيفة دعوى عمالية');
+
+    // من عاد إلى المحادثة يجد مهمّته — حتى يُصاغ بعدها شيء.
+    assert.equal((await (await routes.research.request('/conversations/c1/job', {}, env)).json()).job_id, job_id);
+    db.q(`INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('later', 'c1', 'user', 'صُغ', ?)`, Date.now() + 1000);
+    assert.equal((await (await routes.research.request('/conversations/c1/job', {}, env)).json()).job_id, null, 'عادت مهمّةٌ صيغ بعدها');
+
     globalThis.__naf_user = { id: 'u2', email: 'b@x', role: 'admin' };
     assert.equal((await routes.research.request(`/jobs/${job_id}`, {}, env)).status, 404, 'قرأ مهمّة غيره');
+    assert.equal((await (await routes.research.request('/conversations/c1/job', {}, env)).json()).job_id, null, 'رأى مهمّة غيره');
   } finally {
     delete globalThis.__naf_user;
     fake.restore();
