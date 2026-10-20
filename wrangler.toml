@@ -48,6 +48,17 @@ bucket_name = "naf-legal-files"
 # index_name = "naf-legal-kb"
 # VECTORIZE-BINDINGS-END
 
+# ── مهامّ البحث في الخلفية: Durable Object لكل مهمّة ──
+# البحث المعمّق دقائق من جولات Claude، والمنبّه يُكمله ولو أُغلق المتصفّح.
+# الحالة في جدول `research_jobs`؛ والكائن لا يحفظ إلا معرّف مهمّته.
+[[durable_objects.bindings]]
+name = "RESEARCH"
+class_name = "ResearchRunner"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ResearchRunner"]
+
 # ── الذكاء الاصطناعي للتضمينات Workers AI ──
 [ai]
 binding = "AI"

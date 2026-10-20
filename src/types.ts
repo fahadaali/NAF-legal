@@ -10,6 +10,8 @@ export interface Env {
   // ولا يقرؤه أحد — التفصيل في `lib/rag.ts`.
   VECTORIZE?: VectorizeIndex;
   AI: Ai;
+  /** مهامّ البحث في الخلفية — `ResearchRunner`. اختياريّ: بلا ربطٍ يُبنى البحث في الطلب نفسه. */
+  RESEARCH?: DurableObjectNamespace;
   KV: KVNamespace;
   // مساحة الدخول الموحّد — مستقلّة عن `KV` أعلاه. تكتب فيها الحزمة
   // `sess:` و `jwks:` وحدها، فلا تزاحم مفاتيح حدّ المعدّل (`rl:`).

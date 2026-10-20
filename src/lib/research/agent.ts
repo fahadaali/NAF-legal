@@ -149,7 +149,15 @@ export interface DeepResearchResult {
 
 export async function deepResearch(
   env: Env,
-  input: { message: string; plan: PlannerOutput; groups: ResearchGroup[]; userId?: string; trace?: RetrievalTrace }
+  input: {
+    message: string;
+    plan: PlannerOutput;
+    groups: ResearchGroup[];
+    userId?: string;
+    trace?: RetrievalTrace;
+    /** يُنادى بعد كل جولة — لتقدّم المهمّة في الخلفية. */
+    onRound?: (round: number) => Promise<void>;
+  }
 ): Promise<DeepResearchResult> {
   const { trace } = input;
   const laws = await knownLaws(env).catch(() => []);
@@ -259,6 +267,7 @@ export async function deepResearch(
     );
     // النتائج كلُّها في رسالةٍ واحدة — تفريقها يعلّم النموذج ترك الاستدعاء المتوازي.
     messages.push({ role: 'user', content: results });
+    await input.onRound?.(rounds).catch(() => {});
   }
   trace?.add({ stage: 'agent-rounds', count: rounds });
 

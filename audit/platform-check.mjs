@@ -42,6 +42,7 @@ const routes = await bundle(
    export { ingestDocument } from '../ingest';
    export { searchDocuments, reindexDocuments } from '../lib/research/documents';
    export { tagPendingArticles, retagAll } from '../lib/research/issues';
+   export { ResearchRunner } from '../research-runner';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -919,6 +920,94 @@ await t.check('بعد الاعتماد: التوسيم بالمعتمد وحده
   } finally {
     fake.restore();
   }
+});
+
+// ── البحث في الخلفية ──
+
+/** بديلُ ربط Durable Object: كائنٌ لكل اسم، بتخزينٍ في الذاكرة ومنبّهٍ يُسجَّل ولا يُطلق. */
+function fakeRunners(getEnv) {
+  const objects = new Map();
+  return {
+    objects,
+    idFromName: (name) => name,
+    get(id) {
+      if (!objects.has(id)) {
+        const data = new Map();
+        const state = {
+          alarmAt: null,
+          storage: {
+            get: async (k) => data.get(k),
+            put: async (k, v) => void data.set(k, v),
+            deleteAll: async () => data.clear(),
+            setAlarm: async (t) => void (state.alarmAt = t),
+          },
+        };
+        objects.set(id, { state, runner: new routes.ResearchRunner(state, getEnv()), data });
+      }
+      const o = objects.get(id);
+      return { fetch: (url, init) => o.runner.fetch(new Request(url, init)) };
+    },
+  };
+}
+
+await t.check('البحث في الخلفية: مهمّةٌ تُحفظ وتعود فوراً، والمنبّه يبني مذكرتها، وتقدّمها لصاحبها وحده', async () => {
+  const { env, db } = await layeredFixture();
+  const ns = fakeRunners(() => env);
+  env.RESEARCH = ns;
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: JSON.stringify(LAYERED_PLAN) } : { text: 'رد' }));
+  try {
+    const res = await routes.research.request('/c1', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'صحيفة دعوى عمالية', async: true }),
+    }, env);
+    assert.equal(res.status, 202);
+    const { job_id } = await res.json();
+    assert.equal(fake.calls.length, 0, 'بنى في الطلب وكان عليه أن يحفظ المهمّة ويعود');
+    assert.equal(db.q('SELECT status FROM research_jobs WHERE id = ?', job_id)[0].status, 'queued');
+    const obj = ns.objects.get(job_id);
+    assert.ok(obj.state.alarmAt, 'لم يُضبط المنبّه');
+
+    await obj.runner.alarm();
+    const job = { ...db.q('SELECT * FROM research_jobs WHERE id = ?', job_id)[0] };
+    assert.equal(job.status, 'done');
+    assert.ok(job.memo_id && JSON.parse(job.progress_json).steps > 0);
+    assert.equal(obj.data.size, 0, 'بقي في تخزين الكائن ما لا حاجة إليه');
+
+    const got = await (await routes.research.request(`/jobs/${job_id}`, {}, env)).json();
+    assert.equal(got.job.status, 'done');
+    assert.equal(got.memo.status, 'draft');
+    assert.ok(got.memo.groups.flatMap((g) => g.items.map((i) => i.key)).includes('legal:labor:84'));
+
+    // منبّهٌ يُعاد بعد تمامها لا يبني ثانيةً.
+    const calls = fake.calls.length;
+    await obj.data.set('jobId', job_id);
+    await obj.runner.alarm();
+    assert.equal(fake.calls.length, calls, 'أُعيد البناء لمهمّةٍ تمّت');
+
+    globalThis.__naf_user = { id: 'u2', email: 'b@x', role: 'admin' };
+    assert.equal((await routes.research.request(`/jobs/${job_id}`, {}, env)).status, 404, 'قرأ مهمّة غيره');
+  } finally {
+    delete globalThis.__naf_user;
+    fake.restore();
+  }
+});
+
+await t.check('مهمّةٌ لم يتحرّك تقدّمها تُعرض متعطّلة، وتعذُّر بدء المنفّذ لا يتركها «منتظرة»', async () => {
+  const { env, db } = await layeredFixture();
+  env.RESEARCH = { idFromName: (n) => n, get: () => ({ fetch: async () => { throw new Error('unavailable'); } }) };
+  const res = await routes.research.request('/c1', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'سؤال', async: true }),
+  }, env);
+  assert.equal(res.status, 503);
+  const { job_id } = await res.json();
+  assert.equal(db.q('SELECT status FROM research_jobs WHERE id = ?', job_id)[0].status, 'failed');
+
+  db.q(`INSERT INTO research_jobs (id, conversation_id, user_id, message, status, created_at, updated_at)
+        VALUES ('old', 'c1', 'u1', 'سؤال', 'running', 1, 1)`);
+  const got = await (await routes.research.request('/jobs/old', {}, env)).json();
+  assert.equal(got.job.status, 'failed');
+  assert.equal(got.job.error, 'research_stalled');
 });
 
 t.done();

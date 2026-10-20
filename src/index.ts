@@ -31,6 +31,9 @@ import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
 import type { Env, Variables } from './types';
 
+// مهامّ البحث في الخلفية — يُصدَّر من المدخل ليجده الربط `RESEARCH`.
+export { ResearchRunner } from './research-runner';
+
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 /**
