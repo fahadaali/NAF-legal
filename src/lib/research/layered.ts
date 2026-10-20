@@ -201,8 +201,32 @@ export async function layeredRetrieve(env: Env, input: LayeredInput): Promise<La
           ...scoped.map((lawId) =>
             searchLegal(env, q, { lawId, limit: SCOPED_LIMIT, lexicalOnly: true }).catch(() => [] as LegalHit[])
           ),
+          // الموادّ الموسومة بمسألة السؤال المعتمدة — في أنظمتها، وفي القاعدة كلِّها.
+          ...(issue.issue_key
+            ? [
+                searchLegal(env, q, { issueKey: issue.issue_key, limit: SCOPED_LIMIT, lexicalOnly: true }).catch(
+                  () => [] as LegalHit[]
+                ),
+                ...scoped.map((lawId) =>
+                  searchLegal(env, q, { lawId, issueKey: issue.issue_key, limit: SCOPED_LIMIT, lexicalOnly: true }).catch(
+                    () => [] as LegalHit[]
+                  )
+                ),
+              ]
+            : []),
         ])
       );
+      /* وإن لم يشترك نصُّ موادّ المسألة مع الاستعلام في لفظ: موادُّها الموسومة في الأنظمة
+         المسمّاة بترتيبها — المسألة نفسها سببُ مجيئها لا اللفظ. */
+      if (issue.issue_key && scoped.length) {
+        lists.push(
+          ...(await Promise.all(
+            scoped.map((lawId) =>
+              searchLegal(env, '', { lawId, issueKey: issue.issue_key, limit: 3 }).catch(() => [] as LegalHit[])
+            )
+          ))
+        );
+      }
       const items = fuseLists(lists, perIssue);
       trace?.add({ stage: 'issue', detail: `${issue.layer}: ${issue.title}`, count: items.length });
       return { issue, items };

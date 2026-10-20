@@ -7,6 +7,7 @@ import { embedPending, vectorHealth, vectorCheck, recoverStaleBatches } from './
 import { extractPendingLinks } from './lib/research/links';
 import { stemPending } from './lib/research/stem';
 import { reindexDocuments } from './lib/research/documents';
+import { tagPendingArticles } from './lib/research/issues';
 import { ingestDocument } from './ingest';
 import type { Env } from './types';
 
@@ -420,6 +421,13 @@ export async function runLinkExtraction(env: Env): Promise<void> {
     if (r.stemmed) console.log(`stems: ${r.stemmed} chunks, ${r.remaining} left`);
   } catch (e: any) {
     console.error('stem backfill failed:', e?.message ?? e);
+  }
+  // ووسمُ الموادّ بالمسائل المعتمدة — لا يقع شيءٌ منه قبل اعتماد القائمة.
+  try {
+    const r = await tagPendingArticles(env, 40);
+    if (r.tagged) console.log(`issues: ${r.tagged} tagged, ${r.remaining} left`);
+  } catch (e: any) {
+    console.error('issue tagging failed:', e?.message ?? e);
   }
   // ووثائقُ فُهرست بالطريقة القديمة تُعاد فهرستُها، ثلاثٌ في كل نبضة.
   try {

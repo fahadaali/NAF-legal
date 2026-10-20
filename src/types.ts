@@ -21,6 +21,8 @@ export interface Env {
   PLANNER_MODEL: string;
   /** التحقّق، والاستخراج، والبحث المعمّق، والتتبّع — ما يحكم لا ما يوجّه. */
   ANALYSIS_MODEL: string;
+  /** وسمُ الموادّ بالمسائل. */
+  TAGGING_MODEL: string;
   GENERATION_MODEL: string;
   EMBEDDING_MODEL: string;
   DATA_REGION: string;
@@ -106,4 +108,6 @@ export interface PlannerIssue {
   queries: string[];
   /** أسماء الأنظمة الرسمية التي يُبحث فيها لهذه المسألة. */
   laws: string[];
+  /** مفتاحُ المسألة في القائمة المعتمدة (`legal_issue_vocab`) إن طابقت إحداها. */
+  issue_key?: string;
 }

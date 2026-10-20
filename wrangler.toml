@@ -102,6 +102,8 @@ APP_NAME = "مستشار ناف"
 # الاستدلال، والبحث المعمّق، وقراءة الممسوح، وتتبّع الأنظمة — على `ANALYSIS_MODEL`.
 PLANNER_MODEL = "claude-haiku-5-5"
 ANALYSIS_MODEL = "claude-opus-5-5"
+# وسمُ الموادّ بالمسائل: تصنيفٌ مقيَّد بقائمةٍ مضبوطة على آلاف الموادّ.
+TAGGING_MODEL = "claude-haiku-5-5"
 GENERATION_MODEL = "claude-opus-5-5"
 EMBEDDING_MODEL = "@cf/baai/bge-m3"
 DATA_REGION = "auto"

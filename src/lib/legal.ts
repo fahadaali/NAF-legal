@@ -3271,6 +3271,9 @@ export interface LegalFilters {
 
   /** حصر البحث في بابٍ من النظام — `book` كما ورد في الملف. */
   book?: string | null;
+
+  /** حصر البحث في الموادّ الموسومة بمسألةٍ معتمدة (`legal_issue_vocab`). */
+  issueKey?: string | null;
 }
 
 /**
@@ -3306,6 +3309,12 @@ function buildFilters(f: LegalFilters): { sql: string; binds: unknown[] } {
     // الباب يُطابَق مطبَّعاً: «الباب الثالث» و«الباب الثّالث» بابٌ واحد.
     clauses.push('c.book_norm = ?');
     binds.push(normalizeArabic(f.book));
+  }
+  if (f.issueKey) {
+    // الوسمُ بمسألةٍ معتمدة اليوم: مسألةٌ أُلغي اعتمادها بعد التوسيم لا تحصر شيئاً.
+    clauses.push(`c.seq IN (SELECT ai.seq FROM legal_article_issues ai
+      JOIN legal_issue_vocab v ON v.key = ai.issue_key AND v.status = 'approved' WHERE ai.issue_key = ?)`);
+    binds.push(f.issueKey);
   }
   if (f.articleNo) {
     const byNo = articleNoClause(articleRequest(f.articleNo));
@@ -3722,7 +3731,7 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
 
   // استعلامٌ بلا نصّ: تصفّحٌ بالبيانات الوصفية وحدها (مادة بعينها، نظام بعينه).
   if (!query.trim()) {
-    if (!opts.lawId && !opts.articleNo && !opts.docType) return [];
+    if (!opts.lawId && !opts.articleNo && !opts.docType && !opts.issueKey) return [];
     const rows = await env.DB.prepare(
       `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE 1 = 1${filters.sql}
        ORDER BY c.law_id, c.seq LIMIT ?`

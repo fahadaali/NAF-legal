@@ -41,6 +41,7 @@ const routes = await bundle(
    export { default as research } from './research';
    export { ingestDocument } from '../ingest';
    export { searchDocuments, reindexDocuments } from '../lib/research/documents';
+   export { tagPendingArticles, retagAll } from '../lib/research/issues';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -96,6 +97,7 @@ const ENV_BASE = {
   ANTHROPIC_API_KEY: 'test',
   PLANNER_MODEL: 'claude-haiku-5-5',
   ANALYSIS_MODEL: 'claude-opus-5-5',
+  TAGGING_MODEL: 'claude-haiku-5-5',
   GENERATION_MODEL: 'claude-opus-5-5',
   EMBEDDING_MODEL: '@cf/baai/bge-m3',
 };
@@ -854,6 +856,66 @@ await t.check('المحرّك الطبقي يضمّ مقاطع الوثائق ف
     assert.match(generationText(fake.calls.filter(isGeneration)[0]), /من الوثائق المرفوعة[\s\S]*تعميم وزارة الموارد البشرية/);
     await sendWith(env, { message: 'أوجز' });
     assert.match(generationText(fake.calls.filter(isGeneration)[1]), /من مذكرة البحث السابقة[\s\S]*إجازة سنوية مدفوعة الأجر/);
+  } finally {
+    fake.restore();
+  }
+});
+
+console.log('\nقائمة المسائل ووسم الموادّ');
+
+const isTagger = (b) => !b.stream && String(b.system ?? '').includes('تَسِم موادَّ الأنظمة');
+
+await t.check('القائمة مسودّة: لا توسيم ولا نداء نموذج، والمُخطِّط لا يُطلب منه مفتاح مسألة', async () => {
+  const { env } = await layeredFixture();
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: JSON.stringify(LAYERED_PLAN) } : { text: 'رد' }));
+  try {
+    const r = await routes.tagPendingArticles(env, 40);
+    assert.ok(r.skipped, 'جرى توسيمٌ بقائمةٍ غير معتمدة');
+    assert.equal(fake.calls.filter(isTagger).length, 0);
+    await sendWith(env, { message: 'سؤال' });
+    const planner = fake.calls.find(isPlanner);
+    assert.equal(planner.output_config.format.schema.properties.issues.items.properties.issue_key, undefined);
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('بعد الاعتماد: التوسيم بالمعتمد وحده، والمحرّك يجد مادة المسألة وإن لم يشترك نصُّها مع الاستعلام', async () => {
+  const { env, db } = await layeredFixture();
+  await routes.upsertLegalChunks(env, routes.parseJsonl(law({
+    id: 'mur:187', law_id: 'murafaat', law_title: 'نظام المرافعات الشرعية', article_no: '187',
+    text: 'مدة الاعتراض بطلب الاستئناف ثلاثون يوماً من تاريخ تسلّم صورة الحكم.',
+  })).rows);
+  db.q("UPDATE legal_issue_vocab SET status = 'approved' WHERE key IN ('appeal_deadlines', 'end_of_service')");
+  const seq187 = db.q("SELECT seq FROM legal_chunks WHERE id = 'mur:187'")[0].seq;
+  const fake = fakeAnthropic((b) => {
+    if (isTagger(b)) {
+      const seqs = [...b.messages[0].content.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
+      return { text: JSON.stringify({ items: seqs.map((seq) => ({ seq, issues: seq === seq187 ? ['appeal_deadlines', 'invented_key'] : [] })) }) };
+    }
+    if (isPlanner(b)) {
+      return { text: JSON.stringify({ ...LAYERED_PLAN, explicit_articles: [], issues: [
+        { title: 'ميعاد الاستئناف', layer: 'procedural', queries: ['متى ينتهي حق الطعن'], laws: ['نظام المرافعات الشرعية'], issue_key: 'appeal_deadlines' },
+      ] }) };
+    }
+    return { text: 'رد' };
+  });
+  try {
+    const r = await routes.tagPendingArticles(env, 100);
+    assert.equal(r.remaining, 0);
+    const tags = db.q('SELECT seq, issue_key FROM legal_article_issues').map((r) => ({ ...r }));
+    assert.deepEqual(tags, [{ seq: seq187, issue_key: 'appeal_deadlines' }], 'وُسمت بمفتاحٍ غير معتمد');
+    const tagger = fake.calls.find(isTagger);
+    assert.deepEqual(tagger.output_config.format.schema.properties.items.items.properties.issues.items.enum.sort(), ['appeal_deadlines', 'end_of_service']);
+
+    await sendWith(env, { message: 'متى ينتهي حق الطعن على الحكم؟' });
+    const planner = fake.calls.find(isPlanner);
+    assert.ok(planner.output_config.format.schema.properties.issues.items.properties.issue_key.enum.includes('appeal_deadlines'));
+    assert.match(generationText(fake.calls.find(isGeneration)), /المسألة: ميعاد الاستئناف[\s\S]*نظام المرافعات الشرعية — المادة 187/);
+
+    // إلغاء اعتماد المسألة يُسقط حصرَها.
+    db.q("UPDATE legal_issue_vocab SET status = 'retired' WHERE key = 'appeal_deadlines'");
+    assert.equal((await routes.searchLegal(env, '', { lawId: 'murafaat', issueKey: 'appeal_deadlines' })).length, 0);
   } finally {
     fake.restore();
   }
