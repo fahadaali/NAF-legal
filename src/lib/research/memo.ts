@@ -14,6 +14,12 @@ export interface MemoItem {
   seq: number | null;
   /** «نظام العمل — المادة 77» — للعرض والمراجعة. */
   title: string;
+  /** ما تُفتح به المادة في نافذة المصدر. اختياريّةٌ: مذكراتٌ حُفظت قبلها لا تحملها. */
+  source?: 'legal' | 'document';
+  id?: string;
+  lawId?: string;
+  lawTitle?: string;
+  articleNo?: string;
 }
 
 export interface MemoGroup {
@@ -50,6 +56,11 @@ export function memoGroups(groups: ResearchGroup[]): MemoGroup[] {
         key: r.key ?? r.documentId,
         seq: r.seq ?? null,
         title: [r.title, r.articleRef].filter(Boolean).join(' — '),
+        source: r.source,
+        id: r.documentId,
+        lawId: r.lawId,
+        lawTitle: r.title,
+        articleNo: r.articleNo,
       })),
     }));
 }

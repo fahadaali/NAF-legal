@@ -3,6 +3,8 @@
 //   POST  /api/research/:conversationId      يبني مذكرةً لسؤالٍ دون أن يصوغ (مسودّة)؛
 //                                            و`deep: true` يُكملها Claude بأدوات البحث
 //   GET   /api/research/memos/:id            المذكرة بمسائلها وموادّها وما لا سند له
+//   GET   /api/research/jobs/:id             حالُ مهمّةٍ في الخلفية (`async: true`) ومذكرتُها
+//   GET   /api/research/conversations/:id/job  مهمّةٌ لم يُصَغ بعدها — لمن عاد إلى المحادثة
 //   PATCH /api/research/memos/:id            يحذف موادّ أو يضيف موادّ — نسخةٌ جديدة
 //   POST  /api/research/memos/:id/approve    يعتمدها باسم المعتمِد
 //
@@ -77,6 +79,23 @@ app.post('/:conversationId', async (c) => {
   return c.json({ memo: await getOwnedMemo(c.env, memoId, user.id), plan });
 });
 
+/**
+ * آخرُ مهمّة بحثٍ في المحادثة لم يُصَغ بعدها شيء — لمن عاد إلى المحادثة والبحثُ
+ * جارٍ أو تمّ ولم يُصَغ منه. ومهمّةٌ بعدها رسالةٌ في المحادثة قد طُويت.
+ */
+app.get('/conversations/:id/job', async (c) => {
+  const user = c.get('user');
+  const job = await c.env.DB.prepare(
+    `SELECT j.id FROM research_jobs j
+     WHERE j.conversation_id = ? AND j.user_id = ?
+       AND j.created_at > COALESCE((SELECT MAX(created_at) FROM messages m WHERE m.conversation_id = j.conversation_id), 0)
+     ORDER BY j.created_at DESC LIMIT 1`
+  )
+    .bind(c.req.param('id'), user.id)
+    .first<{ id: string }>();
+  return c.json({ job_id: job?.id ?? null });
+});
+
 /** حالُ مهمّة البحث في الخلفية، ومذكرتُها حين تتمّ. */
 app.get('/jobs/:id', async (c) => {
   const user = c.get('user');
@@ -90,6 +109,9 @@ app.get('/jobs/:id', async (c) => {
     job: {
       id: job.id,
       conversation_id: job.conversation_id,
+      // السؤال نفسه: لم يُحفظ رسالةً في المحادثة بعد — يُحفظ حين يُصاغ منه.
+      message: job.message,
+      deep: job.deep === 1,
       status: stalled ? 'failed' : job.status,
       stage: job.stage,
       progress: job.progress_json ? JSON.parse(job.progress_json) : null,
