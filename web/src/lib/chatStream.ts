@@ -49,6 +49,8 @@ export interface ChatStream {
   error?: string;
   /** عنوان المحادثة إن صيغ في هذا الدور. */
   title?: string;
+  /** مذكرة البحث التي بُني عليها الدور. */
+  memoId?: string;
 }
 
 type Listener = (s: ChatStream | undefined) => void;
@@ -139,6 +141,8 @@ export interface StartChatOptions {
   attachmentIds?: string[];
   /** درجة طول الردّ المختارة وقت الإرسال. */
   replyLength?: ReplyLength;
+  /** يُصاغ من مذكرة بحثٍ بعينها — بعد بحثٍ معمّق راجعه المحامي. */
+  memoId?: string;
 }
 
 /**
@@ -188,12 +192,14 @@ async function run(conversationId: string, opts: StartChatOptions) {
       bilingual: opts.bilingual,
       attachmentIds: opts.attachmentIds,
       replyLength: opts.replyLength,
+      memoId: opts.memoId,
     }, {
       onMeta: (m) => {
         meta = m;
       },
       onSearch: () => set({ searching: true }),
       onVerify: (v) => set({ verification: v }),
+      onMemo: (m) => set({ memoId: m.id }),
       onRegulations: (missing) => set({ missingRegulations: missing }),
       onTitle: (t) => {
         set({ title: t });

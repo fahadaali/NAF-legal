@@ -12,6 +12,12 @@
 
 import {
   Activity,
+  Archive,
+  FilePen,
+  NotebookText,
+  PenLine,
+  ScanSearch,
+  Save,
   ArrowDown,
   Ban,
   BookX,
@@ -109,6 +115,7 @@ export const Icon = {
   add: Plus,               // إضافة — الفعل، ولا `FilePlus2` (صحيفة دعوى)
   edit: Pencil,            // تعديل
   delete: Trash2,          // حذف
+  save: Save,              // حفظ
   search: Search,          // بحث
   upload: Upload,          // رفع
   pasteText: ClipboardPaste, // لصق النصّ — وليست ClipboardList (سجلّ النظام)
@@ -162,7 +169,16 @@ export const Icon = {
   awaitingIndex: Unplug,   // بانتظار الفهرس — مرفقٌ لم يُوصَل، وليست Clock ولا Link2Off
   // استيرادٌ لم يكتمل — naf-icons.md تحت العنوان نفسه. وقفةٌ تُكمَل، لا فشل ولا انتظارُ مراجع.
   importPaused: CirclePause,
+  // مذكرة البحث والبحث المعمّق — مقترحتان في docs/naf-ui-proposal-research.md،
+  // بانتظار تسجيلهما في naf-icons.md. ولا تُدمج الواجهة قبل ذلك.
+  researchMemo: NotebookText, // مذكرة البحث — وليست FileText (مذكرة: نوع استشارة) ولا BookMarked
+  deepResearch: ScanSearch,   // بحث معمّق — وليست Search (فعل البحث) ولا FileSearch (مراجعة مستند)
+  exclude: Ban,               // استبعاد — «مستبعدة» المسجَّلة، على زرٍّ بلون النصّ
+  write: PenLine,             // إنشاء محتوى / كتابة — «صياغة من المذكرة»
+  running: LoaderCircle,      // جارٍ التنفيذ
   // الحالات
+  draft: FilePen,          // مسودة — دورة حياة المحتوى
+  archived: Archive,       // مؤرشف — دورة حياة المحتوى
   approved: CircleCheck,   // معتمد
   pendingReview: Clock,    // بانتظار المراجعة
   rejected: CircleX,       // مرفوض — وليست X (إغلاق)

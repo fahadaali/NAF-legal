@@ -161,6 +161,93 @@ export interface Citation {
   text?: string;
 }
 
+// ── مذكرة البحث والبحث في الخلفية — `src/routes/research.ts` ──
+
+export type GroundingLayer = 'substantive' | 'procedural' | 'evidence' | 'general' | 'regulation';
+
+export interface MemoItem {
+  key: string;
+  seq: number | null;
+  /** «نظام العمل — المادة 77». */
+  title: string;
+  /** ما تُفتح به المادة. مذكراتٌ قديمة لا تحمله، فيُستنتج من `key`. */
+  source?: 'legal' | 'document';
+  id?: string;
+  lawId?: string;
+  lawTitle?: string;
+  articleNo?: string;
+}
+
+export interface MemoGroup {
+  kind: string;
+  title: string;
+  layer: GroundingLayer | null;
+  items: MemoItem[];
+}
+
+export interface MemoGap {
+  kind: string;
+  title: string;
+  layer?: GroundingLayer;
+}
+
+export interface ResearchMemo {
+  id: string;
+  conversation_id: string;
+  version: number;
+  groups: MemoGroup[];
+  gaps: MemoGap[];
+  status: 'auto' | 'draft' | 'approved';
+  approved_by: string | null;
+  approved_at: number | null;
+  created_at: number;
+}
+
+export interface ResearchJob {
+  id: string;
+  conversation_id: string;
+  /** السؤال — لم يُحفظ رسالةً بعد، يُحفظ حين يُصاغ من المذكرة. */
+  message: string;
+  deep: boolean;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  /** `started` · `planned` · `retrieved` · `round:N` · `done` */
+  stage: string | null;
+  progress: { steps: number; recent: { stage: string; query: string | null; count: number | null }[] } | null;
+  /** `research_failed` · `research_stalled` — نصُّه في الواجهة. */
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface GroundingEntry {
+  id: string;
+  domain: string;
+  layer: GroundingLayer;
+  law_title: string;
+  required: number;
+  status: 'draft' | 'approved' | 'retired';
+  note: string | null;
+  reviewed_by: string | null;
+  reviewed_at: number | null;
+  /** النظام الذي يطابقه العنوان في القاعدة — `null` مدخلٌ لا يعمل. */
+  law_id: string | null;
+}
+
+export interface LegalIssue {
+  key: string;
+  label: string;
+  layer: GroundingLayer;
+  domains: string;
+  description: string;
+  status: 'draft' | 'approved' | 'retired';
+  reviewed_by: string | null;
+  reviewed_at: number | null;
+  articles: number;
+}
+
+/** حالاتُ مدخلات القوائم التي يراجعها المحامون. */
+export type ReviewListStatus = 'draft' | 'approved' | 'retired';
+
 /** تظليلٌ محفوظ على رسالة — بإزاحتيه ومقتطعه الشاهد. */
 export interface Highlight {
   id: string;
@@ -1115,6 +1202,31 @@ export const api = {
   /** نافذة التعديلات الخام — تُطلب عند فتحها لا مع كل نتيجة. */
   legalAmendment: (id: string) =>
     req<{ amendment: LegalAmendment }>(`/legal/articles/${encodeURIComponent(id)}/amendment`),
+  // ── مذكرة البحث ──
+  /** يبدأ بحثاً في الخلفية ويعود بمعرّف مهمّته. */
+  startResearch: (conversationId: string, body: { message: string; deep: boolean; attachmentIds?: string[] }) =>
+    req<{ job_id: string }>(`/research/${conversationId}`, {
+      method: 'POST',
+      body: JSON.stringify({ message: body.message, deep: body.deep, attachment_ids: body.attachmentIds ?? [], async: true }),
+    }),
+  researchJob: (id: string) =>
+    req<{ job: ResearchJob; memo: ResearchMemo | null }>(`/research/jobs/${id}`, {}, true),
+  pendingResearchJob: (conversationId: string) =>
+    req<{ job_id: string | null }>(`/research/conversations/${conversationId}/job`, {}, true),
+  researchMemo: (id: string) => req<{ memo: ResearchMemo }>(`/research/memos/${id}`),
+  /** يستبعد موادّ — نسخةٌ جديدة من المذكرة لا تعديلٌ في المكان. */
+  editResearchMemo: (id: string, remove: string[]) =>
+    req<{ memo: ResearchMemo }>(`/research/memos/${id}`, { method: 'PATCH', body: JSON.stringify({ remove }) }),
+  approveResearchMemo: (id: string) =>
+    req<{ memo: ResearchMemo }>(`/research/memos/${id}/approve`, { method: 'POST' }),
+
+  // ── ما يراجعه المحامون: خريطة الإسناد وقائمة المسائل ──
+  groundingMap: () => req<{ domains: string[]; entries: GroundingEntry[] }>('/legal/grounding-map'),
+  setGroundingStatus: (id: string, status: ReviewListStatus) =>
+    req<{ ok: true }>(`/legal/grounding-map/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  legalIssues: () => req<{ issues: LegalIssue[]; pending_articles: number }>('/legal/issues'),
+  setIssueStatus: (key: string, status: ReviewListStatus) =>
+    req<{ ok: true }>(`/legal/issues/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   legalEmbedPending: (limit = 1000) =>
     req<EmbedDrain>(`/legal/embed-pending?limit=${limit}`, { method: 'POST' }),
   /**
@@ -1390,6 +1502,8 @@ export interface StreamHandlers {
   onRegulations?: (missing: string[]) => void;
   /** عنوان المحادثة حين يُصاغ من موضوعها — أول ردّ وحده. */
   onTitle?: (title: string) => void;
+  /** مذكرة البحث التي بُني عليها الدور — قبل أوّل كلمة. */
+  onMemo?: (memo: { id: string }) => void;
   onDone?: () => void;
   onError?: (err: string) => void;
 }
@@ -1403,6 +1517,8 @@ export interface ChatTurn {
   attachmentIds?: string[];
   /** درجة طول الردّ — `naf-terms.md` §٣ «ضبط الردّ». الخادم يردّ غيرَ المسجَّل إلى «متوسط». */
   replyLength?: ReplyLength;
+  /** يُصاغ من هذه المذكرة وحدها — لا بحثٌ جديد ولا استيضاح. */
+  memoId?: string;
 }
 
 export async function streamChat(
@@ -1420,6 +1536,7 @@ export async function streamChat(
       bilingual: turn.bilingual,
       attachment_ids: turn.attachmentIds ?? [],
       reply_length: turn.replyLength,
+      ...(turn.memoId ? { memo_id: turn.memoId } : {}),
     }),
   });
 
@@ -1464,6 +1581,7 @@ export async function streamChat(
         else if (event === 'delta') handlers.onDelta?.(data.text ?? '');
         else if (event === 'search') handlers.onSearch?.();
         else if (event === 'verify') handlers.onVerify?.(data);
+        else if (event === 'memo') handlers.onMemo?.(data);
         else if (event === 'regulations') handlers.onRegulations?.(data.missing ?? []);
         else if (event === 'title') {
           if (data.title) handlers.onTitle?.(data.title);
