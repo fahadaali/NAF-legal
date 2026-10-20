@@ -352,7 +352,7 @@ async function classifyDocument(env: Env, filename: string, sample: string) {
 }`;
   try {
     const { text } = await callClaude(env, {
-      model: env.PLANNER_MODEL,
+      model: env.ANALYSIS_MODEL,
       system,
       messages: [{ role: 'user', content: `اسم الملف: ${filename}\n\nعيّنة من المحتوى:\n${sample}` }],
       effort: 'low', // تصنيفُ وثيقةٍ من عيّنتها — خرجُه JSON قصير

@@ -113,7 +113,7 @@ export async function verifyGrounding(
 
   try {
     const { text, raw } = await callClaude(env, {
-      model: env.PLANNER_MODEL,
+      model: env.ANALYSIS_MODEL,
       system,
       messages: [
         // السياقُ موادُّ المخرَج وحدها، والمخرَجُ كاملاً — كان كلاهما يُقصّ عند اثني عشر
@@ -125,7 +125,7 @@ export async function verifyGrounding(
       max_tokens: 4096,
     });
     const u = usageFromRaw(raw);
-    await logUsage(env, { userId, kind: 'verify', model: env.PLANNER_MODEL, ...u, consultationType });
+    await logUsage(env, { userId, kind: 'verify', model: env.ANALYSIS_MODEL, ...u, consultationType });
 
     const m = text.match(/\{[\s\S]*\}/);
     const parsed = m ? JSON.parse(m[0]) : { unsupported: [], note: '' };

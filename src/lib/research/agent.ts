@@ -193,14 +193,14 @@ export async function deepResearch(
   while (rounds < MAX_ROUNDS && !finish) {
     rounds++;
     const { raw } = await callClaude(env, {
-      model: env.PLANNER_MODEL,
+      model: env.ANALYSIS_MODEL,
       system: SYSTEM,
       messages,
       tools: TOOLS,
       effort: 'medium',
       max_tokens: 16000,
     });
-    await logUsage(env, { userId: input.userId, kind: 'research', model: env.PLANNER_MODEL, ...usageFromRaw(raw) });
+    await logUsage(env, { userId: input.userId, kind: 'research', model: env.ANALYSIS_MODEL, ...usageFromRaw(raw) });
     const content: any[] = raw?.content ?? [];
     const calls = content.filter((b) => b.type === 'tool_use');
     if (!calls.length) break; // أنهى بلا finish_research — يُعتدّ بما رأى ولا يُضاف شيء.

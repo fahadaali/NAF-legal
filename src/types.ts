@@ -17,7 +17,10 @@ export interface Env {
   ASSETS: Fetcher;
   // vars
   APP_NAME: string;
+  /** المُخطِّط والعناوين — توجيهٌ قصير على مسار كل دور. */
   PLANNER_MODEL: string;
+  /** التحقّق، والاستخراج، والبحث المعمّق، والتتبّع — ما يحكم لا ما يوجّه. */
+  ANALYSIS_MODEL: string;
   GENERATION_MODEL: string;
   EMBEDDING_MODEL: string;
   DATA_REGION: string;

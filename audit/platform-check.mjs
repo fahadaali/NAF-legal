@@ -92,7 +92,8 @@ await t.check('بحث المخرجات يجد نسخة المسودّة', async 
 
 const ENV_BASE = {
   ANTHROPIC_API_KEY: 'test',
-  PLANNER_MODEL: 'claude-opus-5-5',
+  PLANNER_MODEL: 'claude-haiku-5-5',
+  ANALYSIS_MODEL: 'claude-opus-5-5',
   GENERATION_MODEL: 'claude-opus-5-5',
   EMBEDDING_MODEL: '@cf/baai/bge-m3',
 };

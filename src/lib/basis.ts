@@ -78,7 +78,7 @@ export async function extractAnchors(env: Env, text: string, userId?: string): P
 
   try {
     const { text: out, raw } = await callClaude(env, {
-      model: env.PLANNER_MODEL,
+      model: env.ANALYSIS_MODEL,
       system: ANCHORS_SYSTEM,
       // تحديدُ مواضعَ لا اجتهادٌ فيها، وهو على مسار كل دورِ استدلال:
       // `low` يكفيه ويقصّر الانتظار قبل أن يبدأ البحث.
@@ -86,7 +86,7 @@ export async function extractAnchors(env: Env, text: string, userId?: string): P
       max_tokens: 4096,
       messages: [{ role: 'user', content: source }],
     });
-    await logUsage(env, { userId, kind: 'anchors', model: env.PLANNER_MODEL, ...usageFromRaw(raw) });
+    await logUsage(env, { userId, kind: 'anchors', model: env.ANALYSIS_MODEL, ...usageFromRaw(raw) });
     return normalize(extractJson(out));
   } catch (e) {
     // ويُسجَّل السبب: بلا سطرٍ هنا يبدو جدولٌ ناقص التغطية جدولاً عادياً،

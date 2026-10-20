@@ -306,13 +306,15 @@ app.get('/ai-check', async (c) => {
 // بخطة احتياطية، فانقطاعٌ كامل فيه يظهر جملةً واحدة عند أول رسالة يرسلها
 // المستخدم، ويُقرأ خطأَ صلاحيات. هذا الفحص يفصل الحالتين في ثانية.
 //
-// والنموذجان يُفحصان لا واحد: `PLANNER_MODEL` و `GENERATION_MODEL` قد
-// يختلفان، وفشلُ الأول وحده يترك المنصة تعمل بخطة احتياطية بلا تخطيط.
+// والنماذج الثلاثة تُفحص: `PLANNER_MODEL` و`ANALYSIS_MODEL` و`GENERATION_MODEL` قد
+// تختلف، وفشلُ الأول وحده يترك المنصة تعمل بخطة احتياطية بلا تخطيط.
 //
 // والردّ ٢٠٠ دائماً وإن فشل الفحص: التقرير نفسه هو المطلوب — أيّ نموذج فشل
 // وبأي رسالة — ورمزُ خطأٍ يجعل عميل الواجهة يرمي فيضيّع تفصيله.
 app.get('/claude-check', async (c) => {
-  const models = Array.from(new Set([c.env.GENERATION_MODEL, c.env.PLANNER_MODEL].filter(Boolean)));
+  const models = Array.from(
+    new Set([c.env.GENERATION_MODEL, c.env.PLANNER_MODEL, c.env.ANALYSIS_MODEL].filter(Boolean))
+  );
   const checks = await Promise.all(
     models.map(async (model) => {
       const t0 = Date.now();

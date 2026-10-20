@@ -214,7 +214,7 @@ async function scanOfficialNewRegulations(env: Env): Promise<number> {
 أعِد JSON فقط: {"items":[{"title":"...","summary":"رقم المرسوم/القرار وتاريخه","url":"...","published":"..."}]} بحدّ أقصى 10 عناصر.`;
   try {
     const { text } = await callClaude(env, {
-      model: env.PLANNER_MODEL,
+      model: env.ANALYSIS_MODEL,
       system,
       messages: [{ role: 'user', content: 'ما أحدث الأنظمة واللوائح الجديدة أو المحدَّثة من هيئة الخبراء والمركز الوطني للوثائق؟' }],
       tools: [webSearchTool(['boe.gov.sa', 'laws.boe.gov.sa', 'ncar.gov.sa'])],
@@ -291,7 +291,7 @@ async function checkRegulation(env: Env, title: string): Promise<{ changed: bool
 أعِد JSON فقط: {"changed": true|false, "summary": "ملخّص التغيير مع رقم المرسوم/القرار وتاريخه ورابط المصدر إن وُجد، أو 'لا تغييرات مرصودة'"}`;
 
   const { text } = await callClaude(env, {
-    model: env.PLANNER_MODEL,
+    model: env.ANALYSIS_MODEL,
     system,
     messages: [{ role: 'user', content: `النظام: ${title}\nهل صدر تعديل أو تحديث رسمي حديث عليه؟` }],
     tools: [webSearchTool(TRACKING_DOMAINS)],

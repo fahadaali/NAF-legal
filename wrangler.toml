@@ -97,7 +97,11 @@ APP_NAME = "مستشار ناف"
 # سقفاً للتفكير والنص معاً. والجهد الافتراضي في الـAPI صار `medium` لا `high`،
 # فـ`src/lib/claude.ts` يرسل `high` صراحةً حين لا يحدّد المستدعي جهداً.
 # تفصيل ذلك وأرضيّة الحدّ هناك، ومستوى الجهد لكل استدعاء عند موضعه.
-PLANNER_MODEL = "claude-opus-5-5"
+# المُخطِّط والعناوين على Haiku: توجيهٌ قصير بمخرجٍ منظَّم على مسار كل دور، وسرعتُه
+# تُقدّم أوّل حرفٍ في الردّ. وما يحكم أو يستخرج أو يبحث — التحقّق من الإسناد، ومواضع
+# الاستدلال، والبحث المعمّق، وقراءة الممسوح، وتتبّع الأنظمة — على `ANALYSIS_MODEL`.
+PLANNER_MODEL = "claude-haiku-5-5"
+ANALYSIS_MODEL = "claude-opus-5-5"
 GENERATION_MODEL = "claude-opus-5-5"
 EMBEDDING_MODEL = "@cf/baai/bge-m3"
 DATA_REGION = "auto"
