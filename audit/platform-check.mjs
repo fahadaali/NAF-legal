@@ -245,6 +245,74 @@ await t.check('ازدحام الخدمة (529) يُعاد ولا يُسقط ال
   }
 });
 
+/* مهلةُ الاتصال كانت تُربط بطلب البثّ كلِّه (`AbortSignal.timeout`) فتقطع جسمه
+   عند تسعين ثانية، والنبضاتُ تصل والنموذج يفكّر: صياغةُ عقدٍ بمرفقه انتهت مرّتين
+   بلا نصّ و«انقطع التوليد من الخدمة»، وقُصّت صحيفةُ دعوى في منتصفها.
+   والزمن هنا مصغَّرٌ مئة مرّة: مهلة الاتصال 0.9ث، ومهلة الصمت 1.2ث، والنبضة إلى
+   المتصفّح 0.15ث. والبثّ الوهمي بالزمن الحقيقي، ويُلغى كما يُلغى البثّ الحقيقي حين
+   تنطلق إشارةُ طلبه. */
+await t.check('بثٌّ أطول من مهلة الاتصال لا يُقطع ما دامت أحداثه تصل، والمتصفّح تبلغه نبضة', async () => {
+  const { env, db } = await chatFixture();
+  const realSetTimeout = globalThis.setTimeout;
+  const realSetInterval = globalThis.setInterval;
+  const realAbortTimeout = AbortSignal.timeout;
+  globalThis.setTimeout = (fn, ms, ...args) => realSetTimeout(fn, (ms ?? 0) / 100, ...args);
+  globalThis.setInterval = (fn, ms, ...args) => realSetInterval(fn, (ms ?? 0) / 100, ...args);
+  AbortSignal.timeout = (ms) => realAbortTimeout.call(AbortSignal, ms / 100);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url.startsWith('https://api.anthropic.com/')) return realFetch(input, init);
+    const body = JSON.parse(init.body);
+    if (!body.stream) {
+      const text = isPlanner(body) ? '{"needs_knowledge_base": false}' : 'عنوان';
+      return new Response(
+        JSON.stringify({ content: [{ type: 'text', text }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    const enc = new TextEncoder();
+    const ev = (type, data) => enc.encode(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+    const stream = new ReadableStream({
+      start(ctrl) {
+        const timers = [];
+        const at = (ms, fn) => timers.push(realSetTimeout(fn, ms));
+        init.signal?.addEventListener('abort', () => {
+          timers.forEach(clearTimeout);
+          ctrl.error(init.signal.reason);
+        });
+        ctrl.enqueue(ev('message_start', { message: { usage: { input_tokens: 10 } } }));
+        ctrl.enqueue(ev('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '' } }));
+        for (let ms = 300; ms < 1500; ms += 300) at(ms, () => ctrl.enqueue(ev('ping', {})));
+        at(1500, () => {
+          ctrl.enqueue(ev('content_block_stop', { index: 0 }));
+          ctrl.enqueue(ev('content_block_start', { index: 1, content_block: { type: 'text', text: '' } }));
+          ctrl.enqueue(ev('content_block_delta', { index: 1, delta: { type: 'text_delta', text: 'نصّ العقد كاملاً' } }));
+          ctrl.enqueue(ev('content_block_stop', { index: 1 }));
+          ctrl.enqueue(ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }));
+          ctrl.enqueue(ev('message_stop', {}));
+          ctrl.close();
+        });
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const { text } = await sendTurn(env, 'صغ العقد');
+    assert.doesNotMatch(text, /event: error/, 'انقطع البثّ عند مهلة الاتصال');
+    assert.match(text, /^: keep-alive$/m, 'لم تبلغ المتصفّحَ نبضةٌ أثناء التفكير');
+    const saved = db.q("SELECT content, metadata_json FROM messages WHERE role = 'assistant'");
+    assert.equal(saved.length, 1, 'لم يُحفظ الردّ');
+    assert.match(saved[0].content, /نصّ العقد كاملاً/);
+    assert.equal(JSON.parse(saved[0].metadata_json).interrupted, undefined, 'حُفظ الردّ موسوماً بالانقطاع');
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.setInterval = realSetInterval;
+    AbortSignal.timeout = realAbortTimeout;
+  }
+});
+
 await t.check('سجلّ الاستخدام يحفظ رموز التخزين المؤقّت ويسعّرها بسعرها', async () => {
   const { env, db } = await chatFixture();
   const lib = await bundle('platform-usage', `export { logUsage, computeCost } from './usage';`);

@@ -228,18 +228,41 @@ function retryAfterMs(res: Response): number | null {
   return Number.isFinite(secs) ? Math.min(secs * 1000, MAX_RETRY_AFTER_MS) : null;
 }
 
+/**
+ * مدى المهلة: الطلبُ كلُّه (`call`)، أو وصولُ ترويسته وحدها (`headers`).
+ *
+ * `AbortSignal.timeout` مربوطٌ بالطلب كلِّه لا بترويسته: انقضاؤه يقطع جسمَ الردّ وهو
+ * يُقرأ. وذلك المقصود في الطلب غير المتدفّق — مهلتُه مهلةُ الجواب كاملاً — والمُهلِك
+ * في المتدفّق. كانت مهلةُ الترويسة تُمرَّر إليه هكذا، فصار كلُّ توليدٍ محدوداً
+ * بتسعين ثانيةً من أوّله والنبضاتُ تصل: صياغةُ عقدٍ بمرفقه انتهت مرّتين بلا نصّ
+ * و«انقطع التوليد من الخدمة»، وقُصّت صحيفةُ دعوى في منتصفها. فمهلةُ المتدفّق مؤقّتٌ
+ * يُلغى حين تصل الترويسة، وما بعدها لمهلة الصمت في `streamClaude`.
+ */
+type TimeoutScope = 'call' | 'headers';
+
+/** طلبٌ واحد إلى الـAPI، ومهلتُه في مداها. */
+async function post(env: Env, body: string, timeoutMs: number, scope: TimeoutScope): Promise<Response> {
+  const init = { method: 'POST', headers: headers(env), body };
+  if (scope === 'call') return fetch(API_URL, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException(`no response headers after ${timeoutMs / 1000}s`, 'TimeoutError')),
+    timeoutMs
+  );
+  try {
+    return await fetch(API_URL, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** يرسل الطلب ويعيده على الأعطال العابرة. يعيد آخر ردٍّ أو يرمي آخر خطأ شبكة. */
-async function postWithRetry(env: Env, body: string, timeoutMs: number): Promise<Response> {
+async function postWithRetry(env: Env, body: string, timeoutMs: number, scope: TimeoutScope): Promise<Response> {
   let lastError: unknown;
   for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
     if (RETRY_DELAYS_MS[i]) await sleep(RETRY_DELAYS_MS[i]);
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: headers(env),
-        body,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      const res = await post(env, body, timeoutMs, scope);
       if (res.ok || !RETRYABLE_STATUS.has(res.status) || i === RETRY_DELAYS_MS.length - 1) return res;
       const wait = retryAfterMs(res);
       await res.body?.cancel().catch(() => {});
@@ -256,7 +279,7 @@ async function postWithRetry(env: Env, body: string, timeoutMs: number): Promise
 
 // استدعاء غير متدفّق يعيد النص الكامل (يُستخدم للمُخطِّط والتصنيف)
 export async function callClaude(env: Env, opts: ClaudeCallOptions): Promise<{ text: string; raw: any }> {
-  const res = await postWithRetry(env, buildBody(opts, 4096, false), CALL_TIMEOUT_MS);
+  const res = await postWithRetry(env, buildBody(opts, 4096, false), CALL_TIMEOUT_MS, 'call');
 
   if (!res.ok) throw await apiError(res, 'call');
   const data = (await res.json()) as any;
@@ -336,9 +359,9 @@ export function isRetryableEmptyTurn(o: StreamOutcome): boolean {
 
 // استدعاء متدفّق (SSE) — يعيد مجرى مقاطع النص لعرضها تدريجيًا، ومآلَ الدور
 export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<ClaudeStream> {
-  // مهلةُ الاتصال تخصّ وصول الترويسة وحدها: بعدها تحكم مهلةُ الصمت أدناه، والبثّ
-  // الطويل لا يُقطع لطوله.
-  const upstream = await postWithRetry(env, buildBody(opts, 8192, true), STREAM_CONNECT_TIMEOUT_MS);
+  // مهلةُ الاتصال تخصّ وصول الترويسة وحدها (`headers`): بعدها تحكم مهلةُ الصمت
+  // أدناه، والبثّ الطويل لا يُقطع لطوله — انظر `TimeoutScope`.
+  const upstream = await postWithRetry(env, buildBody(opts, 8192, true), STREAM_CONNECT_TIMEOUT_MS, 'headers');
 
   if (!upstream.ok || !upstream.body) throw await apiError(upstream, 'stream');
 
