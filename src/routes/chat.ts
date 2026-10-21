@@ -184,6 +184,19 @@ app.post('/:conversationId', async (c) => {
   }
   const hasAttachments = attByMessage.size > 0;
 
+  /* ما أُرسل مع هذا الدور ولم يبلغه نصُّه — يُستخرج بعد، أو تعذّر — يُسمّى للمساعد باسمه.
+     كان يسقط من السياق بصمت، فيجيب المساعد كأن لا ملف والمحامي يرى ملفَّه في فقاعة
+     سؤاله. والمستندُ الممسوح الطويل يُقرأ في دقائق، فيمضي الدور قبله بعد حدّ الانتظار. */
+  const unread = sentIds.length
+    ? ((
+        await c.env.DB.prepare(
+          "SELECT filename, parse_status FROM attachments WHERE message_id = ? AND parse_status != 'ready'"
+        )
+          .bind(userMsgId)
+          .all<{ filename: string; parse_status: string }>()
+      ).results ?? [])
+    : [];
+
   // [1] المُخطِّط
   const plan = await runPlanner(c.env, message, conv.consultation_type ?? undefined, hasAttachments, !!force_internet, user.id, history.results);
 
@@ -367,9 +380,10 @@ app.post('/:conversationId', async (c) => {
      حيث وقعت.
 
      والسقف يبقى: يُحسب لكل دورٍ على حدة لأنه سقفُ رسالةٍ واحدة. */
-  const attachmentsBlock = attByMessage.has(userMsgId)
-    ? buildAttachmentsBlock(attByMessage.get(userMsgId)!)
-    : '';
+  const attachmentsBlock =
+    attByMessage.has(userMsgId) || unread.length
+      ? buildAttachmentsBlock(attByMessage.get(userMsgId) ?? [], unread)
+      : '';
 
   /* المواضع تُدرَج بعد السياق النظامي وقبل النصّ: هي ما بُحث عنه، ولو لم
      تُدرَج لبناها النموذج من جديد فجاءت صفوفُ الجدول عن مواضعَ غير التي
@@ -744,9 +758,10 @@ function toCitation(r: RagResult) {
 /**
  * حدُّ انتظار استخراج المرفقات قبل أن يمضي الدور بما استقرّ منها.
  *
- * المستند الممسوح يُقرأ بدفعاتٍ متوازية، وتسعون ثانيةً تسع أطولها عادةً.
- * وما لم يستقرّ بعدها يمضي الدور بدونه — كما كان يمضي قبل الانتظار — ولا
- * يُعلَّق السؤال بلا نهاية على نداءٍ متعثّر.
+ * أغلب الملفات تستقرّ في ثوانٍ. والمستند الممسوح الطويل يُقرأ في منفّذه دقائق، والانتظار
+ * هنا يقع قبل فتح البثّ والمتصفّح لا يصله شيء — فلا يطول بطوله. ما لم يستقرّ بعد الحدّ
+ * يمضي الدور بدونه ويُسمّى للمساعد بأنه لم يُقرأ بعد (`UNREAD_ATTACHMENT_NOTE`)، وتبلغ
+ * الشاشةَ حالُه حين يكتمل فيُعاد السؤال.
  */
 const EXTRACTION_WAIT_MS = 90_000;
 
@@ -774,8 +789,18 @@ async function waitForExtraction(env: Env, conversationId: string, ids: string[]
 const ATTACH_TOTAL_BUDGET = 400_000; // حروف
 const ATTACH_PER_FILE_MAX = 200_000;
 
-function buildAttachmentsBlock(atts: { filename: string; parsed_text: string }[]): string {
-  const perFile = Math.max(2_000, Math.min(ATTACH_PER_FILE_MAX, Math.floor(ATTACH_TOTAL_BUDGET / atts.length)));
+/** ما يُقال للمساعد عن ملفٍّ أُرسل ولم يبلغه نصُّه — لئلّا يجيب كأن لا ملف. */
+const UNREAD_ATTACHMENT_NOTE: Record<string, string> = {
+  pending:
+    'ما زال نصُّ هذا الملف يُستخرج ولم يبلغ هذا الردّ. لا تبنِ على ما فيه، وأخبر المستخدم أن قراءته لم تكتمل بعد وأن له أن يعيد سؤاله حين تكتمل.',
+  error: 'تعذّر استخراج نصّ هذا الملف فلم يبلغ هذا الردّ. لا تبنِ على ما فيه، وأخبر المستخدم بذلك.',
+};
+
+function buildAttachmentsBlock(
+  atts: { filename: string; parsed_text: string }[],
+  unread: { filename: string; parse_status: string }[] = []
+): string {
+  const perFile = Math.max(2_000, Math.min(ATTACH_PER_FILE_MAX, Math.floor(ATTACH_TOTAL_BUDGET / Math.max(1, atts.length))));
   let used = 0;
   const parts: string[] = [];
   for (const a of atts) {
@@ -787,6 +812,9 @@ function buildAttachmentsBlock(atts: { filename: string; parsed_text: string }[]
     used += text.length;
     const truncated = (a.parsed_text ?? '').length > text.length ? '\n…(مقتطع)' : '';
     parts.push(`— ${a.filename}:\n${text}${truncated}`);
+  }
+  for (const u of unread) {
+    parts.push(`— ${u.filename}: (${UNREAD_ATTACHMENT_NOTE[u.parse_status] ?? UNREAD_ATTACHMENT_NOTE.error})`);
   }
   return `\n\n<الملفات_المرفوعة>\n${parts.join('\n\n')}\n</الملفات_المرفوعة>`;
 }

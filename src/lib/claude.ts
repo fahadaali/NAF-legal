@@ -496,6 +496,64 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<C
 }
 
 /**
+ * نداءٌ متدفّق يُجمع نصُّه كاملاً — لما يطول توليده ولا يُعرض وهو يُكتب.
+ *
+ * مهلةُ `callClaude` الجوابُ كلُّه (`CALL_TIMEOUT_MS`)، ونسخُ صفحاتٍ ممسوحة يطول بطول
+ * نصّها: آلافُ الرموز دقائقُ لا ثوانٍ، فيُقطع النداء عند المهلة ثم يُعاد فيُقطع ثانيةً.
+ * والمتدفّق لا سقف لطوله — مهلتُه وصولُ الترويسة ثم الصمت — فيُبنى على `streamClaude`
+ * نفسها ويُقرأ ما تُخرجه: أحداثُ `delta` وحدها نصٌّ.
+ *
+ * وما لم ينتهِ نهايةً معلَنة يُرمى ولا يُعاد نصّاً: بثٌّ قطعه خطأٌ أو انتهى بلا سبب
+ * توقّف نصٌّ ناقص لا يقول عن نفسه إنه ناقص، فيُخزَّن كأنه المستند كلُّه.
+ *
+ * و`deadline` وقتٌ مطلق يُقطع عنده البثّ ويُردّ ما وصل بسببٍ `deadline` — لمن له
+ * زمنٌ محدود يضيع بعده كلُّ شيء (منبّه المنفّذ). فالمستدعي يعرف أن النصّ مقتطع
+ * ويقول ذلك فيه، كما يقوله عند `max_tokens`.
+ */
+export async function collectClaude(
+  env: Env,
+  opts: ClaudeCallOptions,
+  deadline?: number
+): Promise<{ text: string; stopReason: string }> {
+  const { stream, outcome } = await streamClaude(env, opts);
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  while (true) {
+    let timer: any;
+    const next = deadline
+      ? await Promise.race([
+          reader.read(),
+          new Promise<null>((r) => (timer = setTimeout(() => r(null), Math.max(0, deadline - Date.now())))),
+        ]).finally(() => clearTimeout(timer))
+      : await reader.read();
+    if (!next) {
+      await reader.cancel('deadline').catch(() => {});
+      return { text, stopReason: 'deadline' };
+    }
+    const { done, value } = next;
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+    for (const frame of frames) {
+      if (!frame.startsWith('event: delta\n')) continue;
+      const data = frame.split('\n').find((l) => l.startsWith('data: '));
+      if (data) text += String(JSON.parse(data.slice(6)).text ?? '');
+    }
+  }
+  const o = await outcome;
+  if (!text.trim() && o.stopReason === 'refusal') {
+    throw new Error(`Claude refused the request (${o.refusalCategory ?? 'unknown'})`);
+  }
+  if (!o.stopReason || o.stopReason === 'stream_error') {
+    throw new Error(`claude stream ended without completing (${o.stopReason ?? 'no stop reason'})`);
+  }
+  return { text, stopReason: o.stopReason };
+}
+
+/**
  * أداة البحث في الإنترنت الأصلية (§10).
  *
  * النسخة `_20260209` هي ما يدعمه Opus 5 — وفيها ترشيحٌ للنتائج قبل دخولها

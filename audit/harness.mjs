@@ -210,7 +210,7 @@ export function makeCtx() {
   };
 }
 
-/** بديل R2 في الذاكرة: put/get/delete بمفتاحٍ أو مصفوفة مفاتيح. */
+/** بديل R2 في الذاكرة: put/get/delete بمفتاحٍ أو مصفوفة مفاتيح، وlist بالبادئة. */
 export function makeR2() {
   const m = new Map();
   return {
@@ -230,6 +230,10 @@ export function makeR2() {
     },
     async delete(k) {
       for (const key of Array.isArray(k) ? k : [k]) m.delete(key);
+    },
+    async list({ prefix = '' } = {}) {
+      const objects = [...m.keys()].filter((key) => key.startsWith(prefix)).sort().map((key) => ({ key, size: m.get(key).bytes.length }));
+      return { objects, truncated: false };
     },
     _map: m,
   };

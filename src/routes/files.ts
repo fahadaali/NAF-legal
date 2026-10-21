@@ -2,7 +2,8 @@
 import { Hono, type Context } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
-import { extractText, ocrPages, TRUNCATED_NOTE, UNREAD_PAGE_NOTE } from '../lib/extract';
+import { TRUNCATED_NOTE, UNREAD_PAGE_NOTE } from '../lib/extract';
+import { startExtraction, MAX_TEXT, type PageLayout } from '../lib/attachmentExtraction';
 import { buildDocx, annotateDates } from '../lib/docx';
 import { splitDocTitle, stripLawyerNotes, toPlainText } from '../lib/draftText';
 import { loadDocTemplate, loadLetterhead, LETTERHEAD_KEY } from '../lib/docTemplate';
@@ -15,10 +16,6 @@ app.use('*', requireAuth);
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
 const MAX_SIZE = 15 * 1024 * 1024; // 15MB
-
-/** سقفُ النصّ القادم من المتصفّح — يوافق `ATTACH_PER_FILE_MAX` في `chat.ts`.
-    وتجاوزُه هنا تخزينٌ لما لن يُقرأ، ونقصانُه قصٌّ قبل أن يصل السقف الحقيقي. */
-const MAX_TEXT = 200_000;
 
 /** حدّا صور الصفحات الممسوحة — يوافقان `MAX_OCR_PAGES` ورسمَ الصفحة في `web/src/lib/extractText.ts`. */
 const MAX_PAGE_IMAGES = 60;
@@ -59,9 +56,9 @@ function canonicalType(name: string, declared: string | null): { ext: string; mi
  * فيُلغيه ويعيده، فيقع النداءُ مرّتين ويطول مرّتين.
  *
  * فالبايتات تُحفَظ في R2 والصفُّ يُكتب `pending`، ويردّ الخادم فوراً بمعرِّفٍ
- * تعرضه الشاشة شارةً. ثم يجري الاستخراج في `ctx.waitUntil` وتسأل الشاشة عن
- * حاله. والملف مرفوعٌ ومحفوظٌ ويُنزَّل في كل هذه المدّة، أَخرج نصُّه أم لم
- * يخرج.
+ * تعرضه الشاشة شارةً. ثم يجري الاستخراج في منفّذٍ بالخلفية (`startExtraction`)
+ * وتسأل الشاشة عن حاله. والملف مرفوعٌ ومحفوظٌ ويُنزَّل في كل هذه المدّة، أَخرج
+ * نصُّه أم لم يخرج.
  */
 app.post('/upload/:conversationId', async (c) => {
   const user = c.get('user');
@@ -128,9 +125,7 @@ app.post('/upload/:conversationId', async (c) => {
   // ما قُرئ محلّياً لا يُقرأ ثانيةً. وما لم يُقرأ — صورةٌ أو ممسوحٌ ضوئياً —
   // يتولّاه الخادم بصرياً: صورُ صفحاته وحدها إن جاءت، وإلا الملفُّ كلُّه.
   if (!knownText) {
-    c.executionCtx.waitUntil(
-      layout ? runPageOcr(c.env, id, layout) : runExtract(c.env, id, buf, mime, file.name)
-    );
+    await startExtraction(c.env, c.executionCtx, { id, buf, mime, filename: file.name, layout });
   }
 
   return c.json({
@@ -169,40 +164,6 @@ async function reusableText(env: Env, userId: string, hash: string): Promise<str
   return row.t;
 }
 
-/**
- * يستخرج نصّ المرفق ويَسِم حالَه، ولا يترك صفّاً معلَّقاً مهما وقع.
- *
- * رميةٌ من تحت `ctx.waitUntil` تُبتلع في العامل بلا أثر، فيبقى الصفُّ
- * `pending` أبداً وتبقى الشارة تدور. فما يخرج من هنا حالٌ مستقرّة دائماً:
- * `ready` أو `error`.
- *
- * ونصٌّ فارغ حالُه `error` كتعثّر النداء سواء: نتيجتُهما على القارئ واحدة —
- * ملفٌّ قائمٌ يُنزَّل ولا يبلغ نصُّه المساعد — وحالان لنتيجةٍ واحدة تفترقان
- * أوّل شاشة.
- */
-async function runExtract(env: Env, id: string, buf: ArrayBuffer, mime: string, filename: string): Promise<void> {
-  let text = '';
-  let error: string | null = null;
-  try {
-    text = await extractText(env, buf, mime, filename);
-  } catch (e: any) {
-    error = String(e?.message ?? e);
-  }
-  if (!text.trim() && !error) error = 'لم يُستخرَج نصّ من الملف';
-
-  await env.DB.prepare('UPDATE attachments SET parsed_text = ?, parse_status = ?, parse_error = ? WHERE id = ?')
-    .bind(error ? null : text, error ? 'error' : 'ready', error, id)
-    .run()
-    .catch(() => {});
-}
-
-interface PageLayout {
-  /** نصُّ كل صفحة، و`null` لصفحةٍ جاءت صورةً. */
-  pages: (string | null)[];
-  /** صورُ الصفحات بترتيب الـ`null` في `pages`. */
-  images: { bytes: Promise<ArrayBuffer>; mime: string }[];
-}
-
 /** يقرأ `layout` و`page` من النموذج، أو `null` إن لم يستقم شيءٌ منهما. */
 function parseLayout(form: FormData): PageLayout | null {
   const raw = form.get('layout');
@@ -226,45 +187,7 @@ function parseLayout(form: FormData): PageLayout | null {
     budget -= t.length;
     return t;
   });
-  return { pages: capped, images: files.map((f) => ({ bytes: f.arrayBuffer(), mime: f.type })) };
-}
-
-/**
- * يقرأ صور الصفحات ويضع نصَّ كلٍّ منها في موضعها، ثم يَسِم الحال.
- * لا يترك صفّاً معلَّقاً — كـ`runExtract` سواء.
- */
-async function runPageOcr(env: Env, id: string, layout: PageLayout): Promise<void> {
-  let text = '';
-  let error: string | null = null;
-  try {
-    const images = await Promise.all(layout.images.map(async (img) => ({ bytes: await img.bytes, mime: img.mime })));
-    const read = await ocrPages(env, images);
-    let k = 0;
-    text = layout.pages
-      .map((p) => (p === null ? read[k++] : p))
-      .filter((p) => p.trim())
-      .join('\n\n')
-      .slice(0, MAX_TEXT);
-  } catch (e: any) {
-    /* تعذّرت قراءة الصور كلِّها: صفحاتُ النصّ مقروءةٌ سلفاً فلا تُرمى معها.
-       يُخزَّن ما قُرئ والغائبُ يُقال في موضعه، ولا خطأَ إلا إن لم يبقَ نصّ. */
-    const known = layout.pages.filter((p): p is string => !!p?.trim());
-    if (known.length) {
-      text = layout.pages
-        .map((p) => (p === null ? UNREAD_PAGE_NOTE : p))
-        .filter((p) => p.trim())
-        .join('\n\n')
-        .slice(0, MAX_TEXT);
-    } else {
-      error = String(e?.message ?? e);
-    }
-  }
-  if (!text.trim() && !error) error = 'لم يُستخرَج نصّ من الملف';
-
-  await env.DB.prepare('UPDATE attachments SET parsed_text = ?, parse_status = ?, parse_error = ? WHERE id = ?')
-    .bind(error ? null : text, error ? 'error' : 'ready', error, id)
-    .run()
-    .catch(() => {});
+  return { pages: capped, images: files.map((f) => ({ load: () => f.arrayBuffer(), mime: f.type })) };
 }
 
 /** حال المرفق — تسألها الشاشة ما دامت الشارة تدور. */

@@ -9,6 +9,7 @@ import { stemPending } from './lib/research/stem';
 import { reindexDocuments } from './lib/research/documents';
 import { tagPendingArticles } from './lib/research/issues';
 import { ingestDocument } from './ingest';
+import { markStalled } from './lib/attachmentExtraction';
 import type { Env } from './types';
 
 /**
@@ -399,6 +400,33 @@ export async function runImportRecovery(env: Env): Promise<{ rolledBack: number;
   } catch (e: any) {
     console.error('import recovery failed:', e?.message ?? e);
     return { rolledBack: 0, abandoned: 0 };
+  }
+}
+
+// ── مرفقاتٌ علِق استخراجها ──
+//
+// المنفّذ يَسِم كلَّ مرفقٍ بما انتهى إليه، ويَسِمه متعثّراً حين يستنفد محاولاته — أقصى
+// ذلك محاولتان بخمس عشرة دقيقةً لكلٍّ. فما بقي `pending` بعد هذا الحدّ لم يبلغه منفّذٌ
+// قطّ: رُفع قبل المنفّذ، أو تعذّر بدؤه فقُرئ في طلب الرفع وقُطع بعد ثلاثين ثانية. يُوسَم
+// متعثّراً فتقول الشاشة «تعذّر استخراج النصّ» ويُعاد رفعه — بدل دائرةٍ لا تقف.
+const ATTACHMENT_STALE_MS = 45 * 60_000;
+
+export async function runAttachmentRecovery(env: Env): Promise<number> {
+  try {
+    const rows = await env.DB.prepare(
+      "SELECT id FROM attachments WHERE parse_status = 'pending' AND created_at < ? LIMIT 50"
+    )
+      .bind(Date.now() - ATTACHMENT_STALE_MS)
+      .all<{ id: string }>();
+    const ids = (rows.results ?? []).map((r) => r.id);
+    if (ids.length) {
+      await markStalled(env, ids);
+      console.log(`attachments: ${ids.length} stalled extractions marked`);
+    }
+    return ids.length;
+  } catch (e: any) {
+    console.error('attachment recovery failed:', e?.message ?? e);
+    return 0;
   }
 }
 

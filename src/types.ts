@@ -12,6 +12,8 @@ export interface Env {
   AI: Ai;
   /** مهامّ البحث في الخلفية — `ResearchRunner`. اختياريّ: بلا ربطٍ يُبنى البحث في الطلب نفسه. */
   RESEARCH?: DurableObjectNamespace;
+  /** استخراجُ نصوص المرفقات في الخلفية — `ExtractRunner`. اختياريّ: بلا ربطٍ يُستخرج في طلب الرفع نفسه. */
+  EXTRACT?: DurableObjectNamespace;
   KV: KVNamespace;
   // مساحة الدخول الموحّد — مستقلّة عن `KV` أعلاه. تكتب فيها الحزمة
   // `sess:` و `jwks:` وحدها، فلا تزاحم مفاتيح حدّ المعدّل (`rl:`).
