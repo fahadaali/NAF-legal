@@ -448,8 +448,9 @@ app.post('/:conversationId', async (c) => {
       firstAttempt = await openAttempt(0);
     } catch (e: any) {
       /* كتلُ `search_result` رُدّت بـ400: يُعاد الطلب مرّةً والسياقُ نصٌّ كما كان قبلها.
-         صياغةٌ بلا مواضع إسناد خيرٌ من «تعذّر توليد الرد» على كل دورٍ فيه موادّ. */
-      if (!contextBlocks.length || !/Claude API 400/.test(String(e?.message))) throw e;
+         صياغةٌ بلا مواضع إسناد خيرٌ من «تعذّر توليد الرد» على كل دورٍ فيه موادّ.
+         إلا أن يكون الـ400 رفضَ الحساب — رصيدٌ نفد أو حدُّ إنفاق — فالسياق بريء منه. */
+      if (!contextBlocks.length || e?.refusal || !/Claude API 400/.test(String(e?.message))) throw e;
       console.error('search_result context rejected — retrying with text context:', e?.message ?? e);
       messages[messages.length - 1] = { role: 'user', content: `${ragContext}${tail}`.trim() };
       firstAttempt = await openAttempt(0);
@@ -460,7 +461,13 @@ app.post('/:conversationId', async (c) => {
     // مفتاح ناقص وشكل طلبٍ مرفوض إنما هو ردّ الـAPI، ومكانه السجلّ لا الشاشة.
     console.error('generation failed:', e?.message ?? e);
     await clearGenerating(env, conversationId);
-    return c.json({ error: 'تعذّر توليد الرد', detail: String(e?.message ?? e) }, 502);
+    /* ورفضُ الحساب يُوسَم برمزٍ تقرؤه الشاشة: سببُه في لوحة Anthropic لا في سؤال المحامي،
+       ولا تنفع فيه إعادة. والرمز وحده لا نصّ — جملتُه تُسجَّل في naf-ui أوّلاً
+       (`docs/naf-ui-proposal-service-account.md`). */
+    return c.json(
+      { error: 'تعذّر توليد الرد', ...(e?.refusal ? { code: 'account_refused' } : {}), detail: String(e?.message ?? e) },
+      502
+    );
   }
 
   // نلتقط النص كاملًا أثناء التدفّق لنخزّنه في النهاية

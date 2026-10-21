@@ -316,6 +316,71 @@ await t.check('بثٌّ أطول من مهلة الاتصال لا يُقطع م
   }
 });
 
+/** بديلٌ يردّ كلَّ نداءٍ إلى Claude بالحالة والجسم نفسيهما، ويعدّ المتدفّق منها وغيره. */
+function refusingAnthropic(status, error) {
+  const realFetch = globalThis.fetch;
+  const calls = { planner: 0, stream: 0, other: 0 };
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url.startsWith('https://api.anthropic.com/')) return realFetch(input, init);
+    const body = JSON.parse(init.body);
+    if (body.stream) calls.stream++;
+    else if (isPlanner(body)) calls.planner++;
+    else calls.other++;
+    return new Response(JSON.stringify({ type: 'error', error }), { status, headers: { 'content-type': 'application/json' } });
+  };
+  return { calls, restore: () => (globalThis.fetch = realFetch) };
+}
+
+await t.check('سقفُ الإنفاق الشهري (429) لا يُعاد كحدّ المعدّل، والردّ يحمل رمزَ رفض الحساب', async () => {
+  const { env } = await chatFixture();
+  const fake = refusingAnthropic(429, {
+    type: 'rate_limit_error',
+    message: 'You have reached your API usage limits: your organization has crossed its monthly API usage threshold.',
+    details: { error_code: 'enforced_spend_limit_reached' },
+  });
+  try {
+    const { res, text } = await sendTurn(env, 'ما مكافأة نهاية الخدمة؟');
+    assert.equal(res.status, 502);
+    assert.equal(JSON.parse(text).code, 'account_refused');
+    assert.equal(fake.calls.planner, 1, `أُعيد المُخطِّط ${fake.calls.planner} مرّات على رفضٍ لا يرفعه انتظار`);
+    assert.equal(fake.calls.stream, 1, `أُعيد التوليد ${fake.calls.stream} مرّات`);
+    assert.equal(await env.KV.get('gen:c1'), null, 'بقيت المحادثة «قيد التوليد»');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('رصيدٌ نفد (400) لا يُعاد بسياقٍ نصّي — والـ429 العابر يبقى يُعاد', async () => {
+  const { env } = await chatFixture();
+  const fake = refusingAnthropic(400, {
+    type: 'invalid_request_error',
+    message: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.',
+  });
+  try {
+    const { res, text } = await sendTurn(env, 'ما مكافأة نهاية الخدمة؟');
+    assert.equal(res.status, 502);
+    assert.equal(JSON.parse(text).code, 'account_refused');
+    assert.equal(fake.calls.stream, 1, 'أُعيد التوليد بسياقٍ نصّي والرفضُ على الحساب لا على الكتل');
+    assert.equal(fake.calls.planner, 1, 'أُعيد المُخطِّط بلا مخرجٍ منظَّم والرفضُ على الحساب لا على المخطّط');
+  } finally {
+    fake.restore();
+  }
+  // حدُّ المعدّل نفسه عارضٌ يُعاد كما كان، ولا رمزَ رفضٍ على ردّه.
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...args) => realSetTimeout(fn, (ms ?? 0) / 100, ...args);
+  const rate = refusingAnthropic(429, { type: 'rate_limit_error', message: 'Number of request tokens has exceeded your per-minute rate limit' });
+  try {
+    const { res, text } = await sendTurn(env, 'ما مكافأة نهاية الخدمة؟');
+    assert.equal(res.status, 502);
+    assert.equal(JSON.parse(text).code, undefined, 'وُسم حدُّ المعدّل رفضاً للحساب');
+    assert.equal(rate.calls.stream, 3, `حدُّ المعدّل أُعيد ${rate.calls.stream} مرّات لا ثلاثاً`);
+  } finally {
+    rate.restore();
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
 await t.check('سجلّ الاستخدام يحفظ رموز التخزين المؤقّت ويسعّرها بسعرها', async () => {
   const { env, db } = await chatFixture();
   const lib = await bundle('platform-usage', `export { logUsage, computeCost } from './usage';`);

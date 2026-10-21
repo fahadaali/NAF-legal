@@ -127,12 +127,15 @@ const RETRY_DELAY_MS = 5_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** يُعيد النداء مرّةً بعد مهلة إن تعثّر — إلا ألّا يبقى من الوقت ما يسع الإعادة. */
+/**
+ * يُعيد النداء مرّةً بعد مهلة إن تعثّر — إلا ألّا يبقى من الوقت ما يسع الإعادة، أو يكون
+ * التعثّرُ رفضَ حساب الخدمة (`ClaudeApiError.refusal`): ذاك لا يرفعه انتظار.
+ */
 async function onceMore<T>(fn: () => Promise<T>, deadline?: number): Promise<T> {
   try {
     return await fn();
-  } catch (e) {
-    if (deadline && Date.now() + RETRY_DELAY_MS >= deadline) throw e;
+  } catch (e: any) {
+    if (e?.refusal || (deadline && Date.now() + RETRY_DELAY_MS >= deadline)) throw e;
     await sleep(RETRY_DELAY_MS);
     return await fn();
   }

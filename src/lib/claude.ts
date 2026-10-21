@@ -180,16 +180,67 @@ function headers(env: Env): Record<string, string> {
 }
 
 /**
+ * رفضٌ يقع على حساب الخدمة لا على الطلب: المفتاح، أو الفوترة، أو الرصيد، أو سقف الإنفاق.
+ *
+ * يتكرّر بتكراره إلى أن يعالجه أحدٌ في لوحة Anthropic — لا ينفع فيه انتظارٌ ولا إعادة،
+ * ويقع على كل نداءٍ في المنصة معاً. وكان يُعامَل عارضاً: سقفُ الإنفاق الشهري يصل 429
+ * فيُعاد ثلاثاً، والرصيدُ النافد يصل 400 فيُعاد التوليد بسياقٍ نصّي، ثم يقرأ المحامي
+ * «تعذّر توليد الرد» فيعيد هو — والخدمة متوقّفة إلى أن يعلم بها من يملك علاجها.
+ *
+ *   `auth`         401 — المفتاح غير صالح أو أُلغي أو انتهى.
+ *   `billing`      402 — خللٌ في الفوترة أو وسيلة الدفع.
+ *   `permission`   403 — المفتاح لا يملك هذا المورد.
+ *   `credit`       400 — الرصيد المدفوع مقدّماً نفد.
+ *   `spend_limit`  400 — بلغ الإنفاقُ حدّاً وضعه صاحب الحساب.
+ *   `spend_cap`    429 بـ`enforced_spend_limit_reached` — بلغ سقفَ الشهر في فئة الحساب،
+ *                  ولا `retry-after` معه: لا يُرفع قبل أوّل الشهر التالي أو رفعِ الفئة.
+ */
+export type AccountRefusal = 'auth' | 'billing' | 'permission' | 'credit' | 'spend_limit' | 'spend_cap';
+
+export function accountRefusal(status: number, body: string): AccountRefusal | null {
+  let error: any = null;
+  try {
+    error = JSON.parse(body)?.error ?? null;
+  } catch {
+    // جسمٌ غير JSON لا يُعرف منه شيء — الحالةُ وحدها تحكم.
+  }
+  const message = String(error?.message ?? '');
+  if (status === 401) return 'auth';
+  if (status === 402) return 'billing';
+  if (status === 403) return 'permission';
+  if (status === 429 && error?.details?.error_code === 'enforced_spend_limit_reached') return 'spend_cap';
+  if (status === 400 && /credit balance/i.test(message)) return 'credit';
+  if (status === 400 && /reached your specified (workspace )?API usage limits/i.test(message)) return 'spend_limit';
+  return null;
+}
+
+/** خطأُ ردٍّ من الـAPI بحالته، ومعه رفضُ الحساب إن كان — يقرؤه المستدعي فلا يعيد ما لا يُعاد. */
+export class ClaudeApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly refusal: AccountRefusal | null
+  ) {
+    super(message);
+    this.name = 'ClaudeApiError';
+  }
+}
+
+/**
  * خطأ الـAPI يُسجَّل هنا لا في المستدعي.
  *
  * كل مستدعٍ لهذا الملف — عدا التوليد — يبتلع خطأه ويكمل بخطة احتياطية،
  * فهذا السطر هو الوحيد الذي يقول ما ردّ به الـAPI فعلاً. وبدونه يظهر
  * انقطاعٌ كامل في الخدمة كأنه خللٌ في صلاحيات المستخدم.
+ *
+ * ورفضُ الحساب يُسجَّل بسطرٍ واحد يُبحث عنه في السجلّ (`claude account refused`).
  */
-async function apiError(res: Response, stage: string): Promise<Error> {
+async function apiError(res: Response, stage: string): Promise<ClaudeApiError> {
   const body = await res.text().catch(() => '');
-  console.error(`claude ${stage} ${res.status}: ${body.slice(0, 500)}`);
-  return new Error(`Claude API ${res.status}: ${body.slice(0, 300)}`);
+  const refusal = accountRefusal(res.status, body);
+  if (refusal) console.error(`claude account refused (${refusal}) — ${stage} ${res.status}: ${body.slice(0, 500)}`);
+  else console.error(`claude ${stage} ${res.status}: ${body.slice(0, 500)}`);
+  return new ClaudeApiError(`Claude API ${res.status}: ${body.slice(0, 300)}`, res.status, refusal);
 }
 
 /**
@@ -197,7 +248,8 @@ async function apiError(res: Response, stage: string): Promise<Error> {
  *
  * وكان أيُّ واحدٍ منها يصل المحامي «تعذّر توليد الرد» من أوّل مرّة، أو يُسقط
  * المُخطِّط إلى خطّته الاحتياطية بصمت. وما عداها — طلبٌ مرفوض، مفتاحٌ ناقص —
- * يتكرّر بتكراره، فلا يُعاد.
+ * يتكرّر بتكراره، فلا يُعاد. ومنه ما يأتي بحالةٍ تُعاد: سقفُ الإنفاق الشهري 429
+ * كحدّ المعدّل، فيُقرأ جسمُه قبل الإعادة (`accountRefusal`).
  */
 const RETRYABLE_STATUS = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
@@ -265,7 +317,9 @@ async function postWithRetry(env: Env, body: string, timeoutMs: number, scope: T
       const res = await post(env, body, timeoutMs, scope);
       if (res.ok || !RETRYABLE_STATUS.has(res.status) || i === RETRY_DELAYS_MS.length - 1) return res;
       const wait = retryAfterMs(res);
-      await res.body?.cancel().catch(() => {});
+      const text = await res.text().catch(() => '');
+      // يُعاد بحالته ونصّه وحدهما: ترويسةُ الأصل تصف جسماً غير هذا (ضغطه وطوله)، ولا يُقرأ بعدُ غيرهما.
+      if (accountRefusal(res.status, text)) return new Response(text, { status: res.status });
       console.error(`claude ${res.status} — retrying (${i + 1}/${RETRY_DELAYS_MS.length - 1})`);
       if (wait) await sleep(wait);
     } catch (e) {
