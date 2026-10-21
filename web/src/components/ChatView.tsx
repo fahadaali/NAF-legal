@@ -60,6 +60,10 @@ const NEAR_BOTTOM = 120;
 /** جسُّ دورٍ يجري في الخادم بعد أن ذهب بثُّه مع الصفحة. */
 const POLL_MS = 4000;
 
+/** سؤالُ حال المرفق: قريبٌ أوّلاً ثم يتّسع حتى سقفه — انظر `parsingIds`. */
+const PARSE_POLL_FIRST_MS = 2000;
+const PARSE_POLL_MAX_MS = 15_000;
+
 /** مرجعٌ ثابت لرسالةٍ بلا تظليل — حتى لا يُعاد الرسم مع كل إعادة بناء. */
 const NO_HIGHLIGHTS: RenderableHighlight[] = [];
 const NO_LAWS: KnownLaw[] = [];
@@ -639,15 +643,25 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
 
   /* استخراج النصّ يجري في الخادم بعد ردّ الرفع، فتُسأل حالُه حتى تستقرّ.
      والسؤال يقف عند أوّل شارةٍ تستقرّ لا يمضي بلا نهاية: `pending` وحدها
-     تُسأل، ومن يفتح الشاشة بلا مرفقٍ منتظر لا يرسل نداءً أصلاً. */
-  const parsingIds = pendingAttachments
+     تُسأل، ومن يفتح الشاشة بلا مرفقٍ منتظر لا يرسل نداءً أصلاً.
+
+     وتُسأل في فقاعة السؤال كما في صندوق الكتابة: المستندُ الممسوح الطويل يُقرأ
+     دقائق، والسؤال يُرسَل قبل أن يكتمل — فشارتُه في الفقاعة هي ما يقول متى
+     يُعاد السؤال. كانت تدور هناك بلا سؤالٍ عن حالها حتى تُجلب المحادثة ثانيةً.
+
+     والسؤال متباعدٌ يتّسع حتى سقفه. كان كلَّ ثانيتين ما دامت الشارة تدور —
+     ثلاثون طلباً في الدقيقة للملف الواحد، وحدُّ الطلبات ستّون للمستخدم كلِّه:
+     ملفّان معلَّقان كانا يستنفدانه فيُردّ كلُّ طلبٍ غيرهما. */
+  const parsingIds = attachments
     .filter((a) => a.parse_status === 'pending')
     .map((a) => a.id)
     .join(',');
   useEffect(() => {
     if (!parsingIds) return;
     let live = true;
-    const tick = window.setInterval(async () => {
+    let delay = PARSE_POLL_FIRST_MS;
+    let timer = 0;
+    const tick = async () => {
       const rows = await Promise.all(
         parsingIds.split(',').map((id) => api.attachment(id).catch(() => null))
       );
@@ -658,10 +672,13 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           list.map((a) => settled.find((s) => s.id === a.id) ?? a)
         );
       }
-    }, 2000);
+      delay = Math.min(delay * 1.5, PARSE_POLL_MAX_MS);
+      timer = window.setTimeout(tick, delay);
+    };
+    timer = window.setTimeout(tick, delay);
     return () => {
       live = false;
-      window.clearInterval(tick);
+      window.clearTimeout(timer);
     };
   }, [parsingIds]);
 

@@ -180,16 +180,67 @@ function headers(env: Env): Record<string, string> {
 }
 
 /**
+ * رفضٌ يقع على حساب الخدمة لا على الطلب: المفتاح، أو الفوترة، أو الرصيد، أو سقف الإنفاق.
+ *
+ * يتكرّر بتكراره إلى أن يعالجه أحدٌ في لوحة Anthropic — لا ينفع فيه انتظارٌ ولا إعادة،
+ * ويقع على كل نداءٍ في المنصة معاً. وكان يُعامَل عارضاً: سقفُ الإنفاق الشهري يصل 429
+ * فيُعاد ثلاثاً، والرصيدُ النافد يصل 400 فيُعاد التوليد بسياقٍ نصّي، ثم يقرأ المحامي
+ * «تعذّر توليد الرد» فيعيد هو — والخدمة متوقّفة إلى أن يعلم بها من يملك علاجها.
+ *
+ *   `auth`         401 — المفتاح غير صالح أو أُلغي أو انتهى.
+ *   `billing`      402 — خللٌ في الفوترة أو وسيلة الدفع.
+ *   `permission`   403 — المفتاح لا يملك هذا المورد.
+ *   `credit`       400 — الرصيد المدفوع مقدّماً نفد.
+ *   `spend_limit`  400 — بلغ الإنفاقُ حدّاً وضعه صاحب الحساب.
+ *   `spend_cap`    429 بـ`enforced_spend_limit_reached` — بلغ سقفَ الشهر في فئة الحساب،
+ *                  ولا `retry-after` معه: لا يُرفع قبل أوّل الشهر التالي أو رفعِ الفئة.
+ */
+export type AccountRefusal = 'auth' | 'billing' | 'permission' | 'credit' | 'spend_limit' | 'spend_cap';
+
+export function accountRefusal(status: number, body: string): AccountRefusal | null {
+  let error: any = null;
+  try {
+    error = JSON.parse(body)?.error ?? null;
+  } catch {
+    // جسمٌ غير JSON لا يُعرف منه شيء — الحالةُ وحدها تحكم.
+  }
+  const message = String(error?.message ?? '');
+  if (status === 401) return 'auth';
+  if (status === 402) return 'billing';
+  if (status === 403) return 'permission';
+  if (status === 429 && error?.details?.error_code === 'enforced_spend_limit_reached') return 'spend_cap';
+  if (status === 400 && /credit balance/i.test(message)) return 'credit';
+  if (status === 400 && /reached your specified (workspace )?API usage limits/i.test(message)) return 'spend_limit';
+  return null;
+}
+
+/** خطأُ ردٍّ من الـAPI بحالته، ومعه رفضُ الحساب إن كان — يقرؤه المستدعي فلا يعيد ما لا يُعاد. */
+export class ClaudeApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly refusal: AccountRefusal | null
+  ) {
+    super(message);
+    this.name = 'ClaudeApiError';
+  }
+}
+
+/**
  * خطأ الـAPI يُسجَّل هنا لا في المستدعي.
  *
  * كل مستدعٍ لهذا الملف — عدا التوليد — يبتلع خطأه ويكمل بخطة احتياطية،
  * فهذا السطر هو الوحيد الذي يقول ما ردّ به الـAPI فعلاً. وبدونه يظهر
  * انقطاعٌ كامل في الخدمة كأنه خللٌ في صلاحيات المستخدم.
+ *
+ * ورفضُ الحساب يُسجَّل بسطرٍ واحد يُبحث عنه في السجلّ (`claude account refused`).
  */
-async function apiError(res: Response, stage: string): Promise<Error> {
+async function apiError(res: Response, stage: string): Promise<ClaudeApiError> {
   const body = await res.text().catch(() => '');
-  console.error(`claude ${stage} ${res.status}: ${body.slice(0, 500)}`);
-  return new Error(`Claude API ${res.status}: ${body.slice(0, 300)}`);
+  const refusal = accountRefusal(res.status, body);
+  if (refusal) console.error(`claude account refused (${refusal}) — ${stage} ${res.status}: ${body.slice(0, 500)}`);
+  else console.error(`claude ${stage} ${res.status}: ${body.slice(0, 500)}`);
+  return new ClaudeApiError(`Claude API ${res.status}: ${body.slice(0, 300)}`, res.status, refusal);
 }
 
 /**
@@ -197,7 +248,8 @@ async function apiError(res: Response, stage: string): Promise<Error> {
  *
  * وكان أيُّ واحدٍ منها يصل المحامي «تعذّر توليد الرد» من أوّل مرّة، أو يُسقط
  * المُخطِّط إلى خطّته الاحتياطية بصمت. وما عداها — طلبٌ مرفوض، مفتاحٌ ناقص —
- * يتكرّر بتكراره، فلا يُعاد.
+ * يتكرّر بتكراره، فلا يُعاد. ومنه ما يأتي بحالةٍ تُعاد: سقفُ الإنفاق الشهري 429
+ * كحدّ المعدّل، فيُقرأ جسمُه قبل الإعادة (`accountRefusal`).
  */
 const RETRYABLE_STATUS = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
@@ -228,21 +280,46 @@ function retryAfterMs(res: Response): number | null {
   return Number.isFinite(secs) ? Math.min(secs * 1000, MAX_RETRY_AFTER_MS) : null;
 }
 
+/**
+ * مدى المهلة: الطلبُ كلُّه (`call`)، أو وصولُ ترويسته وحدها (`headers`).
+ *
+ * `AbortSignal.timeout` مربوطٌ بالطلب كلِّه لا بترويسته: انقضاؤه يقطع جسمَ الردّ وهو
+ * يُقرأ. وذلك المقصود في الطلب غير المتدفّق — مهلتُه مهلةُ الجواب كاملاً — والمُهلِك
+ * في المتدفّق. كانت مهلةُ الترويسة تُمرَّر إليه هكذا، فصار كلُّ توليدٍ محدوداً
+ * بتسعين ثانيةً من أوّله والنبضاتُ تصل: صياغةُ عقدٍ بمرفقه انتهت مرّتين بلا نصّ
+ * و«انقطع التوليد من الخدمة»، وقُصّت صحيفةُ دعوى في منتصفها. فمهلةُ المتدفّق مؤقّتٌ
+ * يُلغى حين تصل الترويسة، وما بعدها لمهلة الصمت في `streamClaude`.
+ */
+type TimeoutScope = 'call' | 'headers';
+
+/** طلبٌ واحد إلى الـAPI، ومهلتُه في مداها. */
+async function post(env: Env, body: string, timeoutMs: number, scope: TimeoutScope): Promise<Response> {
+  const init = { method: 'POST', headers: headers(env), body };
+  if (scope === 'call') return fetch(API_URL, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException(`no response headers after ${timeoutMs / 1000}s`, 'TimeoutError')),
+    timeoutMs
+  );
+  try {
+    return await fetch(API_URL, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** يرسل الطلب ويعيده على الأعطال العابرة. يعيد آخر ردٍّ أو يرمي آخر خطأ شبكة. */
-async function postWithRetry(env: Env, body: string, timeoutMs: number): Promise<Response> {
+async function postWithRetry(env: Env, body: string, timeoutMs: number, scope: TimeoutScope): Promise<Response> {
   let lastError: unknown;
   for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
     if (RETRY_DELAYS_MS[i]) await sleep(RETRY_DELAYS_MS[i]);
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: headers(env),
-        body,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      const res = await post(env, body, timeoutMs, scope);
       if (res.ok || !RETRYABLE_STATUS.has(res.status) || i === RETRY_DELAYS_MS.length - 1) return res;
       const wait = retryAfterMs(res);
-      await res.body?.cancel().catch(() => {});
+      const text = await res.text().catch(() => '');
+      // يُعاد بحالته ونصّه وحدهما: ترويسةُ الأصل تصف جسماً غير هذا (ضغطه وطوله)، ولا يُقرأ بعدُ غيرهما.
+      if (accountRefusal(res.status, text)) return new Response(text, { status: res.status });
       console.error(`claude ${res.status} — retrying (${i + 1}/${RETRY_DELAYS_MS.length - 1})`);
       if (wait) await sleep(wait);
     } catch (e) {
@@ -256,7 +333,7 @@ async function postWithRetry(env: Env, body: string, timeoutMs: number): Promise
 
 // استدعاء غير متدفّق يعيد النص الكامل (يُستخدم للمُخطِّط والتصنيف)
 export async function callClaude(env: Env, opts: ClaudeCallOptions): Promise<{ text: string; raw: any }> {
-  const res = await postWithRetry(env, buildBody(opts, 4096, false), CALL_TIMEOUT_MS);
+  const res = await postWithRetry(env, buildBody(opts, 4096, false), CALL_TIMEOUT_MS, 'call');
 
   if (!res.ok) throw await apiError(res, 'call');
   const data = (await res.json()) as any;
@@ -336,9 +413,9 @@ export function isRetryableEmptyTurn(o: StreamOutcome): boolean {
 
 // استدعاء متدفّق (SSE) — يعيد مجرى مقاطع النص لعرضها تدريجيًا، ومآلَ الدور
 export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<ClaudeStream> {
-  // مهلةُ الاتصال تخصّ وصول الترويسة وحدها: بعدها تحكم مهلةُ الصمت أدناه، والبثّ
-  // الطويل لا يُقطع لطوله.
-  const upstream = await postWithRetry(env, buildBody(opts, 8192, true), STREAM_CONNECT_TIMEOUT_MS);
+  // مهلةُ الاتصال تخصّ وصول الترويسة وحدها (`headers`): بعدها تحكم مهلةُ الصمت
+  // أدناه، والبثّ الطويل لا يُقطع لطوله — انظر `TimeoutScope`.
+  const upstream = await postWithRetry(env, buildBody(opts, 8192, true), STREAM_CONNECT_TIMEOUT_MS, 'headers');
 
   if (!upstream.ok || !upstream.body) throw await apiError(upstream, 'stream');
 
@@ -470,6 +547,64 @@ export async function streamClaude(env: Env, opts: ClaudeCallOptions): Promise<C
   });
 
   return { stream, outcome: finished };
+}
+
+/**
+ * نداءٌ متدفّق يُجمع نصُّه كاملاً — لما يطول توليده ولا يُعرض وهو يُكتب.
+ *
+ * مهلةُ `callClaude` الجوابُ كلُّه (`CALL_TIMEOUT_MS`)، ونسخُ صفحاتٍ ممسوحة يطول بطول
+ * نصّها: آلافُ الرموز دقائقُ لا ثوانٍ، فيُقطع النداء عند المهلة ثم يُعاد فيُقطع ثانيةً.
+ * والمتدفّق لا سقف لطوله — مهلتُه وصولُ الترويسة ثم الصمت — فيُبنى على `streamClaude`
+ * نفسها ويُقرأ ما تُخرجه: أحداثُ `delta` وحدها نصٌّ.
+ *
+ * وما لم ينتهِ نهايةً معلَنة يُرمى ولا يُعاد نصّاً: بثٌّ قطعه خطأٌ أو انتهى بلا سبب
+ * توقّف نصٌّ ناقص لا يقول عن نفسه إنه ناقص، فيُخزَّن كأنه المستند كلُّه.
+ *
+ * و`deadline` وقتٌ مطلق يُقطع عنده البثّ ويُردّ ما وصل بسببٍ `deadline` — لمن له
+ * زمنٌ محدود يضيع بعده كلُّ شيء (منبّه المنفّذ). فالمستدعي يعرف أن النصّ مقتطع
+ * ويقول ذلك فيه، كما يقوله عند `max_tokens`.
+ */
+export async function collectClaude(
+  env: Env,
+  opts: ClaudeCallOptions,
+  deadline?: number
+): Promise<{ text: string; stopReason: string }> {
+  const { stream, outcome } = await streamClaude(env, opts);
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  while (true) {
+    let timer: any;
+    const next = deadline
+      ? await Promise.race([
+          reader.read(),
+          new Promise<null>((r) => (timer = setTimeout(() => r(null), Math.max(0, deadline - Date.now())))),
+        ]).finally(() => clearTimeout(timer))
+      : await reader.read();
+    if (!next) {
+      await reader.cancel('deadline').catch(() => {});
+      return { text, stopReason: 'deadline' };
+    }
+    const { done, value } = next;
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+    for (const frame of frames) {
+      if (!frame.startsWith('event: delta\n')) continue;
+      const data = frame.split('\n').find((l) => l.startsWith('data: '));
+      if (data) text += String(JSON.parse(data.slice(6)).text ?? '');
+    }
+  }
+  const o = await outcome;
+  if (!text.trim() && o.stopReason === 'refusal') {
+    throw new Error(`Claude refused the request (${o.refusalCategory ?? 'unknown'})`);
+  }
+  if (!o.stopReason || o.stopReason === 'stream_error') {
+    throw new Error(`claude stream ended without completing (${o.stopReason ?? 'no stop reason'})`);
+  }
+  return { text, stopReason: o.stopReason };
 }
 
 /**

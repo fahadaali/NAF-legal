@@ -26,13 +26,15 @@ import clauseRoutes from './routes/clauses';
 import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
 import legalRoutes from './routes/legal';
-import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery, runLinkExtraction } from './cron';
+import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery, runLinkExtraction, runAttachmentRecovery } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
 import type { Env, Variables } from './types';
 
 // مهامّ البحث في الخلفية — يُصدَّر من المدخل ليجده الربط `RESEARCH`.
 export { ResearchRunner } from './research-runner';
+// واستخراجُ نصوص المرفقات في الخلفية — ويجده الربط `EXTRACT`.
+export { ExtractRunner } from './extract-runner';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -239,7 +241,9 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     // ردُّ دفعات الاستيراد المتروكة في كل نبضة، ومهامُّ الليل في نبضتها وحدها.
     // الإحالات بين المواد في كل نبضة كذلك — قواعدُ على القاعدة وحدها بلا نموذج.
+    // ومرفقاتٌ علِق استخراجها تُوسَم متعثّرةً في كل نبضة — فلا تدور شارتُها بلا نهاية.
     ctx.waitUntil(runLinkExtraction(env));
+    ctx.waitUntil(runAttachmentRecovery(env).then(() => {}));
     ctx.waitUntil(runImportRecovery(env).then(() => {}));
     if (!isNightlyTick(event.scheduledTime)) return;
     ctx.waitUntil(

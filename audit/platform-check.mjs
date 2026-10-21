@@ -43,6 +43,9 @@ const routes = await bundle(
    export { searchDocuments, reindexDocuments } from '../lib/research/documents';
    export { tagPendingArticles, retagAll } from '../lib/research/issues';
    export { ResearchRunner } from '../research-runner';
+   export { ExtractRunner } from '../extract-runner';
+   export { ocrPages } from '../lib/extract';
+   export { runAttachmentRecovery } from '../cron';
    import { Hono } from 'hono';
    import chatRoutes from './chat';
    // كما في \`src/index.ts\`: الخطأ يصل \`app.onError\` فيُكتب في \`c.error\`.
@@ -245,6 +248,139 @@ await t.check('ازدحام الخدمة (529) يُعاد ولا يُسقط ال
   }
 });
 
+/* مهلةُ الاتصال كانت تُربط بطلب البثّ كلِّه (`AbortSignal.timeout`) فتقطع جسمه
+   عند تسعين ثانية، والنبضاتُ تصل والنموذج يفكّر: صياغةُ عقدٍ بمرفقه انتهت مرّتين
+   بلا نصّ و«انقطع التوليد من الخدمة»، وقُصّت صحيفةُ دعوى في منتصفها.
+   والزمن هنا مصغَّرٌ مئة مرّة: مهلة الاتصال 0.9ث، ومهلة الصمت 1.2ث، والنبضة إلى
+   المتصفّح 0.15ث. والبثّ الوهمي بالزمن الحقيقي، ويُلغى كما يُلغى البثّ الحقيقي حين
+   تنطلق إشارةُ طلبه. */
+await t.check('بثٌّ أطول من مهلة الاتصال لا يُقطع ما دامت أحداثه تصل، والمتصفّح تبلغه نبضة', async () => {
+  const { env, db } = await chatFixture();
+  const realSetTimeout = globalThis.setTimeout;
+  const realSetInterval = globalThis.setInterval;
+  const realAbortTimeout = AbortSignal.timeout;
+  globalThis.setTimeout = (fn, ms, ...args) => realSetTimeout(fn, (ms ?? 0) / 100, ...args);
+  globalThis.setInterval = (fn, ms, ...args) => realSetInterval(fn, (ms ?? 0) / 100, ...args);
+  AbortSignal.timeout = (ms) => realAbortTimeout.call(AbortSignal, ms / 100);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url.startsWith('https://api.anthropic.com/')) return realFetch(input, init);
+    const body = JSON.parse(init.body);
+    if (!body.stream) {
+      const text = isPlanner(body) ? '{"needs_knowledge_base": false}' : 'عنوان';
+      return new Response(
+        JSON.stringify({ content: [{ type: 'text', text }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    const enc = new TextEncoder();
+    const ev = (type, data) => enc.encode(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+    const stream = new ReadableStream({
+      start(ctrl) {
+        const timers = [];
+        const at = (ms, fn) => timers.push(realSetTimeout(fn, ms));
+        init.signal?.addEventListener('abort', () => {
+          timers.forEach(clearTimeout);
+          ctrl.error(init.signal.reason);
+        });
+        ctrl.enqueue(ev('message_start', { message: { usage: { input_tokens: 10 } } }));
+        ctrl.enqueue(ev('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '' } }));
+        for (let ms = 300; ms < 1500; ms += 300) at(ms, () => ctrl.enqueue(ev('ping', {})));
+        at(1500, () => {
+          ctrl.enqueue(ev('content_block_stop', { index: 0 }));
+          ctrl.enqueue(ev('content_block_start', { index: 1, content_block: { type: 'text', text: '' } }));
+          ctrl.enqueue(ev('content_block_delta', { index: 1, delta: { type: 'text_delta', text: 'نصّ العقد كاملاً' } }));
+          ctrl.enqueue(ev('content_block_stop', { index: 1 }));
+          ctrl.enqueue(ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }));
+          ctrl.enqueue(ev('message_stop', {}));
+          ctrl.close();
+        });
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const { text } = await sendTurn(env, 'صغ العقد');
+    assert.doesNotMatch(text, /event: error/, 'انقطع البثّ عند مهلة الاتصال');
+    assert.match(text, /^: keep-alive$/m, 'لم تبلغ المتصفّحَ نبضةٌ أثناء التفكير');
+    const saved = db.q("SELECT content, metadata_json FROM messages WHERE role = 'assistant'");
+    assert.equal(saved.length, 1, 'لم يُحفظ الردّ');
+    assert.match(saved[0].content, /نصّ العقد كاملاً/);
+    assert.equal(JSON.parse(saved[0].metadata_json).interrupted, undefined, 'حُفظ الردّ موسوماً بالانقطاع');
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.setInterval = realSetInterval;
+    AbortSignal.timeout = realAbortTimeout;
+  }
+});
+
+/** بديلٌ يردّ كلَّ نداءٍ إلى Claude بالحالة والجسم نفسيهما، ويعدّ المتدفّق منها وغيره. */
+function refusingAnthropic(status, error) {
+  const realFetch = globalThis.fetch;
+  const calls = { planner: 0, stream: 0, other: 0 };
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url.startsWith('https://api.anthropic.com/')) return realFetch(input, init);
+    const body = JSON.parse(init.body);
+    if (body.stream) calls.stream++;
+    else if (isPlanner(body)) calls.planner++;
+    else calls.other++;
+    return new Response(JSON.stringify({ type: 'error', error }), { status, headers: { 'content-type': 'application/json' } });
+  };
+  return { calls, restore: () => (globalThis.fetch = realFetch) };
+}
+
+await t.check('سقفُ الإنفاق الشهري (429) لا يُعاد كحدّ المعدّل، والردّ يحمل رمزَ رفض الحساب', async () => {
+  const { env } = await chatFixture();
+  const fake = refusingAnthropic(429, {
+    type: 'rate_limit_error',
+    message: 'You have reached your API usage limits: your organization has crossed its monthly API usage threshold.',
+    details: { error_code: 'enforced_spend_limit_reached' },
+  });
+  try {
+    const { res, text } = await sendTurn(env, 'ما مكافأة نهاية الخدمة؟');
+    assert.equal(res.status, 502);
+    assert.equal(JSON.parse(text).code, 'account_refused');
+    assert.equal(fake.calls.planner, 1, `أُعيد المُخطِّط ${fake.calls.planner} مرّات على رفضٍ لا يرفعه انتظار`);
+    assert.equal(fake.calls.stream, 1, `أُعيد التوليد ${fake.calls.stream} مرّات`);
+    assert.equal(await env.KV.get('gen:c1'), null, 'بقيت المحادثة «قيد التوليد»');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('رصيدٌ نفد (400) لا يُعاد بسياقٍ نصّي — والـ429 العابر يبقى يُعاد', async () => {
+  const { env } = await chatFixture();
+  const fake = refusingAnthropic(400, {
+    type: 'invalid_request_error',
+    message: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.',
+  });
+  try {
+    const { res, text } = await sendTurn(env, 'ما مكافأة نهاية الخدمة؟');
+    assert.equal(res.status, 502);
+    assert.equal(JSON.parse(text).code, 'account_refused');
+    assert.equal(fake.calls.stream, 1, 'أُعيد التوليد بسياقٍ نصّي والرفضُ على الحساب لا على الكتل');
+    assert.equal(fake.calls.planner, 1, 'أُعيد المُخطِّط بلا مخرجٍ منظَّم والرفضُ على الحساب لا على المخطّط');
+  } finally {
+    fake.restore();
+  }
+  // حدُّ المعدّل نفسه عارضٌ يُعاد كما كان، ولا رمزَ رفضٍ على ردّه.
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...args) => realSetTimeout(fn, (ms ?? 0) / 100, ...args);
+  const rate = refusingAnthropic(429, { type: 'rate_limit_error', message: 'Number of request tokens has exceeded your per-minute rate limit' });
+  try {
+    const { res, text } = await sendTurn(env, 'ما مكافأة نهاية الخدمة؟');
+    assert.equal(res.status, 502);
+    assert.equal(JSON.parse(text).code, undefined, 'وُسم حدُّ المعدّل رفضاً للحساب');
+    assert.equal(rate.calls.stream, 3, `حدُّ المعدّل أُعيد ${rate.calls.stream} مرّات لا ثلاثاً`);
+  } finally {
+    rate.restore();
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
 await t.check('سجلّ الاستخدام يحفظ رموز التخزين المؤقّت ويسعّرها بسعرها', async () => {
   const { env, db } = await chatFixture();
   const lib = await bundle('platform-usage', `export { logUsage, computeCost } from './usage';`);
@@ -253,6 +389,227 @@ await t.check('سجلّ الاستخدام يحفظ رموز التخزين ال
   assert.equal(row.cache_read_tokens, 100000);
   // 1000 × 4$ + 100000 × 0.20$ لكل مليون = 0.004 + 0.02
   assert.ok(Math.abs(row.cost_usd - 0.024) < 1e-9, `الكلفة ${row.cost_usd}`);
+});
+
+// ── استخراج المرفقات في الخلفية ──
+
+/** صفحاتٌ ممسوحة بصورها: النصُّ لكل صورة يقول أيَّ صورةٍ قرأ، فيُعرف موضعُه في المستند. */
+function pagesFake() {
+  return fakeAnthropic((b) => {
+    const imgs = b.messages[0].content.filter((x) => x.type === 'image');
+    return { text: imgs.map((x) => `نص ${Buffer.from(x.source.data, 'base64').toString()}`).join('\n<<<PAGE>>>\n') };
+  });
+}
+
+function scannedUpload(pages, images) {
+  const fd = new FormData();
+  fd.append('file', new File(['%PDF-1.7 ممسوح'], 'صك.pdf', { type: 'application/pdf' }));
+  fd.append('layout', JSON.stringify(pages));
+  for (let k = 0; k < images; k++) fd.append('page', new File([`jpeg-${k}`], `p${k}.jpg`, { type: 'image/jpeg' }));
+  return fd;
+}
+
+await t.check('مستندٌ ممسوح يُقرأ في منفّذه لا في طلب الرفع، وصورُ صفحاته تُحذف بعد قراءتها', async () => {
+  const { env, db } = await chatFixture();
+  const e = { ...env, R2: makeR2() };
+  const ns = fakeRunners(() => e, routes.ExtractRunner);
+  e.EXTRACT = ns;
+  const fake = pagesFake();
+  try {
+    const ctx = makeCtx();
+    const res = await routes.files.request(
+      '/upload/c1',
+      { method: 'POST', body: scannedUpload(['نص الصفحة الأولى', null, null, null, null, 'نص الصفحة السادسة', null], 5) },
+      e,
+      ctx
+    );
+    await ctx.settle();
+    assert.equal(res.status, 200);
+    const { id, parse_status } = await res.json();
+    assert.equal(parse_status, 'pending');
+    assert.equal(fake.calls.length, 0, 'قُرئ في طلب الرفع — وذاك يُقطع بعد ثلاثين ثانية من ردّه');
+    const obj = ns.objects.get(id);
+    assert.ok(obj?.state.alarmAt, 'لم يُضبط المنبّه');
+    assert.equal([...e.R2._map.keys()].filter((k) => k.startsWith(`ocr/${id}/`)).length, 6, 'لم تُحفظ الصور الخمس وتخطيطها');
+
+    await obj.runner.alarm();
+    const row = db.q('SELECT parse_status, parsed_text FROM attachments WHERE id = ?', id)[0];
+    assert.equal(row.parse_status, 'ready');
+    assert.equal(
+      row.parsed_text,
+      ['نص الصفحة الأولى', 'نص jpeg-0', 'نص jpeg-1', 'نص jpeg-2', 'نص jpeg-3', 'نص الصفحة السادسة', 'نص jpeg-4'].join('\n\n')
+    );
+    assert.equal(fake.calls.length, 2, `خمس صفحاتٍ في ${fake.calls.length} نداءات — ثلاثٌ في النداء`);
+    assert.ok(fake.calls.every((b) => b.stream === true), 'نداءٌ غير متدفّق يُقطع عند مهلته والنسخُ يطول');
+    assert.equal([...e.R2._map.keys()].filter((k) => k.startsWith('ocr/')).length, 0, 'بقيت صور الصفحات بعد قراءتها');
+    assert.equal(obj.data.size, 0, 'بقي في تخزين الكائن ما لا حاجة إليه');
+
+    // منبّهٌ يُعاد بعد تمامه لا يقرأ ثانيةً.
+    const calls = fake.calls.length;
+    obj.data.set('attachmentId', id);
+    await obj.runner.alarm();
+    assert.equal(fake.calls.length, calls, 'أُعيدت قراءة مرفقٍ استقرّ');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('الملفُّ كلُّه بلا صور صفحاته يُقرأ من R2 في المنفّذ، وما انقطع مرّتين يُوسَم ولا يُقرأ ثالثةً', async () => {
+  const { env, db } = await chatFixture();
+  const e = { ...env, R2: makeR2() };
+  const ns = fakeRunners(() => e, routes.ExtractRunner);
+  e.EXTRACT = ns;
+  const fake = fakeAnthropic((b) => ({ text: b.messages[0].content[0].type === 'document' ? 'نص الصك كاملاً' : '' }));
+  try {
+    const fd = new FormData();
+    fd.append('file', new File(['%PDF-1.7 ممسوح'], 'صك.pdf', { type: 'application/pdf' }));
+    const ctx = makeCtx();
+    const { id } = await (await routes.files.request('/upload/c1', { method: 'POST', body: fd }, e, ctx)).json();
+    await ctx.settle();
+    assert.equal(fake.calls.length, 0, 'قُرئ في طلب الرفع');
+    await ns.objects.get(id).runner.alarm();
+    const row = db.q('SELECT parse_status, parsed_text FROM attachments WHERE id = ?', id)[0];
+    assert.equal(row.parse_status, 'ready');
+    assert.equal(row.parsed_text, 'نص الصك كاملاً');
+    assert.ok(fake.calls[0].stream, 'نسخُ الملف كلِّه غير متدفّق — يُقطع عند مهلته');
+
+    // منبّهٌ قُطع مرّتين قبل أن يتمّ: الثالث يَسِمه متعثّراً ولا يقرأ.
+    db.q("UPDATE attachments SET parse_status = 'pending', parsed_text = NULL WHERE id = ?", id);
+    const obj = ns.objects.get(id);
+    obj.data.set('attachmentId', id);
+    obj.data.set('attempts', 2);
+    const calls = fake.calls.length;
+    await obj.runner.alarm();
+    assert.equal(fake.calls.length, calls, 'قُرئ ثالثةً');
+    assert.deepEqual({ ...db.q('SELECT parse_status, parse_error FROM attachments WHERE id = ?', id)[0] }, {
+      parse_status: 'error',
+      parse_error: 'extraction_stalled',
+    });
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('تعذُّر بدء المنفّذ لا يترك الملف بلا قراءة، ولا تبقى صورُ صفحاته', async () => {
+  const { env, db } = await chatFixture();
+  const e = { ...env, R2: makeR2() };
+  e.EXTRACT = { idFromName: (n) => n, get: () => ({ fetch: async () => { throw new Error('unavailable'); } }) };
+  const fake = pagesFake();
+  try {
+    const ctx = makeCtx();
+    const { id } = await (await routes.files.request('/upload/c1', { method: 'POST', body: scannedUpload([null, null], 2) }, e, ctx)).json();
+    await ctx.settle();
+    const row = db.q('SELECT parse_status, parsed_text FROM attachments WHERE id = ?', id)[0];
+    assert.equal(row.parse_status, 'ready', 'بقي الملف بلا قراءة');
+    assert.equal(row.parsed_text, 'نص jpeg-0\n\nنص jpeg-1');
+    assert.equal([...e.R2._map.keys()].filter((k) => k.startsWith('ocr/')).length, 0, 'بقيت صورٌ لا منفّذ يقرؤها');
+  } finally {
+    fake.restore();
+  }
+});
+
+await t.check('دفعةٌ تعثّرت تُعاد مرّة، وما تعثّر مرّتين يُقال غائباً ولا يُسقط أخواته', async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...args) => realSetTimeout(fn, (ms ?? 0) / 100, ...args);
+  const seen = new Map();
+  const fake = fakeAnthropic((b) => {
+    const names = b.messages[0].content.filter((x) => x.type === 'image').map((x) => Buffer.from(x.source.data, 'base64').toString());
+    const key = names.join(',');
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+    // الدفعة الأولى تنقطع مرّةً ثم تتمّ، والثالثة تنقطع دائماً.
+    if ((names[0] === 'p0' && seen.get(key) === 1) || names[0] === 'p6') return { text: 'x', breakAfter: 0 };
+    return { text: names.map((n) => `نص ${n}`).join('\n<<<PAGE>>>\n') };
+  });
+  try {
+    const images = Array.from({ length: 8 }, (_, k) => ({ mime: 'image/jpeg', load: async () => new TextEncoder().encode(`p${k}`).buffer }));
+    const out = await routes.ocrPages({ ...ENV_BASE }, images);
+    assert.deepEqual(out.slice(0, 6), ['نص p0', 'نص p1', 'نص p2', 'نص p3', 'نص p4', 'نص p5']);
+    assert.deepEqual(out.slice(6), ['…(تعذّرت قراءة هذه الصفحة)', '…(تعذّرت قراءة هذه الصفحة)']);
+    assert.equal(seen.get('p0,p1,p2'), 2, 'لم تُعد الدفعة المتعثّرة');
+    assert.equal(seen.get('p6,p7'), 2, 'أُعيدت المتعثّرة أكثر من مرّة');
+  } finally {
+    fake.restore();
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
+await t.check('للمنفّذ وقتٌ يقف عنده: الجاري يُحفظ ما وصل منه مقتطعاً، وما لم يبدأ لا يُبدأ', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url.startsWith('https://api.anthropic.com/')) return realFetch(input, init);
+    calls++;
+    const enc = new TextEncoder();
+    const ev = (type, data) => enc.encode(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+    let ping;
+    // نسخٌ بطيء: نصُّ الصفحة الأولى ثم نبضاتٌ بلا نهاية — كأن الصفحة الثانية لا تتمّ.
+    const stream = new ReadableStream({
+      start(ctrl) {
+        ctrl.enqueue(ev('message_start', { message: { usage: { input_tokens: 10 } } }));
+        ctrl.enqueue(ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }));
+        ctrl.enqueue(ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'نص p0' } }));
+        ping = setInterval(() => ctrl.enqueue(ev('ping', {})), 20);
+      },
+      cancel() {
+        clearInterval(ping);
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const images = Array.from({ length: 2 }, (_, k) => ({ mime: 'image/jpeg', load: async () => new TextEncoder().encode(`p${k}`).buffer }));
+    const out = await routes.ocrPages({ ...ENV_BASE }, images, Date.now() + 300);
+    assert.deepEqual(out, ['نص p0', '\n…(مقتطع)'], 'ضاع ما قُرئ قبل الوقت، أو حُفظ بلا ذيل القصّ');
+
+    const before = calls;
+    const skipped = await routes.ocrPages({ ...ENV_BASE }, images, Date.now() - 1);
+    assert.deepEqual(skipped, ['…(تعذّرت قراءة هذه الصفحة)', '…(تعذّرت قراءة هذه الصفحة)']);
+    assert.equal(calls, before, 'بدأ نداءً بعد انقضاء الوقت');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await t.check('مرفقٌ علِق استخراجه يُوسَم متعثّراً بعد حدّه وتُحذف صوره، والحديثُ يُترك', async () => {
+  const { env, db } = await chatFixture();
+  const e = { ...env, R2: makeR2() };
+  const old = Date.now() - 60 * 60_000;
+  db.q(`INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parse_status, created_at)
+        VALUES ('stuck', 'c1', 'k1', 'a.pdf', 'application/pdf', 1, 'pending', ?),
+               ('fresh', 'c1', 'k2', 'b.pdf', 'application/pdf', 1, 'pending', ?),
+               ('done', 'c1', 'k3', 'c.pdf', 'application/pdf', 1, 'ready', ?)`, old, Date.now(), old);
+  await e.R2.put('ocr/stuck/page-0', 'jpeg');
+  await e.R2.put('ocr/stuck/layout.json', '{}');
+  assert.equal(await routes.runAttachmentRecovery(e), 1);
+  const rows = Object.fromEntries(db.q('SELECT id, parse_status FROM attachments').map((r) => [r.id, r.parse_status]));
+  assert.deepEqual(rows, { stuck: 'error', fresh: 'pending', done: 'ready' });
+  assert.equal(e.R2._map.size, 0, 'بقيت صور مرفقٍ وُسم متعثّراً');
+});
+
+await t.check('ملفٌّ أُرسل ولم يبلغ نصُّه الدور يُسمّى للمساعد، ولا يجيب كأن لا ملف', async () => {
+  const { env, db } = await chatFixture();
+  db.q(`INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, parse_status, created_at)
+        VALUES ('a1', 'c1', 'k1', 'صك الحكم.pdf', 'application/pdf', 1, 'error', 1)`);
+  const fake = fakeAnthropic((b) => (isPlanner(b) ? { text: '{"needs_knowledge_base": false}' } : { text: 'رد' }));
+  try {
+    const ctx = makeCtx();
+    const res = await routes.chatApp.request(
+      '/api/chat/c1',
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'حلّل الصك', attachment_ids: ['a1'] }) },
+      env,
+      ctx
+    );
+    if (res.body) await res.text();
+    await ctx.settle();
+    const gen = fake.calls.find(isGeneration);
+    assert.ok(gen, 'لم يقع توليد');
+    const last = JSON.stringify(gen.messages[gen.messages.length - 1].content);
+    assert.match(last, /صك الحكم\.pdf/, 'سقط الملف من سياق الدور بلا ذكر');
+    assert.match(last, /تعذّر استخراج نصّ هذا الملف/);
+  } finally {
+    fake.restore();
+  }
 });
 
 console.log('\nالأمان');
@@ -925,7 +1282,7 @@ await t.check('بعد الاعتماد: التوسيم بالمعتمد وحده
 // ── البحث في الخلفية ──
 
 /** بديلُ ربط Durable Object: كائنٌ لكل اسم، بتخزينٍ في الذاكرة ومنبّهٍ يُسجَّل ولا يُطلق. */
-function fakeRunners(getEnv) {
+function fakeRunners(getEnv, Runner = routes.ResearchRunner) {
   const objects = new Map();
   return {
     objects,
@@ -942,7 +1299,7 @@ function fakeRunners(getEnv) {
             setAlarm: async (t) => void (state.alarmAt = t),
           },
         };
-        objects.set(id, { state, runner: new routes.ResearchRunner(state, getEnv()), data });
+        objects.set(id, { state, runner: new Runner(state, getEnv()), data });
       }
       const o = objects.get(id);
       return { fetch: (url, init) => o.runner.fetch(new Request(url, init)) };

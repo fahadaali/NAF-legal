@@ -169,12 +169,13 @@ ${userMessage}`;
     };
     /* مخرجٌ منظَّم أولاً. وإن رُدّ الطلب لعلّةٍ في المخطّط نفسه (400) — حقلٌ لا
        يقبله الـAPI — فالطلب نفسه بلا مخطّط، والتقاطُ JSON من النصّ كما كان: خطةٌ
-       بلا ضمان المخطّط أنفع من خطةٍ احتياطية لا استعلام فيها. */
+       بلا ضمان المخطّط أنفع من خطةٍ احتياطية لا استعلام فيها. إلا أن يكون الـ400
+       رفضَ الحساب (`ClaudeApiError.refusal`) — رصيدٌ نفد — فالمخطّط بريء منه. */
     let result: { text: string; raw: any };
     try {
       result = await callClaude(env, { ...request, format: planSchema(issues.map((i) => i.key)) });
     } catch (e) {
-      if (!/Claude API 400/.test(String((e as Error)?.message))) throw e;
+      if ((e as any)?.refusal || !/Claude API 400/.test(String((e as Error)?.message))) throw e;
       console.error('planner schema rejected — retrying without structured output');
       result = await callClaude(env, request);
     }
