@@ -6,6 +6,8 @@ import { LegalImport } from './LegalImport';
 import { LegalLaws } from './LegalLaws';
 import { LegalReview } from './LegalReview';
 import ClauseLibrary from './ClauseLibrary';
+import { GroundingMapTab, IssuesTab } from './ResearchLists';
+import { RT } from '../lib/researchTerms';
 import { RequestStatusPill } from './Support';
 import { formatAmount, formatDate, formatNumber, formatTime, isolate } from '../lib/format';
 import { Icon, ICON_MD, ICON_SM } from '../lib/icons';
@@ -17,10 +19,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
 
-type Tab = 'kb' | 'sources' | 'requests' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
+type Tab = 'kb' | 'grounding' | 'issues' | 'sources' | 'requests' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
 
 const TABS: [Tab, string][] = [
   ['kb', 'قاعدة المعرفة'],
+  // ما يراجعه المحامون قبل أن يقرأه المحرّك — بجوار قاعدة المعرفة التي يحكمانها.
+  ['grounding', RT.groundingMap],
+  ['issues', RT.issuesList],
   ['sources', 'المصادر الخارجية'],
   ['requests', 'طلبات الأنظمة'],
   ['tracking', 'تتبّع الأنظمة'],
@@ -66,6 +71,8 @@ export default function Admin() {
           ))}
         </div>
         {tab === 'kb' && <KbTab />}
+        {tab === 'grounding' && <GroundingMapTab />}
+        {tab === 'issues' && <IssuesTab />}
         {tab === 'sources' && <SourcesTab />}
         {tab === 'requests' && <RequestsTab onChange={loadPending} />}
         {tab === 'tracking' && <TrackingTab />}
