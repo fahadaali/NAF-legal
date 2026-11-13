@@ -19,7 +19,8 @@ app.use('*', requireAuth);
 app.get('/', async (c) => {
   const user = c.get('user');
   const folder = c.req.query('folder'); // تصفية حسب مجلّد القضية
-  const cols = 'id, title, consultation_type, folder_id, created_at, updated_at';
+  // `origin` و`origin_client` لعلامة «من {الأداة}» في القائمة (هجرة 0043).
+  const cols = 'id, title, consultation_type, folder_id, created_at, updated_at, origin, origin_client';
   let rows;
   if (folder) {
     rows = await c.env.DB.prepare(

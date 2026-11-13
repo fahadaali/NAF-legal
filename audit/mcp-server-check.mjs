@@ -153,5 +153,32 @@ console.log('التركيب');
   check('ولا تقرأ الجداول السرّية', !/\b(conversations|messages|case_folders|attachments|kb_documents)\b/.test(tools.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')));
 }
 
+console.log('التفويض والمحادثات');
+{
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const index = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+  const authMount = index.indexOf("app.route('/', mcpAuthServerRoutes)");
+  check('خادم التفويض قبل وسيط الدخول', authMount > 0 && authMount < index.indexOf("app.use('*', ssoMiddleware)"));
+  check('وسماحُ العضو خلفه (`/api/mcp`)', /app\.route\('\/api\/mcp', mcpConnectionRoutes\)/.test(index));
+  check('وكنسُ المنتهي في نبضة المؤقّت', /purgeMcpExpired\(env\)/.test(index));
+  const authLib = readFileSync(new URL('../src/lib/auth.ts', import.meta.url), 'utf8');
+  check('القارئ يسمح ويُلغي — مطابقةً تامّة', authLib.includes("'/api/mcp/connect/approve'") && authLib.includes("'/api/mcp/connections/revoke'"));
+
+  const oauth = strip(readFileSync(new URL('../src/mcp/oauth.ts', import.meta.url), 'utf8'));
+  check('PKCE بـS256 وحده', oauth.includes("'S256'") && !/'plain'/.test(oauth));
+  check('رمز التفويض يُمحى في قراءته', /DELETE FROM mcp_auth_codes WHERE code_hash = \? RETURNING/.test(oauth));
+  check('عودة رمز التجديد تُلغي الربط', /refresh_reuse/.test(oauth));
+  check('العضو يُفحص بـis_active في كل طلب', /FROM members WHERE user_id = \? AND is_active = 1/.test(oauth));
+  check('لا رمز يُخزَّن خاماً', !/INSERT INTO mcp_tokens[^;]*\b(access|refresh)\b,\s*connectionId/.test(oauth) && /await sha256\(access\)/.test(oauth));
+
+  const conv = strip(readFileSync(new URL('../src/mcp/conversations.ts', import.meta.url), 'utf8'));
+  check('أداتا الحفظ لمن يكتب وحده', (conv.match(/visibleTo: canWrite/g) ?? []).length === 2 && /p\.role !== 'viewer'/.test(conv));
+  check('وأدوات المحادثات للعضو لا الضيف', (conv.match(/visibleTo: (canWrite|isMember)/g) ?? []).length === 4);
+  const reads = conv.match(/FROM conversations[^`'"]*/g) ?? [];
+  check('كلُّ قراءةٍ للمحادثات مقيّدةٌ بصاحبها', reads.length > 0 && reads.every((q) => /user_id = \?/.test(q)), reads.join(' | '));
+  check('ولا تُمحى رسالةٌ ولا تُعدَّل', !/DELETE FROM messages|UPDATE messages/.test(conv));
+  check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
+}
+
 console.log(failed ? `\n${failed} فحصاً فشل` : '\nسليم');
 process.exit(failed ? 1 : 0);
