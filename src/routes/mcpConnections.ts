@@ -37,10 +37,20 @@ interface ConnectionRow {
   owner_email?: string | null;
 }
 
-/** «مربوط» أو «غير مربوط» — الحالتان المسجّلتان وحدهما (§١٥). */
-function withStatus(r: ConnectionRow) {
-  const connected = !r.revoked_at && r.expires_at > Date.now();
-  return { ...r, status: connected ? 'connected' : 'not_connected' };
+/**
+ * «مربوط» أو «غير مربوط» — الحالتان المسجّلتان وحدهما (§١٥).
+ *
+ * والربطُ مربوطٌ ما دام له رمزُ تجديدٍ صالح، لا ما دام لم يبلغ سقفه المطلق.
+ * أداةٌ سكنت أكثر من ثلاثين يوماً انتهى رمز تجديدها فلا تعمل، وكانت تُعرض
+ * «مربوط» بزرّ «إلغاء الربط» حتى تمام التسعين — حالٌ تكذب على صاحبها.
+ */
+const LIVE_SQL = `(c.revoked_at IS NULL AND c.expires_at > ?1 AND EXISTS (
+  SELECT 1 FROM mcp_tokens t
+  WHERE t.connection_id = c.id AND t.kind = 'refresh' AND t.used_at IS NULL AND t.expires_at > ?1))`;
+
+function withStatus(r: ConnectionRow & { live: number }) {
+  const { live, ...rest } = r;
+  return { ...rest, status: live ? 'connected' : 'not_connected' };
 }
 
 // ── شاشة الإذن للعضو ──
@@ -49,7 +59,7 @@ app.get('/connect/:id', async (c) => {
   const r = await describeRequest(c.env, c.req.param('id'));
   if (!r) return c.json({ error: EXPIRED, expired: true }, 410);
   const user = c.get('user');
-  return c.json({ client_name: r.clientName, can_save: user.role !== 'viewer' });
+  return c.json({ client_name: r.clientName, redirect_host: r.redirectHost, can_save: user.role !== 'viewer' });
 });
 
 app.post('/connect/approve', async (c: Ctx) => {
@@ -67,11 +77,12 @@ app.post('/connect/approve', async (c: Ctx) => {
 app.get('/connections', async (c) => {
   const user = c.get('user');
   const rows = await c.env.DB.prepare(
-    `SELECT id, client_name, subject_kind, member_id, guest_id, created_at, last_used_at, expires_at, revoked_at
-     FROM mcp_connections WHERE member_id = ? ORDER BY created_at DESC LIMIT 100`
+    `SELECT c.id, c.client_name, c.subject_kind, c.member_id, c.guest_id, c.created_at, c.last_used_at, c.expires_at, c.revoked_at,
+            ${LIVE_SQL} AS live
+     FROM mcp_connections c WHERE c.member_id = ?2 ORDER BY c.created_at DESC LIMIT 100`
   )
-    .bind(user.memberId ?? '')
-    .all<ConnectionRow>();
+    .bind(Date.now(), user.memberId ?? '')
+    .all<ConnectionRow & { live: number }>();
   return c.json({ connections: (rows.results ?? []).map(withStatus) });
 });
 
@@ -95,12 +106,15 @@ admin.use('*', requireAdmin);
 admin.get('/connections', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT c.id, c.client_name, c.subject_kind, c.member_id, c.guest_id, c.created_at, c.last_used_at, c.expires_at, c.revoked_at,
-            COALESCE(m.display_name, m.email, g.email) AS owner_name, COALESCE(m.email, g.email) AS owner_email
+            COALESCE(m.display_name, m.email, g.email) AS owner_name, COALESCE(m.email, g.email) AS owner_email,
+            ${LIVE_SQL} AS live
      FROM mcp_connections c
      LEFT JOIN members m ON m.user_id = c.member_id
      LEFT JOIN mcp_guests g ON g.id = c.guest_id
      ORDER BY c.created_at DESC LIMIT 500`
-  ).all<ConnectionRow>();
+  )
+    .bind(Date.now())
+    .all<ConnectionRow & { live: number }>();
   return c.json({ connections: (rows.results ?? []).map(withStatus) });
 });
 
@@ -114,7 +128,7 @@ admin.post('/connections/revoke', async (c) => {
 admin.get('/guests', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT g.id, g.email, g.created_at,
-            EXISTS (SELECT 1 FROM mcp_connections c WHERE c.guest_id = g.id AND c.revoked_at IS NULL AND c.expires_at > ?) AS connected
+            EXISTS (SELECT 1 FROM mcp_connections c WHERE c.guest_id = g.id AND ${LIVE_SQL}) AS connected
      FROM mcp_guests g ORDER BY g.created_at DESC LIMIT 500`
   )
     .bind(Date.now())
@@ -148,12 +162,15 @@ admin.delete('/guests/:id', async (c) => {
   const id = c.req.param('id');
   const guest = await c.env.DB.prepare('SELECT email_norm FROM mcp_guests WHERE id = ?').bind(id).first<{ email_norm: string }>();
   if (!guest) return c.json({ error: 'غير موجود' }, 404);
-  const conns = await c.env.DB.prepare('SELECT id FROM mcp_connections WHERE guest_id = ? AND revoked_at IS NULL')
-    .bind(id)
-    .all<{ id: string }>();
-  for (const r of conns.results ?? []) await revokeConnection(c.env, r.id, 'guest_removed');
+  // دفعةٌ واحدة ذرّية: لا يبقى ربطٌ حيّ لضيفٍ حُذف بريده لو انقطع العامل في وسطها.
   await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE mcp_connections SET revoked_at = ?, revoked_reason = 'guest_removed'
+       WHERE guest_id = ? AND revoked_at IS NULL`
+    ).bind(Date.now(), id),
+    c.env.DB.prepare('DELETE FROM mcp_tokens WHERE connection_id IN (SELECT id FROM mcp_connections WHERE guest_id = ?)').bind(id),
     c.env.DB.prepare('DELETE FROM mcp_guest_codes WHERE guest_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM mcp_guest_throttle WHERE guest_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM mcp_guests WHERE id = ?').bind(id),
   ]);
   await audit(c, 'mcp.guest.remove', id, { email: guest.email_norm });

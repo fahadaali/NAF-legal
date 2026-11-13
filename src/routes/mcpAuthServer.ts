@@ -11,6 +11,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../types';
+import { withinRateLimit, RATE_LIMIT_MESSAGE } from '../lib/rateLimit';
 import {
   protectedResourceMetadata,
   authorizationServerMetadata,
@@ -42,6 +43,26 @@ function cors(c: Context, body: unknown, status = 200) {
 }
 
 const origin = (c: Context) => new URL(c.req.url).origin;
+
+/**
+ * حدُّ المعدّل على أبواب التفويض العامّة — بالعنوان، فلا حساب هنا يُعدّ عليه.
+ *
+ * ليس سقفاً على الاستخدام (`/mcp` نفسه بلا سقف بقرار صاحب المنصة): هو على
+ * التسجيل والتفويض ورمز الضيف، وكلُّها مفتوحةٌ لمن لا حساب له. ثلاثون في
+ * الدقيقة تزيد على حاجة أيّ ربطٍ حقيقيّ — الربط كلُّه خمسةُ نداءاتٍ أو ستّة —
+ * وتُبطئ من يجرّب البريد بعد البريد أو يُغرق جدول الأدوات.
+ */
+const PUBLIC_LIMIT = 30;
+const limited = async (c: Context<{ Bindings: Env }>, next: () => Promise<void>) => {
+  const ip = c.req.header('cf-connecting-ip') ?? 'x';
+  if (!(await withinRateLimit(c.env, `rl:mcp-auth:${ip}`, PUBLIC_LIMIT, 60))) {
+    return c.json({ error: RATE_LIMIT_MESSAGE }, 429, CORS);
+  }
+  await next();
+};
+app.use('/oauth/register', limited);
+app.use('/oauth/authorize', limited);
+app.use('/oauth/connect/*', limited);
 
 for (const path of [
   '/.well-known/oauth-protected-resource',
@@ -114,7 +135,7 @@ const EXPIRED = 'انتهت مهلة طلب الربط. ابدأ الربط من
 app.get('/oauth/connect/:id', async (c) => {
   const r = await describeRequest(c.env, c.req.param('id'));
   if (!r) return c.json({ error: EXPIRED, expired: true }, 410);
-  return c.json({ client_name: r.clientName });
+  return c.json({ client_name: r.clientName, redirect_host: r.redirectHost });
 });
 
 /** «إلغاء» من الضيف أو العضو — عامٌّ كباب الربط: الرفض لا يحتاج هويّة. */
