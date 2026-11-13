@@ -69,14 +69,23 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
  * الطباعة إلى `printDocument` نفسها. **فمن أضاف `<script>` مضمَّناً بعد
  * اليوم يجده لا يعمل، وذلك هو المقصود.**
  *
+ * وإحصاءاتُ Cloudflare (Web Analytics) مسموحةٌ بقرار صاحب المنصة: يحقنها
+ * Cloudflare نفسه في الصفحة، وكانت السياسةُ تحجبها فلا تُعدّ زيارةٌ واحدة —
+ * والخطأ يظهر في وحدة تحكّم كل صفحة. مضيفان بأعيانهما لا نطاقٌ بنجمة: النصُّ
+ * من `static.cloudflareinsights.com`، والإرسالُ إلى `cloudflareinsights.com`.
+ *
  * ونافذة الطباعة تُفتح على `about:blank` فترث هذه السياسة عن فاتحها — وهو
  * سببُ إخراج نصّها، ولزومِ `style-src` و`font-src` و`img-src` لها.
  */
+/** إحصاءات Cloudflare — النصُّ ومستقبِلُ إرساله، كما يوثّقهما Cloudflare. */
+const CF_ANALYTICS_SCRIPT = 'https://static.cloudflareinsights.com';
+const CF_ANALYTICS_BEACON = 'https://cloudflareinsights.com';
+
 app.use('*', (c, next) =>
   secureHeaders({
     contentSecurityPolicy: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'", CF_ANALYTICS_SCRIPT],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'blob:'],
       /* `data:` لازمة لا تساهُل: حزمة `@fontsource` تُضمّن الملفّات الصغيرة
@@ -84,7 +93,7 @@ app.use('*', (c, next) =>
          كلَّ وجهٍ من أوجه الخطّ ويعود النصّ إلى خطّ النظام — قِيس بتشغيل
          البناء تحت هذه السياسة نفسها. */
       fontSrc: ["'self'", 'data:'],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", CF_ANALYTICS_BEACON],
       frameSrc: ["'self'"],
       workerSrc: ["'self'", 'blob:'],
       manifestSrc: ["'self'"],
