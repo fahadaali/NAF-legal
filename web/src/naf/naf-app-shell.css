@@ -532,8 +532,8 @@
 .naf-account:focus-visible,
 .naf-account-menu-item:focus-visible,
 .naf-crumb:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* ============================================================
