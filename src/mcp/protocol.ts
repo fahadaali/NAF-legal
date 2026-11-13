@@ -77,7 +77,18 @@ export interface McpTool {
 }
 
 export interface McpServerDeps {
-  serverInfo: { name: string; title: string; version: string };
+  /**
+   * هويّةُ الخادم كما تعرضها الأداة. و`icons` و`websiteUrl` من مراجعة
+   * `2025-11-25`: بهما تعرض الأداة شعارَ ناف بجانب الموصّل بدل أيقونةٍ عامّة.
+   * والعميلُ الأقدم يتجاهل حقلاً لا يعرفه.
+   */
+  serverInfo: {
+    name: string;
+    title: string;
+    version: string;
+    icons?: { src: string; mimeType: string; sizes: string[] }[];
+    websiteUrl?: string;
+  };
   instructions: string;
   tools: McpTool[];
   /** يقرأ ترويسة `Authorization` ويردّ صاحبها، أو `null` إن لم تصلح. */

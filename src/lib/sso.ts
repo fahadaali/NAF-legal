@@ -37,6 +37,9 @@ const PUBLIC_PATHS = [
   // الربط بلا مظهر القارئ. ساكنان لا سرَّ فيهما.
   '/theme-init.js',
   '/manifest.webmanifest',
+  // وأيقونةُ الموقع في موضعَيها المتعارفين — تُقدَّم في `src/index.ts` قبل الوسيط.
+  '/favicon.ico',
+  '/apple-touch-icon.png',
 ];
 
 /**
