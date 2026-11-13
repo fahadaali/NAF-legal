@@ -1,14 +1,17 @@
 /**
  * من يطلب من خادم MCP — رمزُ `Authorization: Bearer`.
  *
- * **المرحلة الأولى: لا رمز يصلح بعد.** الرموز تصدر عن خادم التفويض (OAuth 2.1)
- * في المرحلة الثانية، بعد دخول العضو من المركز أو الضيف برمز التحقق، وتُخزَّن
- * مجزّأةً في D1. وإلى أن يُبنى ذلك يُرفض كلُّ طلبٍ بـ٤٠١ وتحدّيه — فالنقطة
- * منشورةٌ ولا تعطي أحداً شيئاً، ولا تُفتح الأنظمة لمن لا هوية له ولو يوماً.
+ * الرمز يصدر عن خادم التفويض في `mcp/oauth.ts` بعد دخول العضو من المركز أو
+ * الضيف برمز التحقق، ويُقرأ هنا مجزّأً. وصاحبُه يُفحص في كل طلب — العضو
+ * بـ`members.is_active`، والضيف ببقاء بريده — فلا يكفي أن يكون الرمز سارياً.
  */
 import type { Env } from '../types';
 import type { McpPrincipal } from './protocol';
+import { principalFromToken } from './oauth';
 
-export async function authenticateMcp(_env: Env, _req: Request): Promise<McpPrincipal | null> {
-  return null;
+export async function authenticateMcp(env: Env, req: Request): Promise<McpPrincipal | null> {
+  const header = req.headers.get('authorization') ?? '';
+  const m = /^Bearer\s+([A-Za-z0-9._~+/-]+=*)$/i.exec(header.trim());
+  if (!m) return null;
+  return principalFromToken(env, m[1]);
 }

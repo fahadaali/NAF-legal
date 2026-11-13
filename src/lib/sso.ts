@@ -32,8 +32,12 @@ const PUBLIC_PATHS = ['/auth/callback', '/auth/mcp/callback', '/mcp', '/denied',
  * الأصول الساكنة — بادئات مُعلنة لا اجتهاد على الامتداد.
  * `/assets/` حزمة Vite، و `/brand/` العلامة وأيقونة التبويب، وكلتاهما
  * تلزمان صفحة الرفض نفسها: صفحةٌ لا تحمّل نمطها ليست صفحة رفض.
+ *
+ * و`/oauth/` و`/.well-known/oauth-` خادمُ تفويض MCP: تطلبه الأداة خادماً لخادم
+ * والضيفُ بلا حساب. مُركَّبٌ قبل الوسيط أصلاً (`routes/mcpAuthServer.ts`)،
+ * وذكرُه هنا يمنع الحزمة من تحويله إن تغيّر ترتيب التركيب.
  */
-const PUBLIC_PREFIXES = ['/assets/', '/brand/'];
+const PUBLIC_PREFIXES = ['/assets/', '/brand/', '/oauth/', '/.well-known/oauth-'];
 
 /** الدور الافتراضي لأول دخول — يرقّيه مسؤول المنصة من إعداداتها. */
 export const DEFAULT_ROLE: PlatformRole = 'viewer';
