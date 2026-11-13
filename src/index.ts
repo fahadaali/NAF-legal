@@ -4,6 +4,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import authRoutes from './routes/auth';
 import ssoRoutes from './routes/ssoCallback';
 import mcpOAuthRoutes from './routes/mcpOAuth';
+import mcpServerRoutes from './routes/mcpServer';
 import memberRoutes from './routes/members';
 import evalRoutes from './routes/eval';
 import researchRoutes from './routes/research';
@@ -102,6 +103,12 @@ app.route('/auth', ssoRoutes);
 /* واستقبالُ تفويض المصادر الخارجية معه وللعلّة نفسها — وحارسُه حالتُه
    وكوكي ربطه لا الجلسة (انظر `routes/mcpOAuth.ts`). */
 app.route('/auth/mcp', mcpOAuthRoutes);
+
+/* وخادمُ MCP الذي تقرأ منه أدواتُ الذكاء الاصطناعي أنظمةَ المنصة — قبل الوسيط
+   لأن طالبه أداةٌ برمز `Bearer` لا متصفّحٌ بكوكي جلسة، والوسيط كان سيحوّله إلى
+   صفحة الدخول. وحارسُه الرمز (انظر `routes/mcpServer.ts`). وخارج `/api/*`
+   فلا يمسّه حدُّ المعدّل أدناه: السقف مفتوح بقرار صاحب المنصة. */
+app.route('/', mcpServerRoutes);
 
 // الدخول الموحّد — يحمي كل ما بعده. وأي مسار جديد محمي افتراضياً ما لم
 // يُضَف صراحةً إلى القائمة العامة في `lib/sso.ts`.
