@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { api, AdminSource, DiscoveredAuth, ConsultConfig, DocTemplate, FieldDef, FieldType, LegalStats, RegulationRequest } from '../lib/api';
 import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
+import { AiToolsAdmin } from './AiTools';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import { LegalImport } from './LegalImport';
 import { LegalLaws } from './LegalLaws';
@@ -17,11 +18,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 const TRACKING_SOURCES_NOTE =
   'المصادر الرسمية المعتمدة: جريدة أم القرى (uqn.gov.sa) · المركز الوطني للوثائق والمحفوظات (ncar.gov.sa) · هيئة الخبراء بمجلس الوزراء (boe.gov.sa).';
 
-type Tab = 'kb' | 'sources' | 'requests' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
+type Tab = 'kb' | 'sources' | 'ai-tools' | 'requests' | 'tracking' | 'news' | 'forms' | 'clauses' | 'analytics' | 'users' | 'settings' | 'audit';
 
 const TABS: [Tab, string][] = [
   ['kb', 'قاعدة المعرفة'],
   ['sources', 'المصادر الخارجية'],
+  ['ai-tools', 'أدوات الذكاء الاصطناعي'],
   ['requests', 'طلبات الأنظمة'],
   ['tracking', 'تتبّع الأنظمة'],
   ['news', 'خلاصة الأخبار'],
@@ -67,6 +69,7 @@ export default function Admin() {
         </div>
         {tab === 'kb' && <KbTab />}
         {tab === 'sources' && <SourcesTab />}
+        {tab === 'ai-tools' && <AiToolsAdmin />}
         {tab === 'requests' && <RequestsTab onChange={loadPending} />}
         {tab === 'tracking' && <TrackingTab />}
         {tab === 'news' && <NewsTab />}

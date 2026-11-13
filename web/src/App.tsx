@@ -14,6 +14,8 @@ import Members from './components/Members';
 import AccountMenu from './components/AccountMenu';
 import NotificationBell from './components/NotificationBell';
 import SessionBar from './components/SessionBar';
+import { AiToolsMember } from './components/AiTools';
+import { ConnectDoor, ConnectConsent } from './components/Connect';
 import {
   AppShell,
   AppContent,
@@ -30,9 +32,9 @@ import { useTheme, type ThemeChoice } from './lib/theme';
 import { subscribeChatActivity } from './lib/chatStream';
 import { Icon, ICON_LG } from './lib/icons';
 
-type View = 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search';
+type View = 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search' | 'ai-tools';
 
-const VIEWS: View[] = ['chat', 'admin', 'members', 'tools', 'deadlines', 'case', 'support', 'search'];
+const VIEWS: View[] = ['chat', 'admin', 'members', 'tools', 'deadlines', 'case', 'support', 'search', 'ai-tools'];
 
 /** الشاشة من العنوان، و«المحادثة» لكل ما لا يُعرف — عنوانٌ عُبث به لا يُعطّل. */
 function readView(): View {
@@ -60,6 +62,15 @@ export default function App() {
   // صفحة الرفض — عامة، وإليها يحوّل وسيط الدخول الموحّد من رُدّ على الباب.
   // تُفحص قبل كل شيء: لا جلسة لقارئها ولا مستخدم يُقرأ.
   if (location.pathname === '/denied') return <Denied />;
+
+  /* ربطُ أداة ذكاءٍ اصطناعي (naf-terms.md §١٥). البابُ عامٌّ — يفتحه الضيف
+     ولا حساب له — والإذنُ بعد دخول العضو من المركز: `/connect-member/` خارج
+     المسارات العامة في `src/lib/sso.ts`، فلا يبلغ هذا السطرَ إلا من دخل.
+     وكلاهما صفحةُ بابٍ بلا هيكل، كصفحة الرفض. */
+  const connectMatch = location.pathname.match(/^\/connect\/([\w-]+)\/?$/);
+  if (connectMatch) return <ConnectDoor requestId={connectMatch[1]} />;
+  const consentMatch = location.pathname.match(/^\/connect-member\/([\w-]+)\/?$/);
+  if (consentMatch) return <ConnectConsent requestId={consentMatch[1]} />;
 
   // مسار المراجعة العامة (بلا مصادقة)
   const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
@@ -269,7 +280,13 @@ function AppBody({
             {/* إلى شبكة المنصات في المركز — قبل قائمة الحساب مباشرةً،
                 وفي اللسان نفسه. لا مركز، لا زرّ. */}
             <PlatformsLink href={center ? `${center}/` : null} />
-            <AccountMenu user={user} theme={theme} onThemeChange={setTheme} onLogout={onLogout} />
+            <AccountMenu
+              user={user}
+              theme={theme}
+              onThemeChange={setTheme}
+              onOpenAiTools={() => openView('ai-tools')}
+              onLogout={onLogout}
+            />
           </HeaderEnd>
         </AppHeader>
 
@@ -300,6 +317,7 @@ function AppBody({
           <CaseFile onOpenConversation={(id) => { setActiveConv(id); openView('chat'); }} />
         )}
         {view === 'support' && <Support />}
+        {view === 'ai-tools' && <AiToolsMember />}
         {view === 'search' && (
           <SearchPage
             initial={searchQuery}
