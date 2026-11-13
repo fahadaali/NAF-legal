@@ -209,6 +209,12 @@ console.log('التفويض والمحادثات');
   check('ويُقال صراحةً حين لا يحفظ السجلّ نصّاً سابقاً', /لا يحفظ سجلُّ المنصة نصّاً سابقاً/.test(amend));
   const instr2 = readFileSync(new URL('../src/mcp/instructions.ts', import.meta.url), 'utf8');
   check('والصياغةُ النهائية نظيفة، والنافذُ بلا إشارة', /صياغةٍ نهائية/.test(instr2) && /النافذ لا يحتاج إشارةً/.test(instr2));
+  const lawStateFn = toolsSrc.slice(toolsSrc.indexOf('function lawState'), toolsSrc.indexOf('function isRepealedHit'));
+  check('حالُ النظام محسوبٌ لا منقول: لا يُعاد لفظُ البطاقة المحفوظ', !/law_status\b/.test(lawStateFn.replace(/\/\*[\s\S]*?\*\//g, '')) && /return 'نافذ'/.test(lawStateFn));
+  const srv = readFileSync(new URL('../src/routes/mcpServer.ts', import.meta.url), 'utf8');
+  check('شعارُ ناف في هويّة الخادم', /icons: \[/.test(srv) && /icon-512\.png/.test(srv) && /websiteUrl/.test(srv));
+  const idx2 = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+  check('وأيقونةُ الموقع قبل الوسيط', idx2.indexOf("'/favicon.ico'") > 0 && idx2.indexOf("'/favicon.ico'") < idx2.indexOf("app.use('*', ssoMiddleware)"));
   check('القوائم الطويلة صفحاتٌ لا كتلة', (toolsSrc.match(/= paginate\(/g) ?? []).length === 2);
   check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
 }

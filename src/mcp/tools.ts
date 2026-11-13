@@ -67,8 +67,19 @@ const refuse = (text: string): McpToolResult => ({ text, isError: true });
  */
 function lawState(l: LawSummary): string {
   if (l.law_repealed) return 'نظام لاغٍ';
-  if (l.law_pending) return `لم يبدأ العمل به — من ${l.law_effective_from ? dualDate(l.law_effective_from) : 'تاريخٍ لم يُذكر'}`;
-  return l.law_status || 'نافذ';
+  if (l.law_pending) {
+    return l.law_effective_from
+      ? `لم يبدأ العمل به — من ${dualDate(l.law_effective_from)}`
+      : 'لم يبدأ العمل به — وتاريخ نفاذه غير مسجّل في المنصة';
+  }
+  /* وما سواهما نافذ — **ولا يُعاد نصُّ `law_status` المحفوظ أبداً.**
+     ذاك لفظُ بطاقة البوابة يوم الاستيراد: نظامٌ استُورد قبل نفاذه يبقى لفظُه
+     «لم يبدأ العمل به» بعد أن يحلّ تاريخه ويُعمل به. وكان يُعاد هنا حين لا يكون
+     الحالُ المحسوب «ملغى» ولا «لم يبدأ» — فقرأت الأداةُ نظام التنفيذ (م/237)
+     «لم يبدأ العمل به» وقد بدأ. والحالُ هنا محسوبٌ عند كل استعلام: الإلغاءُ من
+     ‎law_repealed‎، والنفاذُ من ‎law_pending‎ مقيَّماً بتاريخ ‎law_effective_from‎
+     في ‎listLaws‎ — فيتبدّل وحده حين يحلّ التاريخ، بلا دفعةٍ جديدة ولا يدٍ تعود إليه. */
+  return 'نافذ';
 }
 
 /**

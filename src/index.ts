@@ -123,6 +123,25 @@ app.route('/auth/mcp', mcpOAuthRoutes);
    فلا يمسّه حدُّ المعدّل أدناه: السقف مفتوح بقرار صاحب المنصة. */
 app.route('/', mcpServerRoutes);
 
+/* أيقونةُ الموقع في موضعَيها المتعارفين — قبل الوسيط.
+   أدواتُ الذكاء الاصطناعي ومحرّكاتُ الأيقونات تطلب `/favicon.ico` و
+   `/apple-touch-icon.png` من أصل الموصّل لتعرض شعاره، وكانا خلف الدخول فيُردّ
+   عليهما ٤٠١ — فيظهر موصّلُ ناف في Claude بلا شعار. ولا ملفّ بهذين الاسمين في
+   `web/public`: يُقدَّم لهما أيقونتا التطبيق المبنيّتان من العلامة المسجّلة. */
+const SITE_ICONS: Record<string, string> = {
+  '/favicon.ico': '/icons/icon-192.png',
+  '/apple-touch-icon.png': '/icons/apple-touch-icon.png',
+};
+for (const [path, file] of Object.entries(SITE_ICONS)) {
+  app.get(path, async (c) => {
+    const res = await c.env.ASSETS.fetch(new Request(new URL(file, c.req.url)));
+    return new Response(res.body, {
+      status: res.status,
+      headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' },
+    });
+  });
+}
+
 /* وخادمُ تفويضه: الاكتشاف والتسجيل والرموز وبابُ الضيف — كلُّها بلا جلسة
    بطبيعتها (`routes/mcpAuthServer.ts`). وسماحُ العضو ليس هنا بل خلف الوسيط. */
 app.route('/', mcpAuthServerRoutes);

@@ -37,7 +37,19 @@ app.options('/mcp', () => new Response(null, { status: 204, headers: CORS }));
 app.all('/mcp', async (c) => {
   const origin = new URL(c.req.url).origin;
   const res = await handleMcpRequest(c.req.raw, {
-    serverInfo: { name: 'naf-legal', title: c.env.APP_NAME || 'مستشار ناف', version: '1.0.0' },
+    serverInfo: {
+      name: 'naf-legal',
+      title: c.env.APP_NAME || 'مستشار ناف',
+      version: '1.0.0',
+      /* شعارُ ناف — أيقوناتُ التطبيق نفسها المبنيّة من العلامة المسجّلة
+         (`npm run icons`)، من الأصل نفسه وخارج الدخول (`/icons/`). PNG لا SVG:
+         الأدوات كلُّها تعرض PNG، وبعضُها لا يعرض SVG. */
+      icons: [
+        { src: `${origin}/icons/icon-512.png`, mimeType: 'image/png', sizes: ['512x512'] },
+        { src: `${origin}/icons/icon-192.png`, mimeType: 'image/png', sizes: ['192x192'] },
+      ],
+      websiteUrl: origin,
+    },
     instructions: MCP_INSTRUCTIONS,
     tools: [...readTools(c.env), ...conversationTools(c.env)],
     authenticate: (req) => authenticateMcp(c.env, req),
