@@ -13,6 +13,7 @@
  *   الواجهة (`requireWriter`)، فلا يُنشئها من الأداة ولا يقرؤها منها — دورُه
  *   كما هو، وقدرتُه في الأداة قدرةُ الضيف بالضبط. فتصدق عليه جملتا الإذن
  *   المسجّلتان للضيف حرفاً (`naf-terms.md` §١٥)، ولا تُكتب له جملةٌ ثالثة.
+ * - **ولا محادثاتِ القضايا:** المربوطة بمجلّد قضيةٍ خارج الأداة (`NOT_CASE`).
  * - **وفي محادثات صاحبها فقط:** كلُّ استعلامٍ مقيَّدٌ بـ`user_id` كما في
  *   `routes/conversations.ts` — العزل الصارم نفسه.
  * - **ولا تُمحى رسالةٌ ولا تُعدَّل:** إضافةٌ إلى آخر المحادثة، لا غير.
@@ -39,8 +40,22 @@ import type { McpPrincipal, McpTool, McpToolResult } from './protocol';
 const QUESTION_MAX = 20_000;
 const ANSWER_MAX = 200_000;
 const CITES_MAX = 50;
-/** ما يُعاد من محادثةٍ طويلة: آخرُها أولى، والسقفُ سياقُ الأداة لا حدٌّ للمنصة. */
-const READ_CHARS_MAX = 120_000;
+/**
+ * ما يُعاد من محادثةٍ طويلة: آخرُها أولى، والسقفُ سياقُ الأداة لا حدٌّ للمنصة.
+ *
+ * خمسون ألف حرف ≈ عشرون ألف رمزٍ عربي — دون ما تقصّ عنده بعض الأدوات نتيجةَ
+ * الأداة الواحدة (Claude Code مثلاً عند خمسةٍ وعشرين ألفاً). وكان مئةً وعشرين
+ * ألفاً، فتُقصّ المحادثة عند الأداة من آخرها — وآخرُها هو ما يُكمَل.
+ */
+const READ_CHARS_MAX = 50_000;
+
+/**
+ * محادثاتُ القضايا خارج الأداة (`naf-terms.md` §١٥ — «لا تصل الأداة إلى القضايا
+ * ولا محادثاتها»). المحادثة المربوطة بمجلّد قضية فيها وقائعُ موكِّل، فلا تُسرد
+ * ولا تُفتح ولا يُضاف إليها من أداةٍ خارجية. والشرط في كل استعلامٍ يقرأ
+ * المحادثات هنا — لا في واحدٍ وحده.
+ */
+const NOT_CASE = 'folder_id IS NULL';
 
 const ok = (text: string): McpToolResult => ({ text });
 const refuse = (text: string): McpToolResult => ({ text, isError: true });
@@ -101,6 +116,7 @@ async function appendExchange(
   const { citations, missing } = await citationsFor(env, ids);
   const origin = { via: 'mcp', client: p.clientName };
   const now = Date.now();
+  const answerId = uuid();
   await env.DB.batch([
     env.DB.prepare(
       'INSERT INTO messages (id, conversation_id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
@@ -108,7 +124,13 @@ async function appendExchange(
     // بعد رسالة العضو بجزءٍ من الثانية: الترتيب بـ`created_at` وحده.
     env.DB.prepare(
       'INSERT INTO messages (id, conversation_id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(uuid(), conversationId, 'assistant', answer, JSON.stringify({ citations, origin }), now + 1),
+    ).bind(answerId, conversationId, 'assistant', answer, JSON.stringify({ citations, origin }), now + 1),
+    /* النسخةُ الأولى في سجلّ النُّسخ كما يكتبها `routes/chat.ts` لكل ردّ: بدونها
+       يصير أوّلُ تحريرٍ في المنصة «النسخة 1» ويضيع ما حفظته الأداة من السجلّ —
+       فلا يُرجَع إليه ولا يُقارَن به. والملاحظة نصُّ المنصة نفسه. */
+    env.DB.prepare(
+      'INSERT INTO draft_versions (id, message_id, version, content, note, created_at) VALUES (?, ?, 1, ?, ?, ?)'
+    ).bind(uuid(), answerId, answer, 'النسخة الأولى المولَّدة', now + 1),
     env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?').bind(now + 1, conversationId, userIdOf(p)),
   ]);
   return missing;
@@ -186,7 +208,9 @@ export function conversationTools(env: Env): McpTool[] {
         const question = argString(args, 'question', QUESTION_MAX);
         const answer = argString(args, 'answer', ANSWER_MAX);
         if (!id || !question || !answer) return refuse('conversation_id و question و answer مطلوبة.');
-        const own = await env.DB.prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?').bind(id, userIdOf(p)).first();
+        const own = await env.DB.prepare(`SELECT id FROM conversations WHERE id = ? AND user_id = ? AND ${NOT_CASE}`)
+          .bind(id, userIdOf(p))
+          .first();
         if (!own) return refuse('لا محادثة بهذا المعرّف في حساب المستخدم. احفظها محادثةً جديدة بـ save_conversation.');
         // المنصة تكتب في المحادثة الآن: إضافةٌ في وسط ردٍّ يُولَّد تقطعه نصفين.
         if (await isGenerating(env, id)) {
@@ -218,7 +242,7 @@ export function conversationTools(env: Env): McpTool[] {
         const where = patterns.map(() => 'title GLOB ?').join(' AND ');
         const rows = await env.DB.prepare(
           `SELECT id, title, origin, origin_client, updated_at FROM conversations
-           WHERE user_id = ?${where ? ` AND ${where}` : ''} ORDER BY updated_at DESC LIMIT ?`
+           WHERE user_id = ? AND ${NOT_CASE}${where ? ` AND ${where}` : ''} ORDER BY updated_at DESC LIMIT ?`
         )
           .bind(userIdOf(p), ...patterns, argInt(args, 'limit', 20, 1, 100))
           .all<{ id: string; title: string | null; origin: string | null; origin_client: string | null; updated_at: number }>();
@@ -250,7 +274,7 @@ export function conversationTools(env: Env): McpTool[] {
       async run(args, p) {
         const id = argString(args, 'conversation_id', 100);
         if (!id) return refuse('conversation_id مطلوب.');
-        const conv = await env.DB.prepare('SELECT title FROM conversations WHERE id = ? AND user_id = ?')
+        const conv = await env.DB.prepare(`SELECT title FROM conversations WHERE id = ? AND user_id = ? AND ${NOT_CASE}`)
           .bind(id, userIdOf(p))
           .first<{ title: string | null }>();
         if (!conv) return refuse('لا محادثة بهذا المعرّف في حساب المستخدم.');

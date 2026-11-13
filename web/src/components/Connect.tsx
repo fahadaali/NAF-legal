@@ -20,12 +20,13 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Icon, ICON_SM, ICON_LG } from '../lib/icons';
 import NafMark from './NafMark';
+import ErrorBox from './ErrorBox';
 
 const T = {
   memberCan:
-    'ستبحث الأداة في الأنظمة واللوائح وتصنيفاتها ومكتبة البنود، وتحفظ ما تنتجه من إجابات في محادثاتك على المنصة.',
+    'ستبحث الأداة في الأنظمة واللوائح وتصنيفاتها ومكتبة البنود، وتقرأ محادثاتك على المنصة وتحفظ فيها ما تنتجه من إجابات.',
   guestCan: 'ستبحث الأداة في الأنظمة واللوائح وتصنيفاتها ومكتبة البنود. لا يُحفظ شيءٌ في المنصة.',
-  memberCannot: 'لا تصل الأداة إلى القضايا ولا الملفات ولا قاعدة المعرفة الداخلية، ولا تعدّل شيئاً سوى محادثاتك.',
+  memberCannot: 'لا تصل الأداة إلى القضايا ولا محادثاتها ولا الملفات ولا قاعدة المعرفة الداخلية، ولا تعدّل شيئاً سوى محادثاتك.',
   guestCannot: 'لا تصل الأداة إلى شيءٍ سوى الأنظمة واللوائح ومكتبة البنود.',
   revokeLater: 'تستطيع إلغاء الربط في أي وقت من «أدوات الذكاء الاصطناعي» في إعداداتك.',
   expired: 'انتهت مهلة طلب الربط. ابدأ الربط من أداتك من جديد.',
@@ -54,23 +55,23 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ErrorBox({ message }: { message: string }) {
-  if (!message) return null;
-  return (
-    <div className="error-box" role="alert">
-      <Icon.failed size={ICON_SM} aria-hidden />
-      <span>{message}</span>
-    </div>
-  );
-}
-
-/** ما تستطيعه الأداة وما لا تستطيعه — قبل «سماح». */
-function Scope({ can, cannot, extra }: { can: string; cannot: string; extra?: string }) {
+/**
+ * ما تستطيعه الأداة وما لا تستطيعه، ووجهةُ الرجوع — قبل «سماح».
+ *
+ * والوجهة آخرُها لأنها ما يُتحقَّق به: الاسمُ فوقها تكتبه الأداة عن نفسها،
+ * والنطاقُ هنا هو حيث يذهب الإذن فعلاً (`naf-terms.md` §١٥ — «وجهة الرجوع»).
+ */
+function Scope({ can, cannot, extra, host }: { can: string; cannot: string; extra?: string; host: string | null }) {
   return (
     <div className="connect-scope">
       <p>{can}</p>
       <p className="connect-muted">{cannot}</p>
       {extra && <p className="connect-muted">{extra}</p>}
+      {host && (
+        <p className="connect-muted">
+          بعد السماح يعود الربط إلى <bdi>{host}</bdi>. تأكّد أنه عنوان أداتك.
+        </p>
+      )}
     </div>
   );
 }
@@ -105,6 +106,7 @@ async function deny(requestId: string): Promise<void> {
 export function ConnectDoor({ requestId }: { requestId: string }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState<string | null>(null);
+  const [host, setHost] = useState<string | null>(null);
   const [expired, setExpired] = useState(false);
   const [path, setPath] = useState<'choose' | 'guest'>('choose');
   const [email, setEmail] = useState('');
@@ -123,12 +125,21 @@ export function ConnectDoor({ requestId }: { requestId: string }) {
           else setError(e.message);
           return;
         }
-        const body = (await res.json()) as { client_name: string | null };
+        const body = (await res.json()) as { client_name: string | null; redirect_host: string };
         setName(body.client_name);
+        setHost(body.redirect_host);
       })
       .catch(() => setError(T.serverError))
       .finally(() => setLoading(false));
   }, [requestId]);
+
+  /** «رجوع» إلى البابين — والطلب باقٍ. «إلغاء» وحده يرفض الطلب. */
+  const back = () => {
+    setPath('choose');
+    setSent('');
+    setCode('');
+    setError('');
+  };
 
   const post = (step: 'code' | 'verify', payload: Record<string, string>) =>
     fetch(`/oauth/connect/${encodeURIComponent(requestId)}/guest/${step}`, {
@@ -146,6 +157,9 @@ export function ConnectDoor({ requestId }: { requestId: string }) {
       if (!res.ok) {
         const err = await readError(res);
         if (err.expired) setExpired(true);
+        // بريدُ عضو: يُعاد إلى البابين والرسالة فوقهما — «ادخل من باب الأعضاء»
+        // تُقال وبابُ الأعضاء أمامه، لا في نموذجٍ لا طريق منه إلا «إلغاء».
+        if (err.member) setPath('choose');
         setError(err.message);
         return;
       }
@@ -227,7 +241,7 @@ export function ConnectDoor({ requestId }: { requestId: string }) {
         </div>
       ) : (
         <>
-          <Scope can={T.guestCan} cannot={T.guestCannot} />
+          <Scope can={T.guestCan} cannot={T.guestCannot} host={host} />
           {!sent ? (
             <form onSubmit={sendCode}>
               <div className="field">
@@ -244,6 +258,9 @@ export function ConnectDoor({ requestId }: { requestId: string }) {
                 />
               </div>
               <div className="connect-actions">
+                <button className="btn-sm" type="button" onClick={back}>
+                  رجوع
+                </button>
                 <button className="btn-sm" type="button" onClick={() => deny(requestId)}>
                   إلغاء
                 </button>
@@ -273,6 +290,9 @@ export function ConnectDoor({ requestId }: { requestId: string }) {
                 />
               </div>
               <div className="connect-actions">
+                <button className="btn-sm" type="button" onClick={back}>
+                  رجوع
+                </button>
                 <button className="btn-sm" type="button" onClick={() => deny(requestId)}>
                   إلغاء
                 </button>
@@ -295,6 +315,7 @@ export function ConnectDoor({ requestId }: { requestId: string }) {
 export function ConnectConsent({ requestId }: { requestId: string }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState<string | null>(null);
+  const [host, setHost] = useState<string | null>(null);
   const [canSave, setCanSave] = useState(false);
   const [expired, setExpired] = useState(false);
   const [error, setError] = useState('');
@@ -306,6 +327,7 @@ export function ConnectConsent({ requestId }: { requestId: string }) {
       .mcpConnectInfo(requestId)
       .then((r) => {
         setName(r.client_name);
+        setHost(r.redirect_host);
         setCanSave(r.can_save);
       })
       .catch((e: Error & { status?: number }) => {
@@ -361,6 +383,7 @@ export function ConnectConsent({ requestId }: { requestId: string }) {
             can={canSave ? T.memberCan : T.guestCan}
             cannot={canSave ? T.memberCannot : T.guestCannot}
             extra={T.revokeLater}
+            host={host}
           />
           <div className="connect-actions">
             <button className="btn-sm" onClick={() => deny(requestId)}>

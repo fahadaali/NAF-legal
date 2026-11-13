@@ -33,6 +33,7 @@ import { purgeExpired as purgeMcpExpired } from './mcp/oauth';
 import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery, runLinkExtraction, runAttachmentRecovery } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
+import { withinRateLimit, RATE_LIMIT_MESSAGE } from './lib/rateLimit';
 import type { Env, Variables } from './types';
 
 // مهامّ البحث في الخلفية — يُصدَّر من المدخل ليجده الربط `RESEARCH`.
@@ -68,14 +69,23 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
  * الطباعة إلى `printDocument` نفسها. **فمن أضاف `<script>` مضمَّناً بعد
  * اليوم يجده لا يعمل، وذلك هو المقصود.**
  *
+ * وإحصاءاتُ Cloudflare (Web Analytics) مسموحةٌ بقرار صاحب المنصة: يحقنها
+ * Cloudflare نفسه في الصفحة، وكانت السياسةُ تحجبها فلا تُعدّ زيارةٌ واحدة —
+ * والخطأ يظهر في وحدة تحكّم كل صفحة. مضيفان بأعيانهما لا نطاقٌ بنجمة: النصُّ
+ * من `static.cloudflareinsights.com`، والإرسالُ إلى `cloudflareinsights.com`.
+ *
  * ونافذة الطباعة تُفتح على `about:blank` فترث هذه السياسة عن فاتحها — وهو
  * سببُ إخراج نصّها، ولزومِ `style-src` و`font-src` و`img-src` لها.
  */
+/** إحصاءات Cloudflare — النصُّ ومستقبِلُ إرساله، كما يوثّقهما Cloudflare. */
+const CF_ANALYTICS_SCRIPT = 'https://static.cloudflareinsights.com';
+const CF_ANALYTICS_BEACON = 'https://cloudflareinsights.com';
+
 app.use('*', (c, next) =>
   secureHeaders({
     contentSecurityPolicy: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'", CF_ANALYTICS_SCRIPT],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'blob:'],
       /* `data:` لازمة لا تساهُل: حزمة `@fontsource` تُضمّن الملفّات الصغيرة
@@ -83,7 +93,7 @@ app.use('*', (c, next) =>
          كلَّ وجهٍ من أوجه الخطّ ويعود النصّ إلى خطّ النظام — قِيس بتشغيل
          البناء تحت هذه السياسة نفسها. */
       fontSrc: ["'self'", 'data:'],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", CF_ANALYTICS_BEACON],
       frameSrc: ["'self'"],
       workerSrc: ["'self'", 'blob:'],
       manifestSrc: ["'self'"],
@@ -125,40 +135,14 @@ app.use('*', ssoMiddleware);
 // مسار لأن الحكم بالطريقة لا بالمسار. تفصيله في `lib/auth.ts`.
 app.use('*', requireWriter);
 
-// حدّ معدّل بسيط عبر KV على مسارات الـ API (§12)
+// حدّ معدّل بسيط عبر KV على مسارات الـ API (§12) — منطقه في `lib/rateLimit.ts`.
 app.use('/api/*', async (c, next) => {
   // المفتاح يأتي من المستخدم الذي حقنه وسيط الدخول الموحّد. وبقاؤه على
   // الكوكي المحلي بعد الربط كان يهبط بكل مستخدم إلى حدّ العنوان المشترك.
   const user = c.get('user');
   const key = user ? `rl:${user.id}` : `rl:ip:${c.req.header('cf-connecting-ip') ?? 'x'}`;
-  const WINDOW = 60; // ثانية
-  const LIMIT = 60; // 60 طلب/دقيقة
-  try {
-    // نافذة ثابتة بوقت انتهاء مخزَّن داخل القيمة: تجديد TTL على كل طلب كان
-    // يمنع العدّاد من الصفر فيُحجب المستخدم النشِط بلا مبرّر.
-    const now = Date.now();
-    const raw = await c.env.KV.get(key);
-    let count = 0;
-    let resetAt = now + WINDOW * 1000;
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as { c: number; r: number };
-        if (parsed.r > now) {
-          count = parsed.c;
-          resetAt = parsed.r;
-        }
-      } catch {
-        // قيمة قديمة بصيغة رقم — تُعامَل كنافذة جديدة
-      }
-    }
-    if (count >= LIMIT) {
-      return c.json({ error: 'تجاوزت حد الطلبات، حاول بعد قليل' }, 429);
-    }
-    const ttl = Math.max(60, Math.ceil((resetAt - now) / 1000));
-    await c.env.KV.put(key, JSON.stringify({ c: count + 1, r: resetAt }), { expirationTtl: ttl });
-  } catch {
-    // في التطوير قد لا يتوفر KV — نتجاوز بصمت
-  }
+  // 60 طلباً في الدقيقة
+  if (!(await withinRateLimit(c.env, key, 60, 60))) return c.json({ error: RATE_LIMIT_MESSAGE }, 429);
   await next();
 });
 

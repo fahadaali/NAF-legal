@@ -23,6 +23,7 @@ import SelectionToolbar, { type SelectionAnchor } from './SelectionToolbar';
 import SourceModal, { isOpenableCitation } from './SourceModal';
 import AttachmentViewer from './AttachmentViewer';
 import { ConsultationIcon, Icon, ICON_SM, ICON_MD, ICON_LG } from '../lib/icons';
+import OriginTag from './OriginTag';
 import { preloadPdfReader } from '../lib/extractText';
 import { mapPool, uploadAttachment, UPLOAD_CONCURRENCY } from '../lib/uploadAttachment';
 
@@ -46,6 +47,8 @@ interface UiMessage extends Message {
   verification?: { verified: boolean; unsupported: string[]; note: string } | null;
   // أنظمة يتطلّبها الإسناد ولا وجود لها في قاعدة المعرفة
   missingRegulations?: string[];
+  /** حفظتها أداةٌ مربوطة: اسمُها، أو `null` لاسمٍ لم تُعلنه. وغيابُه رسالةُ المنصة. */
+  originClient?: string | null;
 }
 
 /**
@@ -188,9 +191,9 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       setConvType(r.conversation.consultation_type);
       setConvTitle(r.conversation.title ?? '');
       setConvOrigin(
-        (r.conversation as any).origin === 'mcp' ? { client: (r.conversation as any).origin_client ?? null } : null
+        r.conversation.origin === 'mcp' ? { client: r.conversation.origin_client ?? null } : null
       );
-      setConvFolder((r.conversation as any).folder_id ?? '');
+      setConvFolder(r.conversation.folder_id ?? '');
       setGenerating(!!r.generating);
       const msgs = r.messages.map((m) => {
         let citations, fiqhCitations, clarifying, verification, missingRegulations;
@@ -882,12 +885,7 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     <>
       <div className="chat-header">
         <span className="ch-title">{convTitle || 'محادثة جديدة'}</span>
-        {convOrigin && (
-          <span className="conv-origin">
-            <Icon.aiTool size={ICON_SM} aria-hidden /> من{' '}
-            {convOrigin.client ? <bdi>{convOrigin.client}</bdi> : 'أداة مربوطة'}
-          </span>
-        )}
+        {convOrigin && <OriginTag client={convOrigin.client} />}
         {folders.length > 0 && (
           <select className="folder-select" value={convFolder} onChange={(e) => assignFolder(e.target.value)} title="ربط بقضية">
             <option value="">بدون قضية</option>
@@ -910,11 +908,8 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
                 <div className="msg-role">
                   {m.role === 'user' ? 'أنت' : 'مستشار ناف'}
                   {/* ما حفظته أداةٌ مربوطة يُعرف بعلامتها، لا يُنسب إلى المنصة وحدها (§١٥). */}
-                  {m.role === 'assistant' && (m as any).originClient !== undefined && (
-                    <span className="conv-origin msg-origin">
-                      <Icon.aiTool size={ICON_SM} aria-hidden /> من{' '}
-                      {(m as any).originClient ? <bdi>{(m as any).originClient}</bdi> : 'أداة مربوطة'}
-                    </span>
+                  {m.role === 'assistant' && m.originClient !== undefined && (
+                    <OriginTag client={m.originClient} className="msg-origin" />
                   )}
                 </div>
                 {/* مرفقاتُ هذه الرسالة، فوق نصِّها كما أُرسلت معه. وهي منفذ

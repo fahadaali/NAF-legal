@@ -4798,10 +4798,34 @@ export async function listLaws(env: Env): Promise<LawSummary[]> {
  * «الأولى»، وترتيبها نصّياً يقلب النظام على قارئه. و`seq` ترتيبُ الاستيراد،
  * وهو ترتيب الملف، وهو ترتيب النظام كما صدر.
  */
+/**
+ * حصرُ تصفّح النظام في حالٍ واحدة — لمن يسأل «ما الملغى من هذا النظام» أو «ما
+ * المعدَّل منه». وكلُّها على المادة نفسها لا على نظامها.
+ */
+export type LawArticlesOnly = 'repealed' | 'amended' | 'amended_unmerged' | 'scheduled_repeal';
+
+const ONLY_SQL: Record<LawArticlesOnly, string> = {
+  repealed: ` AND ${REPEALED_SQL}`,
+  amended: ' AND c.has_amendments = 1',
+  amended_unmerged: ' AND c.has_amendments = 1 AND c.amendment_applied = 0',
+  scheduled_repeal: " AND c.scheduled_repeal_from > date('now')",
+};
+
 export async function listLawArticles(
   env: Env,
   lawId: string,
-  opts: { offset?: number; limit?: number; includeRepealed?: boolean } = {}
+  opts: {
+    offset?: number;
+    limit?: number;
+    includeRepealed?: boolean;
+    /**
+     * المحجوبة للمراجعة. الافتراضي نعم — لشاشة التصفّح في المنصة (أدناه). وكلُّ
+     * مسارٍ يُستشهد بما يقرؤه يمرّر `false`، كخادم MCP: ما لم يره إنسانٌ لا
+     * يصل أداةً تستشهد به.
+     */
+    includeDefective?: boolean;
+    only?: LawArticlesOnly | null;
+  } = {}
 ): Promise<{ articles: LegalHit[]; total: number }> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
   const offset = Math.max(opts.offset ?? 0, 0);
@@ -4811,21 +4835,72 @@ export async function listLawArticles(
   const filters = buildFilters({
     lawId,
     withRegulations: false,
-    includeRepealed: opts.includeRepealed !== false,
-    includeDefective: true,
+    // حصرُ الملغاة يفتح الأرشيف بطبيعته.
+    includeRepealed: opts.only === 'repealed' || opts.includeRepealed !== false,
+    includeDefective: opts.includeDefective !== false,
   });
+  const only = opts.only ? ONLY_SQL[opts.only] : '';
 
-  const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_chunks c WHERE 1 = 1${filters.sql}`)
+  const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_chunks c WHERE 1 = 1${filters.sql}${only}`)
     .bind(...filters.binds)
     .first<{ n: number }>();
 
   const rows = await env.DB.prepare(
-    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE 1 = 1${filters.sql} ORDER BY c.seq LIMIT ? OFFSET ?`
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE 1 = 1${filters.sql}${only} ORDER BY c.seq LIMIT ? OFFSET ?`
   )
     .bind(...filters.binds, limit, offset)
     .all<HitRow>();
 
   return { articles: (rows.results ?? []).map(toHit), total: total?.n ?? 0 };
+}
+
+/** إحصاءُ موادّ نظامٍ بحالها — بالمادة لا بأجزائها. */
+export interface LawArticleStats {
+  articles: number;
+  effective: number;
+  repealed: number;
+  amended: number;
+  amendedUnmerged: number;
+  scheduledRepeal: number;
+}
+
+/**
+ * كم مادةً في النظام، وكم منها نافذ وملغى ومعدَّل — بالمادة لا بالمقطع.
+ *
+ * `listLaws` يعدّ المقاطع: المادة المقسّمة أجزاءً تُعدّ بعدد أجزائها، ومرفقُها
+ * وملحقُ النظام يُعدّان معها. ذاك صحيحٌ لشاشة الاستيراد، وخطأٌ في جوابِ «كم مادةً
+ * ملغاة في هذا النظام». فهنا تُجمع الأجزاء إلى مادتها بمعرّفها الأساس، ويُخرج
+ * المرفق والملحق، وتُستبعد المحجوبة للمراجعة — والشروطُ هي شروطُ الاسترجاع
+ * نفسها لا نسخةٌ منها.
+ */
+export async function lawArticleStats(env: Env, lawId: string): Promise<LawArticleStats> {
+  const filters = buildFilters({ lawId, withRegulations: false, includeRepealed: true });
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS articles, SUM(eff) AS effective, SUM(rep) AS repealed,
+            SUM(amd) AS amended, SUM(unm) AS amended_unmerged, SUM(sch) AS scheduled_repeal
+     FROM (
+       SELECT CASE WHEN instr(c.id, '#') > 0 THEN substr(c.id, 1, instr(c.id, '#') - 1) ELSE c.id END AS base,
+              MAX(CASE WHEN ${REPEALED_SQL} THEN 0 ELSE 1 END) AS eff,
+              MIN(CASE WHEN ${REPEALED_SQL} THEN 1 ELSE 0 END) AS rep,
+              MAX(c.has_amendments) AS amd,
+              MAX(CASE WHEN c.has_amendments = 1 AND c.amendment_applied = 0 THEN 1 ELSE 0 END) AS unm,
+              MAX(CASE WHEN c.scheduled_repeal_from > date('now') THEN 1 ELSE 0 END) AS sch
+       FROM legal_chunks c
+       WHERE c.is_attachment = 0 AND c.is_annex = 0${filters.sql}
+       GROUP BY base
+     )`
+  )
+    .bind(...filters.binds)
+    .first<Record<string, number | null>>();
+  const n = (k: string) => Number(row?.[k] ?? 0);
+  return {
+    articles: n('articles'),
+    effective: n('effective'),
+    repealed: n('repealed'),
+    amended: n('amended'),
+    amendedUnmerged: n('amended_unmerged'),
+    scheduledRepeal: n('scheduled_repeal'),
+  };
 }
 
 /**

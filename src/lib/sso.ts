@@ -26,7 +26,18 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
  * و `/review/:token` كانتا مفتوحتين للعميل الخارجي بلا حساب، وقرار هذه
  * الجلسة إخضاعهما للدخول الموحّد. الأثر موصوف في `audit/sso-report.md`.
  */
-const PUBLIC_PATHS = ['/auth/callback', '/auth/mcp/callback', '/mcp', '/denied', '/api/health'];
+const PUBLIC_PATHS = [
+  '/auth/callback',
+  '/auth/mcp/callback',
+  '/mcp',
+  '/denied',
+  '/api/health',
+  // ملفّا الصفحة نفسها من جذر `web/public`: بلا جلسةٍ كان يُردّ عليهما ٤٠١ بجسم
+  // JSON، فيرفض المتصفّح نصَّ المظهر (نوعه ليس نصّاً) وتبقى صفحتا الرفض وباب
+  // الربط بلا مظهر القارئ. ساكنان لا سرَّ فيهما.
+  '/theme-init.js',
+  '/manifest.webmanifest',
+];
 
 /**
  * الأصول الساكنة — بادئات مُعلنة لا اجتهاد على الامتداد.
@@ -41,7 +52,7 @@ const PUBLIC_PATHS = ['/auth/callback', '/auth/mcp/callback', '/mcp', '/denied',
  * الواجهة بلا جلسة. وسماحُ العضو في `/connect-member/` — خارج هذه القائمة
  * عمداً، فيمرّ بالوسيط ويدخل من المركز قبل أن يرى شاشة الإذن.
  */
-const PUBLIC_PREFIXES = ['/assets/', '/brand/', '/oauth/', '/.well-known/oauth-', '/connect/'];
+const PUBLIC_PREFIXES = ['/assets/', '/brand/', '/icons/', '/oauth/', '/.well-known/oauth-', '/connect/'];
 
 /** الدور الافتراضي لأول دخول — يرقّيه مسؤول المنصة من إعداداتها. */
 export const DEFAULT_ROLE: PlatformRole = 'viewer';

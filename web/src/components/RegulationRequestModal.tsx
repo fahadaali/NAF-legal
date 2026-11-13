@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api } from '../lib/api';
 import { Icon, ICON_MD } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';

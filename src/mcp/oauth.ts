@@ -45,9 +45,30 @@ export const CODE_TTL = 5 * MIN;
 export const ACCESS_TTL = 60 * MIN;
 export const REFRESH_TTL = 30 * DAY;
 export const CONNECTION_TTL = 90 * DAY;
+/**
+ * مهلةُ إعادة رمز التجديد بعد تدويره.
+ *
+ * الأداة تُرسل رمز التجديد فيُدوَّر، ثم ينقطع الردّ في الطريق فتعيد إرساله —
+ * وهي لم تستلم الزوج الجديد قط. وكشفُ الإعادة بلا مهلة كان يعدّ ذلك سرقةً
+ * فيُلغي ربط العضو كلَّه ويعيده إلى الدخول من المركز بسبب شبكة. ففي الدقيقة
+ * الأولى بعد التدوير تأخذ الإعادةُ زوجاً جديداً، وبعدها تُلغي الربط كما كانت.
+ * وهي مهلةُ «إعادة الاستعمال» نفسها في خوادم التفويض الشائعة.
+ */
+export const REFRESH_RETRY_GRACE = 60_000;
 export const GUEST_CODE_TTL = 10 * MIN;
+/** محاولاتُ الرمز الواحد — ثم يُطلب رمزٌ جديد. */
 export const GUEST_CODE_ATTEMPTS = 5;
-export const GUEST_CODE_SENDS = 5;
+/**
+ * سقفا الضيف في نافذته، أيّاً كان الطلب الذي جاء منه (هجرة 0044).
+ *
+ * طلبُ التفويض يُنشئه أيُّ أحدٍ بلا حساب، فسقفٌ على الطلب وحده يُصفَّر بطلبٍ
+ * جديد. وعلى الضيف: خمسةُ رموزٍ في الساعة تكفي من أخطأ بريده أو تأخّر عنه
+ * البريد، وعشرُ محاولاتٍ خاطئة تُغلق التخمين — مليونُ احتمالٍ بعشرٍ في الساعة
+ * لا يُصاب. وليس سقفاً على الاستخدام: من دخل لا يمرّ بهذا ثانيةً.
+ */
+export const GUEST_WINDOW = 60 * MIN;
+export const GUEST_SENDS_PER_WINDOW = 5;
+export const GUEST_FAILS_PER_WINDOW = 10;
 /** «آخر نشاط» لا يُكتب في كل نداء — مرّةً كل خمس دقائق تكفي لعموده. */
 const TOUCH_EVERY = 5 * MIN;
 
@@ -261,12 +282,31 @@ async function liveRequest(env: Env, id: string): Promise<RequestRow | null> {
   return row;
 }
 
-/** ما تعرضه شاشتا الباب والإذن: اسمُ الأداة وحده. */
-export async function describeRequest(env: Env, id: string): Promise<{ clientName: string | null } | null> {
+/**
+ * النطاقُ الذي يعود إليه الإذن، كما يُعرض للعضو قبل «سماح».
+ *
+ * اسمُ الأداة تكتبه الأداة عن نفسها فيُنتحل؛ والنطاقُ لا يُنتحل — إليه يذهب
+ * الرمز (`naf-terms.md` §١٥ — «وجهة الرجوع»). ولمخطّطٍ خاصٍّ بتطبيقٍ أصليّ
+ * (`cursor://…`) لا نطاق، فيُعرض المخطّط نفسه.
+ */
+export function redirectHost(redirectUri: string): string {
+  try {
+    const u = new URL(redirectUri);
+    return u.host || u.protocol.replace(/:$/, '');
+  } catch {
+    return redirectUri;
+  }
+}
+
+/** ما تعرضه شاشتا الباب والإذن: اسمُ الأداة كما أعلنته، ونطاقُ رجوعها. */
+export async function describeRequest(
+  env: Env,
+  id: string
+): Promise<{ clientName: string | null; redirectHost: string } | null> {
   const row = await liveRequest(env, id);
   if (!row) return null;
   const client = await getClient(env, row.client_id);
-  return { clientName: client?.name ?? null };
+  return { clientName: client?.name ?? null, redirectHost: redirectHost(row.redirect_uri) };
 }
 
 /** يُصدر رمز التفويض ويمحو الطلب، ويردّ عنوان الرجوع إلى الأداة. */
@@ -335,6 +375,36 @@ export type SendCodeResult =
   | { kind: 'expired' }
   | { kind: 'invalid_email' };
 
+/**
+ * يعدّ على الضيف في نافذته ويردّ العدّادين بعد العدّ — في استعلامٍ واحد ذرّي.
+ *
+ * وعباراتُ `SET` في SQLite تُحسب كلُّها من القيم قبل التحديث، فالنافذةُ
+ * المنقضية تُقرأ قديمةً في الشروط الثلاثة ولا يسبق أحدُها غيره.
+ */
+async function bumpGuest(env: Env, guestId: string, field: 'sends' | 'fails'): Promise<{ sends: number; fails: number }> {
+  const now = Date.now();
+  const stale = now - GUEST_WINDOW;
+  const row = await env.DB.prepare(
+    `INSERT INTO mcp_guest_throttle (guest_id, window_start, sends, fails) VALUES (?, ?, ?, ?)
+     ON CONFLICT(guest_id) DO UPDATE SET
+       sends = CASE WHEN mcp_guest_throttle.window_start < ? THEN excluded.sends ELSE mcp_guest_throttle.sends + excluded.sends END,
+       fails = CASE WHEN mcp_guest_throttle.window_start < ? THEN excluded.fails ELSE mcp_guest_throttle.fails + excluded.fails END,
+       window_start = CASE WHEN mcp_guest_throttle.window_start < ? THEN excluded.window_start ELSE mcp_guest_throttle.window_start END
+     RETURNING sends, fails`
+  )
+    .bind(guestId, now, field === 'sends' ? 1 : 0, field === 'fails' ? 1 : 0, stale, stale, stale)
+    .first<{ sends: number; fails: number }>();
+  return row ?? { sends: 0, fails: 0 };
+}
+
+/** المحاولاتُ الخاطئة في النافذة الجارية — بلا عدّ. */
+async function guestFails(env: Env, guestId: string): Promise<number> {
+  const row = await env.DB.prepare('SELECT window_start, fails FROM mcp_guest_throttle WHERE guest_id = ?')
+    .bind(guestId)
+    .first<{ window_start: number; fails: number }>();
+  return row && row.window_start >= Date.now() - GUEST_WINDOW ? row.fails : 0;
+}
+
 export async function sendGuestCode(env: Env, requestId: string, emailRaw: string): Promise<SendCodeResult> {
   const req = await liveRequest(env, requestId);
   if (!req) return { kind: 'expired' };
@@ -349,21 +419,18 @@ export async function sendGuestCode(env: Env, requestId: string, emailRaw: strin
     .first<{ id: string; email: string }>();
   if (!guest) return { kind: 'sent' };
 
-  const prior = await env.DB.prepare('SELECT sends, guest_id FROM mcp_guest_codes WHERE request_id = ?')
-    .bind(requestId)
-    .first<{ sends: number; guest_id: string }>();
-  // سقفٌ على الإرسال لا على الاستخدام: طلبٌ واحد لا يصير أداةَ إغراقٍ لبريد أحد.
-  const sends = prior && prior.guest_id === guest.id ? prior.sends : 0;
-  if (sends >= GUEST_CODE_SENDS) return { kind: 'sent' };
+  // سقفٌ على الإرسال لا على الاستخدام: لا يصير البابُ أداةَ إغراقٍ لبريد أحد.
+  // وتجاوزُه لا يُقال — الردّ واحدٌ في كل حال (§١٥).
+  if ((await bumpGuest(env, guest.id, 'sends')).sends > GUEST_SENDS_PER_WINDOW) return { kind: 'sent' };
 
   const code = sixDigits();
   await env.DB.prepare(
-    `INSERT INTO mcp_guest_codes (request_id, guest_id, code_hash, attempts, sends, expires_at)
-     VALUES (?, ?, ?, 0, ?, ?)
+    `INSERT INTO mcp_guest_codes (request_id, guest_id, code_hash, attempts, expires_at)
+     VALUES (?, ?, ?, 0, ?)
      ON CONFLICT(request_id) DO UPDATE SET guest_id = excluded.guest_id, code_hash = excluded.code_hash,
-       attempts = 0, sends = excluded.sends, expires_at = excluded.expires_at`
+       attempts = 0, expires_at = excluded.expires_at`
   )
-    .bind(requestId, guest.id, await sha256(`${requestId}:${code}`), sends + 1, Date.now() + GUEST_CODE_TTL)
+    .bind(requestId, guest.id, await sha256(`${requestId}:${code}`), Date.now() + GUEST_CODE_TTL)
     .run();
   await sendCodeEmail(env, guest.email, code);
   return { kind: 'sent' };
@@ -411,17 +478,25 @@ export async function verifyGuestCode(
   const email = normalizeEmail(emailRaw);
   const code = codeRaw.replace(/\s+/g, '');
   const row = await env.DB.prepare(
-    `SELECT g.guest_id, g.code_hash, g.attempts, g.expires_at, x.email_norm
+    `SELECT g.guest_id, g.code_hash, g.expires_at, x.email_norm
      FROM mcp_guest_codes g JOIN mcp_guests x ON x.id = g.guest_id WHERE g.request_id = ?`
   )
     .bind(requestId)
-    .first<{ guest_id: string; code_hash: string; attempts: number; expires_at: number; email_norm: string }>();
+    .first<{ guest_id: string; code_hash: string; expires_at: number; email_norm: string }>();
   // جملةٌ واحدة للخاطئ والمنتهي والمستنفد — «غير صحيح أو انتهت صلاحيته» (§١٥).
-  if (!row || row.email_norm !== email || row.expires_at < Date.now() || row.attempts >= GUEST_CODE_ATTEMPTS) {
-    return { ok: false, reason: 'wrong' };
-  }
+  if (!row || row.email_norm !== email || row.expires_at < Date.now()) return { ok: false, reason: 'wrong' };
+  // الضيفُ استنفد محاولاته في النافذة: لا يُقارَن الرمز أصلاً، ولو كان صحيحاً.
+  if ((await guestFails(env, row.guest_id)) >= GUEST_FAILS_PER_WINDOW) return { ok: false, reason: 'wrong' };
+  // المحاولةُ تُعدّ قبل المقارنة وفي الاستعلام نفسه الذي يشترط السقف: نداءان
+  // متزامنان لا يقرآن العدّاد نفسه فيتجاوزانه معاً.
+  const claimed = await env.DB.prepare(
+    'UPDATE mcp_guest_codes SET attempts = attempts + 1 WHERE request_id = ? AND attempts < ? RETURNING attempts'
+  )
+    .bind(requestId, GUEST_CODE_ATTEMPTS)
+    .first();
+  if (!claimed) return { ok: false, reason: 'wrong' };
   if (!/^\d{6}$/.test(code) || (await sha256(`${requestId}:${code}`)) !== row.code_hash) {
-    await env.DB.prepare('UPDATE mcp_guest_codes SET attempts = attempts + 1 WHERE request_id = ?').bind(requestId).run();
+    await bumpGuest(env, row.guest_id, 'fails');
     return { ok: false, reason: 'wrong' };
   }
   return { ok: true, redirect: await issueCode(env, req, { kind: 'guest', guestId: row.guest_id }, origin) };
@@ -541,12 +616,12 @@ export async function exchangeToken(env: Env, form: URLSearchParams): Promise<To
         connection_expires: number;
       }>();
     if (!row) return grantErr('invalid_grant', 'Invalid refresh token');
-    if (row.used_at) {
-      // رمزٌ دُوِّر ثم عاد: أحدُ حامليه ليس صاحبه. يُلغى الربط كلُّه.
+    const now = Date.now();
+    if (row.used_at && now - row.used_at > REFRESH_RETRY_GRACE) {
+      // رمزٌ دُوِّر ثم عاد بعد مهلة الإعادة: أحدُ حامليه ليس صاحبه. يُلغى الربط كلُّه.
       await revokeConnection(env, row.connection_id, 'refresh_reuse');
       return grantErr('invalid_grant', 'Refresh token reuse detected');
     }
-    const now = Date.now();
     if (row.revoked_at || row.expires_at < now || row.connection_expires < now) {
       return grantErr('invalid_grant', 'Connection expired or revoked');
     }
@@ -555,11 +630,17 @@ export async function exchangeToken(env: Env, form: URLSearchParams): Promise<To
     if (!(await subjectAlive(env, row.subject_kind, row.member_id, row.guest_id))) {
       return grantErr('invalid_grant', 'Access revoked');
     }
-    const mark = await env.DB.prepare('UPDATE mcp_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL')
-      .bind(now, hash)
-      .run();
-    // طلبان متزامنان بالرمز نفسه: الأوّل يدوِّره، والثاني يُعامَل عائداً.
-    if (!mark.meta.changes) return grantErr('invalid_grant', 'Refresh token already used');
+    if (!row.used_at) {
+      const mark = await env.DB.prepare('UPDATE mcp_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL')
+        .bind(now, hash)
+        .run();
+      // طلبان متزامنان بالرمز نفسه: الأوّل يدوِّره، والثاني إعادةٌ في المهلة.
+      if (!mark.meta.changes) {
+        const again = await env.DB.prepare('SELECT used_at FROM mcp_tokens WHERE token_hash = ?').bind(hash).first<{ used_at: number | null }>();
+        if (!again?.used_at || now - again.used_at > REFRESH_RETRY_GRACE) return grantErr('invalid_grant', 'Refresh token already used');
+      }
+    }
+    // وإعادةٌ في المهلة تأخذ زوجاً جديداً ولا تُلغي الربط (انظر `REFRESH_RETRY_GRACE`).
     return { ok: true, body: await issueTokens(env, row.connection_id, row.connection_expires) };
   }
 
@@ -651,5 +732,15 @@ export async function purgeExpired(env: Env): Promise<void> {
     env.DB.prepare('DELETE FROM mcp_auth_codes WHERE expires_at < ?').bind(now),
     env.DB.prepare('DELETE FROM mcp_guest_codes WHERE expires_at < ?').bind(now),
     env.DB.prepare('DELETE FROM mcp_tokens WHERE expires_at < ?').bind(now),
+    env.DB.prepare('DELETE FROM mcp_guest_throttle WHERE window_start < ?').bind(now - GUEST_WINDOW),
+    /* أداةٌ سجّلت نفسها ولم يتمّ لها ربطٌ في شهر: التسجيلُ مفتوحٌ لأيّ أحد،
+       فبلا كنسٍ يكبر الجدول بكل محاولةٍ لم تكتمل. ومن عاد سجّل نفسه من جديد —
+       الأداة تفعل ذلك آلياً حين لا يُعرف معرّفها. */
+    env.DB.prepare(
+      `DELETE FROM mcp_clients WHERE created_at < ?
+         AND id NOT IN (SELECT client_id FROM mcp_connections)
+         AND id NOT IN (SELECT client_id FROM mcp_auth_requests)
+         AND id NOT IN (SELECT client_id FROM mcp_auth_codes)`
+    ).bind(now - 30 * DAY),
   ]);
 }

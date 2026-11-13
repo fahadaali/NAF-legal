@@ -366,6 +366,9 @@ export interface PlatformSearch {
   chats: {
     conversation_id: string;
     title: string | null;
+    /** مصدر المحادثة — علامة «من ‹الأداة›» في القائمة المرشَّحة أيضاً (هجرة 0043). */
+    origin?: string | null;
+    origin_client?: string | null;
     message_id: string;
     role: string;
     created_at: number;
@@ -911,7 +914,7 @@ export const api = {
 
   // أدوات الذكاء الاصطناعي المربوطة — §١٥
   mcpConnectInfo: (requestId: string) =>
-    req<{ client_name: string | null; can_save: boolean }>(`/mcp/connect/${encodeURIComponent(requestId)}`),
+    req<{ client_name: string | null; redirect_host: string; can_save: boolean }>(`/mcp/connect/${encodeURIComponent(requestId)}`),
   mcpApprove: (requestId: string) =>
     req<{ ok: true; redirect: string }>('/mcp/connect/approve', { method: 'POST', body: JSON.stringify({ request_id: requestId }) }),
   mcpConnections: () => req<{ connections: McpConnection[] }>('/mcp/connections'),

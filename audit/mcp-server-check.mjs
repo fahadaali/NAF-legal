@@ -176,6 +176,40 @@ console.log('التفويض والمحادثات');
   const reads = conv.match(/FROM conversations[^`'"]*/g) ?? [];
   check('كلُّ قراءةٍ للمحادثات مقيّدةٌ بصاحبها', reads.length > 0 && reads.every((q) => /user_id = \?/.test(q)), reads.join(' | '));
   check('ولا تُمحى رسالةٌ ولا تُعدَّل', !/DELETE FROM messages|UPDATE messages/.test(conv));
+  const convReads = conv.match(/FROM conversations\s+WHERE[^`]*/g) ?? [];
+  check('ومحادثاتُ القضايا خارج الأداة في كل قراءة', convReads.length >= 3 && convReads.every((q) => q.includes('${NOT_CASE}')), convReads.join(' | '));
+  check('والردّ المحفوظ يدخل سجلّ النُّسخ', /INSERT INTO draft_versions/.test(conv));
+  check('وسقفُ قراءة المحادثة دون حدّ الأدوات', /READ_CHARS_MAX = 50_000/.test(conv));
+
+  check('سقفا الضيف على الضيف لا على الطلب', /mcp_guest_throttle/.test(oauth) && /GUEST_FAILS_PER_WINDOW/.test(oauth));
+  check('ومحاولةُ الرمز تُعدّ ذرّياً قبل المقارنة', /attempts = attempts \+ 1 WHERE request_id = \? AND attempts < \? RETURNING/.test(oauth));
+  check('وإعادةُ رمز التجديد في المهلة لا تُلغي الربط', /REFRESH_RETRY_GRACE/.test(oauth));
+  check('والأدوات المهجورة تُكنس', /DELETE FROM mcp_clients WHERE created_at < \?/.test(oauth));
+
+  const authSrv = readFileSync(new URL('../src/routes/mcpAuthServer.ts', import.meta.url), 'utf8');
+  check('أبواب التفويض العامّة تحت حدّ معدّل', ['/oauth/register', '/oauth/authorize', '/oauth/connect/*'].every((r) => authSrv.includes(`app.use('${r}', limited)`)));
+  const connRoutes = readFileSync(new URL('../src/routes/mcpConnections.ts', import.meta.url), 'utf8');
+  check('«مربوط» ما دام رمز التجديد حيّاً', /LIVE_SQL/.test(connRoutes) && /t\.kind = 'refresh'/.test(connRoutes));
+  check('وحذفُ الضيف دفعةٌ واحدة', !/for \(const r of conns/.test(connRoutes));
+
+  const toolsSrc = readFileSync(new URL('../src/mcp/tools.ts', import.meta.url), 'utf8');
+  const related = toolsSrc.slice(toolsSrc.indexOf("name: 'get_related_articles'"), toolsSrc.indexOf("name: 'get_definitions'"));
+  check('إحالاتُ المادة المحجوبة لا تُكشف', /getChunkById\(env, base\)/.test(related));
+  check('الملغاة تُعرف بحالها لا بـ`isRepealed` وحده', /function isRepealedHit[\s\S]{0,200}RETRIEVAL_REPEALED/.test(toolsSrc) && !/h\.isRepealed && 'ملغاة'/.test(toolsSrc));
+  check('وكلُّ مادةٍ تصل بسطور حالها', /const status = statusLines\(h\)/.test(toolsSrc));
+  check('والملغاة المحجوبة يُذكر عددُها في البحث والتصفّح والفهرس', (toolsSrc.match(/غير المعروضة هنا/g) ?? []).length === 3);
+  check('وألفاظُ الحال المسجّلة (§٣)', ['نظام لاغٍ', 'لم يبدأ العمل به — من', 'تُلغى في', 'مستبقاة بعد إلغاء النظام', 'الرقم السابق'].every((t) => toolsSrc.includes(t)));
+  const instr = readFileSync(new URL('../src/mcp/instructions.ts', import.meta.url), 'utf8');
+  check('والتعليمات تشرح الأحوال وطريق النصوص السابقة', /include_repealed: true/.test(instr) && /get_article_amendment/.test(instr) && /لم يبدأ العمل به/.test(instr));
+  const browse = toolsSrc.slice(toolsSrc.indexOf("name: 'browse_law_articles'"), toolsSrc.indexOf("name: 'get_article_amendment'"));
+  check('التصفّح لا يُظهر ما ينتظر المراجعة', (browse.match(/includeDefective: false/g) ?? []).length === 2);
+  check('وإحصاءُ النظام بالمادة لا بالمقطع', /lawArticleStats\(env, lawId\)/.test(toolsSrc) && !/الموادّ: \$\{l\.effective\}/.test(toolsSrc));
+  const amend = toolsSrc.slice(toolsSrc.indexOf("name: 'get_article_amendment'"), toolsSrc.indexOf("name: 'get_law_changes'"));
+  check('النصُّ السابق من مواضعه الثلاثة، والتصحيحُ ليس نصّاً سابقاً', /a\.events/.test(amend) && /legal_chunk_versions/.test(amend) && /change_kind <> 'correction'/.test(amend));
+  check('ويُقال صراحةً حين لا يحفظ السجلّ نصّاً سابقاً', /لا يحفظ سجلُّ المنصة نصّاً سابقاً/.test(amend));
+  const instr2 = readFileSync(new URL('../src/mcp/instructions.ts', import.meta.url), 'utf8');
+  check('والصياغةُ النهائية نظيفة، والنافذُ بلا إشارة', /صياغةٍ نهائية/.test(instr2) && /النافذ لا يحتاج إشارةً/.test(instr2));
+  check('القوائم الطويلة صفحاتٌ لا كتلة', (toolsSrc.match(/= paginate\(/g) ?? []).length === 2);
   check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
 }
 

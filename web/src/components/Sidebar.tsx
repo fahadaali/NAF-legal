@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { api, Conversation, Folder, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
 import { ConsultationIcon, Icon, ICON_SM } from '../lib/icons';
+import OriginTag from './OriginTag';
 import { formatDayHeading, formatTime, isolate } from '../lib/format';
 import { streamingConversationIds, subscribeChatActivity } from '../lib/chatStream';
 import { Sidebar as NafSidebar } from '../naf/ui/app-shell';
@@ -53,7 +54,6 @@ export default function Sidebar(props: Props) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [searchMode, setSearchMode] = useState<string>('');
 
   /** لا نتيجة لبحثٍ جرى — تفرّقها الشاشة الفارغة عن قائمةٍ لم تبدأ بعد. */
   const [noMatches, setNoMatches] = useState(false);
@@ -74,7 +74,7 @@ export default function Sidebar(props: Props) {
   const loadFolders = () => api.folders().then((r) => setFolders(r.folders)).catch(() => {});
 
   useEffect(() => {
-    if (!search) { setSearchMode(''); load(); }
+    if (!search) { load(); }
     loadFolders();
   }, [props.refreshKey, activeFolder]);
 
@@ -111,11 +111,10 @@ export default function Sidebar(props: Props) {
      تقول إنها مُرشَّحة. والترشيح في الخادم لا هنا: الترشيح بعد القصّ يعطي
      صفحةً ناقصة أو فارغة. */
   useEffect(() => {
-    if (!search) { setSearchMode(''); load(); return; }
+    if (!search) { load(); return; }
     const t = setTimeout(() => {
       // ترشيح المحادثات في الشريط: بحثٌ لفظيّ في المحادثات وحدها.
       api.search(search, 'chats', activeFolder ?? undefined).then((r) => {
-        setSearchMode(r.mode);
         const seen = new Set<string>();
         const found = r.chats
           .filter((x) => (seen.has(x.conversation_id) ? false : seen.add(x.conversation_id)))
@@ -123,6 +122,8 @@ export default function Sidebar(props: Props) {
             id: x.conversation_id,
             title: x.title ?? '',
             consultation_type: null,
+            origin: x.origin ?? null,
+            origin_client: x.origin_client ?? null,
             created_at: 0,
             updated_at: 0,
           }));
@@ -283,12 +284,7 @@ export default function Sidebar(props: Props) {
                   وإعلانُ كل بدءٍ وختام في محادثةٍ أخرى ضجيجٌ للقارئ بالصوت. */}
               {/* «من ‹الأداة›» — أين بدأت المحادثة لا من يكملها (naf-terms.md §١٥).
                   أيقونةٌ ونصّ، والاسم بياناتٌ معزولة. */}
-              {c.origin === 'mcp' && (
-                <span className="conv-origin">
-                  <Icon.aiTool size={ICON_SM} aria-hidden /> من{' '}
-                  {c.origin_client ? <bdi>{c.origin_client}</bdi> : 'أداة مربوطة'}
-                </span>
-              )}
+              {c.origin === 'mcp' && <OriginTag client={c.origin_client ?? null} />}
               {busyConvs.includes(c.id) && (
                 <span className="conv-busy" title="يجري توليد ردّ">
                   <Icon.embedding size={ICON_SM} className="icon-spin" aria-hidden /> جارٍ

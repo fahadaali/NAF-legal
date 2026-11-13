@@ -122,6 +122,7 @@ Never upgrade in one repository alone. Six repositories on two different icon vo
 - A new shared component is a decision. If a screen needs something new, ask before adding it.
 - Components accept `className` and forward refs. They never hardcode outer margins — spacing belongs to the parent.
 - Every interactive element needs a visible `:focus-visible` state. Do not remove it with `outline-none` without an equally visible replacement.
+- The focus ring is one ring everywhere: `outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset);` in plain CSS, `ring-2 ring-ring ring-offset-2` in Tailwind. Never draw it as a hand-written `box-shadow`.
 - Three control heights only: `sm`, `md`, `lg`. `md` is the default. No other height exists.
 
 ---

@@ -88,7 +88,7 @@ app.get('/', async (c) => {
   let chats: unknown[] = [];
   if (wants('chats')) {
     const rows = await c.env.DB.prepare(
-      `SELECT c.id AS conversation_id, c.title, m.id AS message_id, m.role, m.created_at,
+      `SELECT c.id AS conversation_id, c.title, c.origin, c.origin_client, m.id AS message_id, m.role, m.created_at,
               ${snippetExpr('m.content')} AS snippet
        FROM messages m JOIN conversations c ON c.id = m.conversation_id
        WHERE c.user_id = ? AND ${globCondition('m.content', patterns)}${folderCond}
