@@ -1941,7 +1941,37 @@ export async function upsertLegalChunks(
     }
   }
 
+  await markLawsWithKeptRepealed(env, rows.map((r) => r.law_id));
+
   return { inserted: rows.length - updated, updated, archived, superseded };
+}
+
+/**
+ * نظامٌ فيه موادُّ «مستبقاة بعد إلغاء النظام» نظامٌ لاغٍ — بقرار صاحب المنصة:
+ * «النظام يُعتبر لاغياً، والموادُّ المستبقاة لا تُعدّ لاغية». أصلُ النظام ملغى،
+ * والمستبقاةُ استثناءٌ منه.
+ *
+ * وملفُّ الاستيراد قد لا يرفع علمَ إلغاء النظام (`law_repealed`) — لفظُ البطاقة
+ * فيه يومَ السحب «ساري» — ويرفع `kept_after_repeal` على موادّه المستبقاة. فكان
+ * نظام التنفيذ (م/53) يُعرض في المنصة بلا وسم «نظام لاغٍ» وموادُّه تقول إنه أُلغي.
+ * فيُرفع العلمُ هنا بعد كل كتابة، على كل نظامٍ مسّته، فلا يعود بإعادة استيراد.
+ *
+ * **ولا يمسّ حالَ مادة.** `EFFECTIVE_SQL` لا يقرأ `law_repealed` عمداً، فالمستبقاةُ
+ * تبقى نافذة في البحث والاستشهاد — والعلمُ وسمُ النظام وحده.
+ */
+export async function markLawsWithKeptRepealed(env: Env, lawIds: (string | null)[]): Promise<void> {
+  const ids = [...new Set(lawIds.filter((x): x is string => !!x))];
+  for (let i = 0; i < ids.length; i += DB_BATCH) {
+    await env.DB.batch(
+      ids.slice(i, i + DB_BATCH).map((id) =>
+        env.DB.prepare(
+          `UPDATE legal_chunks SET law_repealed = 1
+           WHERE law_id = ?1 AND law_repealed = 0
+             AND EXISTS (SELECT 1 FROM legal_chunks k WHERE k.law_id = ?1 AND k.kept_after_repeal = 1)`
+        ).bind(id)
+      )
+    );
+  }
 }
 
 /**
