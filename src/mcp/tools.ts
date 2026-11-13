@@ -66,7 +66,11 @@ const refuse = (text: string): McpToolResult => ({ text, isError: true });
  * الهجريّ (§٨): تاريخُ نفاذٍ يُستشهد به.
  */
 function lawState(l: LawSummary): string {
-  if (l.law_repealed) return 'نظام لاغٍ';
+  if (l.law_repealed) return l.kept_after_repeal ? 'نظام لاغٍ — وفيه موادُّ مستبقاة بعد إلغاء النظام' : 'نظام لاغٍ';
+  /* موادُّ «مستبقاة بعد إلغاء النظام» لا تكون إلا في نظامٍ أُلغي. فنظامٌ هي فيه
+     لاغٍ وإن لم يُرفع علمُ إلغائه في بطاقته — وكان يُعرض «نافذ» بجانب موادّه
+     تقول إنه أُلغي: نظام التنفيذ (م/53) حلّ محلّه م/237 وأبقى سبع عشرة مادة. */
+  if (l.kept_after_repeal) return 'نظام لاغٍ — وفيه موادُّ مستبقاة بعد إلغاء النظام';
   if (l.law_pending) {
     return l.law_effective_from
       ? `لم يبدأ العمل به — من ${dualDate(l.law_effective_from)}`

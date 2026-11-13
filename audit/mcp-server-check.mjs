@@ -211,6 +211,7 @@ console.log('التفويض والمحادثات');
   check('والصياغةُ النهائية نظيفة، والنافذُ بلا إشارة', /صياغةٍ نهائية/.test(instr2) && /النافذ لا يحتاج إشارةً/.test(instr2));
   const lawStateFn = toolsSrc.slice(toolsSrc.indexOf('function lawState'), toolsSrc.indexOf('function isRepealedHit'));
   check('حالُ النظام محسوبٌ لا منقول: لا يُعاد لفظُ البطاقة المحفوظ', !/law_status\b/.test(lawStateFn.replace(/\/\*[\s\S]*?\*\//g, '')) && /return 'نافذ'/.test(lawStateFn));
+  check('ونظامٌ فيه موادُّ مستبقاة لاغٍ وإن لم يُرفع علمُ إلغائه', /if \(l\.kept_after_repeal\) return 'نظام لاغٍ/.test(lawStateFn));
   const srv = readFileSync(new URL('../src/routes/mcpServer.ts', import.meta.url), 'utf8');
   check('شعارُ ناف في هويّة الخادم', /icons: \[/.test(srv) && /icon-512\.png/.test(srv) && /websiteUrl/.test(srv));
   const idx2 = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');

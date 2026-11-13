@@ -4741,6 +4741,11 @@ export interface LawSummary {
   /** لم يبدأ العمل به — مُقيَّماً بتاريخ اليوم (§6-8). */
   law_pending: number;
   law_effective_from: string | null;
+  /**
+   * في النظام موادُّ «مستبقاة بعد إلغاء النظام» — وهي لا تكون إلا في نظامٍ أُلغي.
+   * فوجودُها يقول إن النظام لاغٍ وإن لم يُرفع علمُ إلغائه في بطاقته.
+   */
+  kept_after_repeal: number;
   /** نوع أداة الإصدار: مرسوم ملكي، قرار مجلس الوزراء… */
   instrument: string | null;
   instrument_no: string | null;
@@ -4774,6 +4779,7 @@ export async function listLaws(env: Env): Promise<LawSummary[]> {
                       AND (c.law_effective_from IS NULL OR c.law_effective_from > date('now'))
                      THEN 1 ELSE 0 END) AS law_pending,
             MAX(c.law_effective_from) AS law_effective_from,
+            MAX(c.kept_after_repeal) AS kept_after_repeal,
             MAX(c.instrument) AS instrument,
             MAX(c.instrument_no) AS instrument_no,
             MAX(c.authority) AS authority,
