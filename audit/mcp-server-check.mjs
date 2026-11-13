@@ -195,6 +195,12 @@ console.log('التفويض والمحادثات');
   const toolsSrc = readFileSync(new URL('../src/mcp/tools.ts', import.meta.url), 'utf8');
   const related = toolsSrc.slice(toolsSrc.indexOf("name: 'get_related_articles'"), toolsSrc.indexOf("name: 'get_definitions'"));
   check('إحالاتُ المادة المحجوبة لا تُكشف', /getChunkById\(env, base\)/.test(related));
+  check('الملغاة تُعرف بحالها لا بـ`isRepealed` وحده', /function isRepealedHit[\s\S]{0,200}RETRIEVAL_REPEALED/.test(toolsSrc) && !/h\.isRepealed && 'ملغاة'/.test(toolsSrc));
+  check('وكلُّ مادةٍ تصل بسطور حالها', /const status = statusLines\(h\)/.test(toolsSrc));
+  check('والملغاة المحجوبة يُذكر عددُها في البحث والتصفّح والفهرس', (toolsSrc.match(/غير المعروضة هنا/g) ?? []).length === 3);
+  check('وألفاظُ الحال المسجّلة (§٣)', ['نظام لاغٍ', 'لم يبدأ العمل به — من', 'تُلغى في', 'مستبقاة بعد إلغاء النظام', 'الرقم السابق'].every((t) => toolsSrc.includes(t)));
+  const instr = readFileSync(new URL('../src/mcp/instructions.ts', import.meta.url), 'utf8');
+  check('والتعليمات تشرح الأحوال وطريق النصوص السابقة', /include_repealed: true/.test(instr) && /get_article_amendment/.test(instr) && /لم يبدأ العمل به/.test(instr));
   check('القوائم الطويلة صفحاتٌ لا كتلة', (toolsSrc.match(/= paginate\(/g) ?? []).length === 2);
   check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
 }

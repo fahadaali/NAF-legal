@@ -25,6 +25,7 @@
 import type { Env } from '../types';
 import {
   DOC_TYPES,
+  RETRIEVAL_REPEALED,
   searchLegal,
   getArticle,
   getChunkById,
@@ -47,6 +48,7 @@ import type { LegalHit, LawSummary } from '../lib/legal';
 import { joinArticleParts, fromLegalHit, formatRagBlock } from '../lib/rag';
 import { approvedIssues } from '../lib/research/issues';
 import { arabicGlobPatterns } from '../lib/arabic';
+import { dualDate } from '../lib/hijri';
 import { argBool, argInt, argString } from './protocol';
 import type { McpTool, McpToolResult } from './protocol';
 
@@ -57,10 +59,69 @@ const ok = (text: string): McpToolResult => ({ text });
 const refuse = (text: string): McpToolResult => ({ text, isError: true });
 
 /** حالُ النظام سطراً: ساري، ملغى، لم يبدأ العمل به. */
+/**
+ * حالُ النظام سطراً — بألفاظ «حال النظام» المسجّلة (`naf-terms.md` §٣):
+ * «نظام لاغٍ»، و«لم يبدأ العمل به — من ‹التاريخ›». والتاريخ ميلاديّ يتبعه
+ * الهجريّ (§٨): تاريخُ نفاذٍ يُستشهد به.
+ */
 function lawState(l: LawSummary): string {
-  if (l.law_repealed) return 'ملغى';
-  if (l.law_pending) return `لم يبدأ العمل به${l.law_effective_from ? ` (نافذ من ${l.law_effective_from})` : ''}`;
-  return l.law_status || 'ساري';
+  if (l.law_repealed) return 'نظام لاغٍ';
+  if (l.law_pending) return `لم يبدأ العمل به — من ${l.law_effective_from ? dualDate(l.law_effective_from) : 'تاريخٍ لم يُذكر'}`;
+  return l.law_status || 'نافذ';
+}
+
+/**
+ * المادةُ ملغاة؟ بالشروط الثلاثة التي تحجبها بها المنصة (`EFFECTIVE_SQL`):
+ * حالُ الاسترجاع، أو أحد الحقلين القديمين. والأوّل يشمل إلغاءَ النظام كلِّه
+ * والإلغاءَ المجدول الذي حلّ يومه — وكانت الأداة تقرأ `isRepealed` وحده، فتصل
+ * مادةُ نظامٍ لاغٍ بلا وسمٍ يقول إنها ملغاة.
+ */
+function isRepealedHit(h: LegalHit): boolean {
+  return h.retrievalStatus === RETRIEVAL_REPEALED || h.isRepealed || h.status === 'repealed';
+}
+
+/**
+ * سطورُ حال المادة، فوق نصّها مع تنبيهاتها.
+ *
+ * المنصة تعرض هذه الأحوال وسوماً في بطاقة المادة؛ والأداةُ لا ترى بطاقة، فتصلها
+ * سطوراً بالألفاظ المسجّلة نفسها. وما يغيّر حكمَ الاستشهاد يبدأ بـ«تنبيه:» —
+ * والتعليمات تُلزم الأداة بنقله مع النصّ: الملغاة، والمجدولُ إلغاؤها. وما
+ * سواهما وصفٌ يُعين الباحث: لم يبدأ العمل به بتاريخه، والمستبقاة، والتعديلات
+ * وطريقُ نسخها السابقة، والرقمُ السابق.
+ *
+ * والغايةُ أن تصل الموادّ كلُّها بحالها — النافذة والمعدَّلة والتي لم يبدأ
+ * العمل بها والملغاة حين تُطلب — لا أن يُحجب منها ما يحتاجه باحثٌ في نصٍّ
+ * سابق، ولا أن يُقرأ منها ما ليس جارياً على أنه جارٍ.
+ */
+function statusLines(h: LegalHit): string[] {
+  const today = new Date().toISOString().slice(0, 10);
+  const lines: string[] = [];
+  if (isRepealedHit(h)) {
+    const how =
+      h.lawRepealed && !h.keptAfterRepeal
+        ? ' — نظام لاغٍ'
+        : h.scheduledRepealFrom && h.scheduledRepealFrom <= today
+          ? ` — منذ ${dualDate(h.scheduledRepealFrom)}`
+          : '';
+    lines.push(`تنبيه: الحال: ملغاة${how}. نصٌّ سابق لا يُستشهد به على أنه نافذ، ويُذكر بحاله إن ذُكر.`);
+  } else {
+    if (h.scheduledRepealFrom && h.scheduledRepealFrom > today) {
+      lines.push(`تنبيه: تُلغى في ${dualDate(h.scheduledRepealFrom)} — نافذةٌ إلى ذلك اليوم.`);
+    }
+    if (h.lawPending) {
+      lines.push(`الحال: لم يبدأ العمل به — من ${h.lawEffectiveFrom ? dualDate(h.lawEffectiveFrom) : 'تاريخٍ لم يُذكر'}`);
+    }
+    if (h.keptAfterRepeal) lines.push('الحال: مستبقاة بعد إلغاء النظام — نافذةٌ وإن أُلغي نظامها.');
+  }
+  if (h.hasAmendments) {
+    // «عددُ …: N» لا «N مرّات»: صيغةٌ تصحّ مع كل عدد، والعدد العربي يتغيّر معدودُه
+    // بين الاثنين والعشرة وما فوقها.
+    const times = h.amendmentsCount && h.amendmentsCount > 1 ? ` — عددُ تعديلاتها: ${h.amendmentsCount}` : '';
+    const current = h.amendmentApplied ? ' — والنصّ المعروض هو الجاري بعد التعديل' : '';
+    lines.push(`عُدّلت${times}${current}. نصوصُها السابقة وأدواتُ تعديلها وتواريخُها: get_article_amendment.`);
+  }
+  if (h.formerArticleNo) lines.push(`الرقم السابق: المادة ${h.formerArticleNo}`);
+  return lines;
 }
 
 function docTypeLabel(v: string | null): string {
@@ -99,14 +160,15 @@ function formatHits(hits: LegalHit[]): string {
         h.lawId && `law_id: ${h.lawId}`,
         `النوع: ${docTypeLabel(h.docType)}`,
         h.articleTitle && `العنوان: ${h.articleTitle}`,
-        h.isRepealed && 'ملغاة',
       ]
         .filter(Boolean)
         .join(' · ');
       const block = formatRagBlock(fromLegalHit(h), i + 1);
-      // سطرُ الموضع والمعرّف بعد سطر المصدر — والتنبيهات تبقى فوق النصّ.
+      // سطرُ الموضع والمعرّف بعد سطر المصدر، ثم سطورُ الحال — والتنبيهات كلُّها
+      // فوق النصّ.
       const nl = block.indexOf('\n');
-      return `${block.slice(0, nl)}\n${meta}${where ? `\n${where}` : ''}${block.slice(nl)}`;
+      const status = statusLines(h);
+      return `${block.slice(0, nl)}\n${meta}${where ? `\n${where}` : ''}${status.length ? `\n${status.join('\n')}` : ''}${block.slice(nl)}`;
     })
     .join('\n\n---\n\n');
 }
@@ -140,10 +202,12 @@ export function readTools(env: Env): McpTool[] {
       name: 'search_regulations',
       title: 'البحث في الأنظمة واللوائح',
       description:
-        'بحثٌ هجين (دلاليّ ولفظيّ) في الأنظمة واللوائح السعودية النافذة على منصة مستشار ناف. ' +
-        'يُرجع الموادّ بنصّها ومصدرها وتنبيهاتها (تعديلٌ لم يُدمج، نفاذٌ مؤجَّل). ' +
+        'بحثٌ هجين (دلاليّ ولفظيّ) في الأنظمة واللوائح السعودية على منصة مستشار ناف. ' +
+        'يُرجع الموادّ بنصّها ومصدرها وحالها: نافذة، أو معدَّلة (ونصوصُها السابقة في get_article_amendment)، ' +
+        'أو لم يبدأ العمل بها (بتاريخ نفاذها)، أو تُلغى في تاريخٍ قادم. ' +
         'ضيّق البحث بـ law_id (من list_laws) أو doc_type أو book أو issue_key (من list_legal_issues). ' +
-        'الموادّ الملغاة لا تظهر إلا بـ include_repealed — للمقارنة التاريخية لا للاستشهاد.',
+        'الموادّ الملغاة لا تُخلط بالنافذة افتراضياً، ويُذكر عددُ ما طابق منها؛ ' +
+        'ومع include_repealed: true تظهر بوسم «ملغاة» — لسؤالٍ تاريخيّ أو مقارنةٍ بنصٍّ سابق.',
       readOnly: true,
       inputSchema: {
         type: 'object',
@@ -155,7 +219,10 @@ export function readTools(env: Env): McpTool[] {
           book: { type: 'string', description: 'الباب كما ورد في النظام (من get_law).' },
           issue_key: { type: 'string', description: 'مسألةٌ قانونية معتمدة (من list_legal_issues).' },
           mode: { type: 'string', enum: ['hybrid', 'lexical'], description: 'hybrid افتراضياً؛ lexical لمطابقة الألفاظ وحدها.' },
-          include_repealed: { type: 'boolean', description: 'إظهار الملغى. الافتراضي لا.' },
+          include_repealed: {
+            type: 'boolean',
+            description: 'إظهار الموادّ الملغاة مع النافذة، كلٌّ بحاله. لسؤالٍ عن نصٍّ سابق أو نظامٍ لاغٍ. الافتراضي لا.',
+          },
           limit: { type: 'integer', minimum: 1, maximum: SEARCH_MAX, description: 'عدد النتائج. الافتراضي 10.' },
         },
       },
@@ -165,20 +232,43 @@ export function readTools(env: Env): McpTool[] {
         const issueKey = argString(args, 'issue_key', 200);
         if (!query && !lawId && !issueKey) return refuse('اكتب query، أو حدّد law_id أو issue_key للتصفّح.');
         const docTypeRaw = argString(args, 'doc_type', 50);
-        const hits = await searchLegal(env, query, {
-          limit: argInt(args, 'limit', 10, 1, SEARCH_MAX),
+        const includeRepealed = argBool(args, 'include_repealed');
+        const scope = {
           lawId,
           docType: docTypeRaw ? (canonicalDocType(docTypeRaw) ?? docTypeRaw) : null,
           articleNo: argString(args, 'article_no', 50),
           book: argString(args, 'book', 300),
           issueKey,
-          includeRepealed: argBool(args, 'include_repealed'),
+        };
+        const hits = await searchLegal(env, query, {
+          ...scope,
+          limit: argInt(args, 'limit', 10, 1, SEARCH_MAX),
+          includeRepealed,
           lexicalOnly: argString(args, 'mode', 20) === 'lexical',
         });
-        if (!hits.length) {
-          return ok('لم يُعثر على موادّ مطابقة. وسّع البحث: احذف مرشّحاً، أو جرّب لفظاً آخر، أو mode: hybrid.');
+        /* الملغاة لا تُخلط بالنافذة، ولا تختفي: يُعدّ ما طابق منها بحثاً لفظياً بالنطاق
+           نفسه — بلا نداء تضمين — ويُقال عددُه وكيف تُطلب. فالباحث في نصٍّ سابق يعرف
+           أن له في المنصة جواباً، ومن يسأل عن الجاري لا يقرأ نصّاً سابقاً في نتائجه. */
+        let repealedNote = '';
+        if (!includeRepealed) {
+          const all = await searchLegal(env, query, { ...scope, limit: SEARCH_MAX, includeRepealed: true, lexicalOnly: true }).catch(
+            () => [] as LegalHit[]
+          );
+          const repealed = joinArticleParts(all).filter(isRepealedHit).length;
+          if (repealed) {
+            repealedNote =
+              `عددُ الموادّ الملغاة المطابقة للبحث وغير المعروضة هنا: ${repealed}. ` +
+              'إن كان السؤال عن نصٍّ سابق أو نظامٍ لاغٍ، أعد البحث مع include_repealed: true فتظهر كلٌّ بحالها.';
+          }
         }
-        return ok(formatHits(hits));
+        if (!hits.length) {
+          return ok(
+            ['لم يُعثر على موادّ نافذة مطابقة. وسّع البحث: احذف مرشّحاً، أو جرّب لفظاً آخر، أو mode: hybrid.', repealedNote]
+              .filter(Boolean)
+              .join('\n\n')
+          );
+        }
+        return ok(`${formatHits(hits)}${repealedNote ? `\n\n===\n\n${repealedNote}` : ''}`);
       },
     },
 
@@ -186,7 +276,8 @@ export function readTools(env: Env): McpTool[] {
       name: 'get_article',
       title: 'استدعاء مادة',
       description:
-        'نصّ مادةٍ بعينها كاملاً مع أجزائها ومرفقاتها وتنبيهاتها. ' +
+        'نصّ مادةٍ بعينها كاملاً مع أجزائها ومرفقاتها وحالها وتنبيهاتها. ' +
+        'الملغاة تُستدعى مع include_repealed: true، ونصوصُ المادة قبل تعديلها في get_article_amendment. ' +
         'بأحد ثلاثة: id، أو law_id مع article_no، أو law_title مع article_no.',
       readOnly: true,
       inputSchema: {
@@ -225,7 +316,13 @@ export function readTools(env: Env): McpTool[] {
         }
         if (!lawId || !articleNo) return refuse('المطلوب: id، أو law_id مع article_no، أو law_title مع article_no.');
         const hits = await getArticle(env, { lawId, articleNo, includeRepealed });
-        if (!hits.length) return refuse('المادة غير موجودة.');
+        if (!hits.length) {
+          // ملغاةٌ لا مفقودة: يُقال ذلك كما يُقال في الاستدعاء بالمعرّف، لا «غير موجودة».
+          if (!includeRepealed && (await getArticle(env, { lawId, articleNo, includeRepealed: true })).length) {
+            return refuse('المادة ملغاة — أعد الطلب مع include_repealed: true للاطّلاع على نصّها بحاله.');
+          }
+          return refuse('المادة غير موجودة.');
+        }
         return ok(formatHits(hits));
       },
     },
@@ -253,18 +350,23 @@ export function readTools(env: Env): McpTool[] {
         const docType = docTypeRaw ? (canonicalDocType(docTypeRaw) ?? docTypeRaw) : null;
         const includeRepealed = argBool(args, 'include_repealed');
         const patterns = q ? arabicGlobPatterns(q).map(globToRegex) : [];
-        const laws = (await listLaws(env)).filter(
+        const matching = (await listLaws(env)).filter(
           (l) =>
-            (includeRepealed || !l.law_repealed) &&
             (!docType || l.doc_type === docType) &&
             patterns.every((re) => re.test(`${l.law_title ?? ''} ${l.authority ?? ''}`))
         );
-        if (!laws.length) return ok('لا أنظمة مطابقة. جرّب لفظاً أقصر أو احذف doc_type.');
+        const laws = includeRepealed ? matching : matching.filter((l) => !l.law_repealed);
+        // الأنظمة اللاغية لا تختفي: يُقال عددُها وكيف تُطلب، كما في البحث.
+        const hiddenRepealed = matching.length - laws.length;
+        const repealedNote = hiddenRepealed
+          ? `\n\nعددُ الأنظمة اللاغية المطابقة للطلب وغير المعروضة هنا: ${hiddenRepealed} — أعد الطلب مع include_repealed: true.`
+          : '';
+        if (!laws.length) return ok(`لا أنظمة نافذة مطابقة. جرّب لفظاً أقصر أو احذف doc_type.${repealedNote}`);
         const types = Object.entries(DOC_TYPES)
           .map(([k, v]) => `${k}: ${v}`)
           .join(' · ');
         const { page, header, next } = paginate(laws, args);
-        return ok(`أنواع الوثائق — ${types}\n${header}\n\n${page.map(formatLaw).join('\n')}${next}`);
+        return ok(`أنواع الوثائق — ${types}\n${header}\n\n${page.map(formatLaw).join('\n')}${next}${repealedNote}`);
       },
     },
 
@@ -311,23 +413,36 @@ export function readTools(env: Env): McpTool[] {
         const lawId = argString(args, 'law_id', 200);
         if (!lawId) return refuse('law_id مطلوب.');
         const offset = argInt(args, 'offset', 0, 0, 1_000_000);
+        const includeRepealed = argBool(args, 'include_repealed');
         const { articles, total } = await listLawArticles(env, lawId, {
           offset,
           limit: argInt(args, 'limit', 20, 1, 100),
-          // التصفّح يُظهر الملغى في المنصة افتراضياً؛ وهنا لا يظهر إلا بطلب —
-          // الأداة تستشهد بما تقرأ، والاستشهاد لا يقع على ملغى.
-          includeRepealed: argBool(args, 'include_repealed'),
+          // التصفّح يُظهر الملغى في المنصة افتراضياً؛ وهنا بطلب — الأداة تستشهد بما
+          // تقرأ. ولا يختفي: يُقال عددُ ما حُجب منه أدناه، ومع الطلب يظهر بوسمه.
+          includeRepealed,
         });
-        if (!articles.length) return ok(total ? 'لا موادّ بعد هذا الموضع.' : 'لا موادّ نافذة لهذا النظام.');
+        let repealedNote = '';
+        if (!includeRepealed) {
+          const all = await listLawArticles(env, lawId, { offset: 0, limit: 1, includeRepealed: true });
+          const hidden = all.total - total;
+          if (hidden > 0) {
+            repealedNote = `\n\nعددُ الموادّ الملغاة في هذا النظام وغير المعروضة هنا: ${hidden} — أعد الطلب مع include_repealed: true فتظهر بترتيبها وحالها.`;
+          }
+        }
+        if (!articles.length) {
+          return ok(`${total ? 'لا موادّ بعد هذا الموضع.' : 'لا موادّ نافذة لهذا النظام.'}${repealedNote}`);
+        }
         const next = offset + articles.length < total ? `\n\nالتالي: offset ${offset + articles.length}` : '';
-        return ok(`الموادّ ${offset + 1}–${offset + articles.length} من ${total}\n\n${formatHits(articles)}${next}`);
+        return ok(`الموادّ ${offset + 1}–${offset + articles.length} من ${total}\n\n${formatHits(articles)}${next}${repealedNote}`);
       },
     },
 
     {
       name: 'get_article_amendment',
       title: 'تعديلات مادة',
-      description: 'سجلّ تعديل مادةٍ: نسخُ نصّها بالترتيب وأدواتُ التعديل وتواريخها، وهل دُمج آخرُها في النصّ.',
+      description:
+        'سجلّ تعديل مادةٍ: نصوصُها السابقة والجاري بالترتيب، وأدواتُ التعديل وتواريخها، وهل دُمج آخرُها في النصّ. ' +
+        'لسؤالٍ عن نصّ المادة قبل تعديلها أو في تاريخٍ مضى. ويعمل على الملغاة أيضاً.',
       readOnly: true,
       inputSchema: {
         type: 'object',
@@ -354,10 +469,13 @@ export function readTools(env: Env): McpTool[] {
         if (a.versions.length) {
           lines.push(
             '',
-            'نسخُ النصّ بالترتيب:',
+            'نسخُ النصّ بالترتيب، من الأقدم إلى الأحدث. «(الجاري)» هو النافذ اليوم، وما قبله نصوصٌ سابقة: ' +
+              'تُذكر بأداة تعديلها وتاريخها لمن يسأل عن النصّ في زمنٍ مضى، ولا يُستشهد بها على أنها نافذة.' +
+              (a.amendment_applied ? '' : ' وآخرُ تعديلٍ لم يُدمج في النصّ الجاري: لا تصغ النافذ من عندك.'),
+            // مرقّمةً بترتيبها لا بـ`seq`: ذاك مفتاحُ ترتيبٍ قد يبدأ من الصفر.
             ...a.versions.map(
-              (v) =>
-                `\n[${v.seq}]${v.current ? ' (الجاري)' : ''}${v.label ? ` ${v.label}` : ''}${
+              (v, i) =>
+                `\n[${i + 1}]${v.current ? ' (الجاري)' : ''}${v.label ? ` ${v.label}` : ''}${
                   v.from_instrument ? ` — ${v.from_instrument}` : ''
                 }${v.from_date ? ` ${v.from_date}` : ''}\n${v.text}`
             )
