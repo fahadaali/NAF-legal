@@ -113,6 +113,27 @@ function formatHits(hits: LegalHit[]): string {
 
 const ID_HINT = 'معرّف المادة (id) كما ورد في نتائج البحث.';
 
+/**
+ * صفحةٌ من قائمةٍ طويلة — فهرس الأنظمة ومكتبة البنود.
+ *
+ * كانتا تُعادان كاملتين: مئاتُ الأنظمة أو مئتا بندٍ بنصوصها في ردٍّ واحد يملأ
+ * سياق الأداة — وبعض الأدوات تقصّ ما زاد على حدٍّ لها فيضيع آخر القائمة بلا
+ * علامة. فالصفحةُ تقول موضعها من الكلّ وكيف تُطلب التالية.
+ */
+const LIST_DEFAULT = 50;
+const LIST_MAX = 200;
+
+function paginate<T>(all: T[], args: Record<string, unknown>): { page: T[]; header: string; next: string } {
+  const offset = argInt(args, 'offset', 0, 0, 1_000_000);
+  const limit = argInt(args, 'limit', LIST_DEFAULT, 1, LIST_MAX);
+  const page = all.slice(offset, offset + limit);
+  const header = page.length
+    ? `العدد: ${all.length} — المعروض ${offset + 1}–${offset + page.length}`
+    : `العدد: ${all.length} — لا شيء بعد هذا الموضع`;
+  const next = offset + page.length < all.length ? `\n\nالتالي: offset ${offset + page.length}` : '';
+  return { page, header, next };
+}
+
 export function readTools(env: Env): McpTool[] {
   return [
     {
@@ -222,6 +243,8 @@ export function readTools(env: Env): McpTool[] {
           query: { type: 'string', description: 'جزءٌ من اسم النظام أو الجهة.' },
           doc_type: { type: 'string', enum: Object.keys(DOC_TYPES) },
           include_repealed: { type: 'boolean', description: 'إظهار الأنظمة الملغاة كلّها. الافتراضي لا.' },
+          offset: { type: 'integer', minimum: 0 },
+          limit: { type: 'integer', minimum: 1, maximum: LIST_MAX, description: `الافتراضي ${LIST_DEFAULT}.` },
         },
       },
       async run(args) {
@@ -240,7 +263,8 @@ export function readTools(env: Env): McpTool[] {
         const types = Object.entries(DOC_TYPES)
           .map(([k, v]) => `${k}: ${v}`)
           .join(' · ');
-        return ok(`أنواع الوثائق — ${types}\nالعدد: ${laws.length}\n\n${laws.map(formatLaw).join('\n')}`);
+        const { page, header, next } = paginate(laws, args);
+        return ok(`أنواع الوثائق — ${types}\n${header}\n\n${page.map(formatLaw).join('\n')}${next}`);
       },
     },
 
@@ -423,6 +447,14 @@ export function readTools(env: Env): McpTool[] {
         const id = argString(args, 'id', 300);
         if (!id) return refuse('id مطلوب.');
         const base = articleBaseId(id);
+        // البوابةُ نفسها التي في `get_article`: مادةٌ محجوبة — بانتظار المراجعة أو
+        // معطوبة أو ملغاة — لا تُكشف إحالاتُها ولا يُقال إنها موجودة.
+        if (!(await getChunkById(env, base))) {
+          const reason = await hiddenReason(env, base);
+          if (reason === 'repealed') return refuse('المادة منسوخة، فلا تُتبع إحالاتها.');
+          if (reason === 'review') return refuse('المادة بانتظار المراجعة في المنصة، ولا يُستشهد بها حتى تُعتمد.');
+          return refuse('المادة غير موجودة.');
+        }
         // أجزاءُ المادة المقسّمة كلُّها: الإحالة قد تقع في جزئها الثاني.
         const own = await env.DB.prepare(`SELECT seq FROM legal_chunks WHERE id = ? OR id LIKE ? ESCAPE '\\'`)
           .bind(base, `${base.replace(/[\\%_]/g, (m) => `\\${m}`)}#%`)
@@ -492,6 +524,8 @@ export function readTools(env: Env): McpTool[] {
         properties: {
           query: { type: 'string', description: 'كلماتٌ تُطابَق في العنوان أو النصّ أو التصنيف — كلُّها يجب أن ترد.' },
           category: { type: 'string', description: 'التصنيف بالمطابقة التامّة.' },
+          offset: { type: 'integer', minimum: 0 },
+          limit: { type: 'integer', minimum: 1, maximum: LIST_MAX, description: `الافتراضي ${LIST_DEFAULT}.` },
         },
       },
       async run(args) {
@@ -507,13 +541,16 @@ export function readTools(env: Env): McpTool[] {
         }
         const rows = await env.DB.prepare(
           `SELECT id, title, category, body FROM clauses${where.length ? ` WHERE ${where.join(' AND ')}` : ''}
-           ORDER BY category, title LIMIT 200`
+           ORDER BY category, title LIMIT 500`
         )
           .bind(...binds)
           .all<{ id: string; title: string; category: string | null; body: string }>();
         const list = rows.results ?? [];
         if (!list.length) return ok('لا بنود مطابقة. جرّب كلمةً واحدة أو احذف التصنيف.');
-        return ok(list.map((c) => `## ${c.title}\nالتصنيف: ${c.category ?? '—'} · id: ${c.id}\n\n${c.body}`).join('\n\n---\n\n'));
+        const { page, header, next } = paginate(list, args);
+        return ok(
+          `${header}\n\n${page.map((c) => `## ${c.title}\nالتصنيف: ${c.category ?? '—'} · id: ${c.id}\n\n${c.body}`).join('\n\n---\n\n')}${next}`
+        );
       },
     },
   ];

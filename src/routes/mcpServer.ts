@@ -42,6 +42,12 @@ app.all('/mcp', async (c) => {
     tools: [...readTools(c.env), ...conversationTools(c.env)],
     authenticate: (req) => authenticateMcp(c.env, req),
     resourceMetadataUrl: `${origin}/.well-known/oauth-protected-resource/mcp`,
+    /* سجلُّ الاستخدام: من استعمل أيَّ أداةٍ ومتى — للمعرفة لا للمنع (لا سقف).
+       سطرٌ واحد في سجلّ العامل يُقرأ في لوحة Cloudflare (`observability` مفعَّل
+       في `wrangler.toml`)، فلا جدولَ يُكتب ولا يُقرأ. ويحمل معرّفَ الربط —
+       منه يُعرف صاحبه في لوحة الإدارة — لا البريد ولا الاسم. */
+    onToolCall: (p, tool, ok) =>
+      console.log(JSON.stringify({ event: 'mcp_tool_call', connection: p.tokenId, subject: p.kind, tool, ok })),
   });
   const headers = new Headers(res.headers);
   for (const [k, v] of Object.entries(CORS)) headers.set(k, v);

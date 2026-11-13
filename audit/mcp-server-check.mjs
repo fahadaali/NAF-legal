@@ -176,6 +176,26 @@ console.log('التفويض والمحادثات');
   const reads = conv.match(/FROM conversations[^`'"]*/g) ?? [];
   check('كلُّ قراءةٍ للمحادثات مقيّدةٌ بصاحبها', reads.length > 0 && reads.every((q) => /user_id = \?/.test(q)), reads.join(' | '));
   check('ولا تُمحى رسالةٌ ولا تُعدَّل', !/DELETE FROM messages|UPDATE messages/.test(conv));
+  const convReads = conv.match(/FROM conversations\s+WHERE[^`]*/g) ?? [];
+  check('ومحادثاتُ القضايا خارج الأداة في كل قراءة', convReads.length >= 3 && convReads.every((q) => q.includes('${NOT_CASE}')), convReads.join(' | '));
+  check('والردّ المحفوظ يدخل سجلّ النُّسخ', /INSERT INTO draft_versions/.test(conv));
+  check('وسقفُ قراءة المحادثة دون حدّ الأدوات', /READ_CHARS_MAX = 50_000/.test(conv));
+
+  check('سقفا الضيف على الضيف لا على الطلب', /mcp_guest_throttle/.test(oauth) && /GUEST_FAILS_PER_WINDOW/.test(oauth));
+  check('ومحاولةُ الرمز تُعدّ ذرّياً قبل المقارنة', /attempts = attempts \+ 1 WHERE request_id = \? AND attempts < \? RETURNING/.test(oauth));
+  check('وإعادةُ رمز التجديد في المهلة لا تُلغي الربط', /REFRESH_RETRY_GRACE/.test(oauth));
+  check('والأدوات المهجورة تُكنس', /DELETE FROM mcp_clients WHERE created_at < \?/.test(oauth));
+
+  const authSrv = readFileSync(new URL('../src/routes/mcpAuthServer.ts', import.meta.url), 'utf8');
+  check('أبواب التفويض العامّة تحت حدّ معدّل', ['/oauth/register', '/oauth/authorize', '/oauth/connect/*'].every((r) => authSrv.includes(`app.use('${r}', limited)`)));
+  const connRoutes = readFileSync(new URL('../src/routes/mcpConnections.ts', import.meta.url), 'utf8');
+  check('«مربوط» ما دام رمز التجديد حيّاً', /LIVE_SQL/.test(connRoutes) && /t\.kind = 'refresh'/.test(connRoutes));
+  check('وحذفُ الضيف دفعةٌ واحدة', !/for \(const r of conns/.test(connRoutes));
+
+  const toolsSrc = readFileSync(new URL('../src/mcp/tools.ts', import.meta.url), 'utf8');
+  const related = toolsSrc.slice(toolsSrc.indexOf("name: 'get_related_articles'"), toolsSrc.indexOf("name: 'get_definitions'"));
+  check('إحالاتُ المادة المحجوبة لا تُكشف', /getChunkById\(env, base\)/.test(related));
+  check('القوائم الطويلة صفحاتٌ لا كتلة', (toolsSrc.match(/= paginate\(/g) ?? []).length === 2);
   check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
 }
 
