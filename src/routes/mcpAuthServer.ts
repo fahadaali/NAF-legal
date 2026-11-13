@@ -21,6 +21,7 @@ import {
   revokeByToken,
   sendGuestCode,
   verifyGuestCode,
+  denyRequest,
 } from '../mcp/oauth';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -114,6 +115,13 @@ app.get('/oauth/connect/:id', async (c) => {
   const r = await describeRequest(c.env, c.req.param('id'));
   if (!r) return c.json({ error: EXPIRED, expired: true }, 410);
   return c.json({ client_name: r.clientName });
+});
+
+/** «إلغاء» من الضيف أو العضو — عامٌّ كباب الربط: الرفض لا يحتاج هويّة. */
+app.post('/oauth/connect/:id/deny', async (c) => {
+  const redirect = await denyRequest(c.env, c.req.param('id'), origin(c));
+  if (!redirect) return c.json({ error: EXPIRED, expired: true }, 410);
+  return c.json({ ok: true, redirect });
 });
 
 app.post('/oauth/connect/:id/guest/code', async (c) => {

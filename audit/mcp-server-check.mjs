@@ -172,8 +172,7 @@ console.log('التفويض والمحادثات');
   check('لا رمز يُخزَّن خاماً', !/INSERT INTO mcp_tokens[^;]*\b(access|refresh)\b,\s*connectionId/.test(oauth) && /await sha256\(access\)/.test(oauth));
 
   const conv = strip(readFileSync(new URL('../src/mcp/conversations.ts', import.meta.url), 'utf8'));
-  check('أداتا الحفظ لمن يكتب وحده', (conv.match(/visibleTo: canWrite/g) ?? []).length === 2 && /p\.role !== 'viewer'/.test(conv));
-  check('وأدوات المحادثات للعضو لا الضيف', (conv.match(/visibleTo: (canWrite|isMember)/g) ?? []).length === 4);
+  check('أدوات المحادثات الأربع لمن يكتب وحده (لا الضيف ولا القارئ)', (conv.match(/visibleTo: canWrite/g) ?? []).length === 4 && /p\.kind === 'member' && p\.role !== 'viewer'/.test(conv));
   const reads = conv.match(/FROM conversations[^`'"]*/g) ?? [];
   check('كلُّ قراءةٍ للمحادثات مقيّدةٌ بصاحبها', reads.length > 0 && reads.every((q) => /user_id = \?/.test(q)), reads.join(' | '));
   check('ولا تُمحى رسالةٌ ولا تُعدَّل', !/DELETE FROM messages|UPDATE messages/.test(conv));

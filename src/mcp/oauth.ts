@@ -311,6 +311,20 @@ export async function approveMember(env: Env, requestId: string, memberId: strin
   return { ok: true, redirect: await issueCode(env, req, { kind: 'member', memberId }, origin) };
 }
 
+/**
+ * صاحبُ الطلب رفض («إلغاء» في شاشة الإذن) — يُعاد إلى الأداة بـ`access_denied`
+ * (RFC 6749 §4.1.2.1) فتعرف أنه رفض ولا تبقى تنتظر. والطلب يُمحى.
+ */
+export async function denyRequest(env: Env, requestId: string, origin: string): Promise<string | null> {
+  const req = await liveRequest(env, requestId);
+  if (!req) return null;
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM mcp_auth_requests WHERE id = ?').bind(req.id),
+    env.DB.prepare('DELETE FROM mcp_guest_codes WHERE request_id = ?').bind(req.id),
+  ]);
+  return withParams(req.redirect_uri, { error: 'access_denied', state: req.state ?? undefined, iss: origin });
+}
+
 // ── الضيف ورمز التحقق ──
 
 export type SendCodeResult =

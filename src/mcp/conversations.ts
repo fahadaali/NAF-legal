@@ -9,9 +9,10 @@
  *
  * - **للعضو وحده.** الضيف لا حساب له تُعلَّق عليه محادثة، فلا تظهر له هذه
  *   الأدوات أصلاً (`visibleTo`).
- * - **والحفظ لمن يكتب في المنصة:** المحرّر والمسؤول. القارئ لا يُنشئ محادثةً
- *   في الواجهة (`requireWriter`)، فلا يُنشئها من الأداة — دورُه كما هو. والقراءة
- *   (`list_my_conversations` و`get_conversation`) لكل عضو.
+ * - **ولمن يكتب في المنصة:** المحرّر والمسؤول. القارئ لا يُنشئ محادثةً في
+ *   الواجهة (`requireWriter`)، فلا يُنشئها من الأداة ولا يقرؤها منها — دورُه
+ *   كما هو، وقدرتُه في الأداة قدرةُ الضيف بالضبط. فتصدق عليه جملتا الإذن
+ *   المسجّلتان للضيف حرفاً (`naf-terms.md` §١٥)، ولا تُكتب له جملةٌ ثالثة.
  * - **وفي محادثات صاحبها فقط:** كلُّ استعلامٍ مقيَّدٌ بـ`user_id` كما في
  *   `routes/conversations.ts` — العزل الصارم نفسه.
  * - **ولا تُمحى رسالةٌ ولا تُعدَّل:** إضافةٌ إلى آخر المحادثة، لا غير.
@@ -44,7 +45,6 @@ const READ_CHARS_MAX = 120_000;
 const ok = (text: string): McpToolResult => ({ text });
 const refuse = (text: string): McpToolResult => ({ text, isError: true });
 
-const isMember = (p: McpPrincipal) => p.kind === 'member';
 const canWrite = (p: McpPrincipal) => p.kind === 'member' && p.role !== 'viewer';
 
 function userIdOf(p: McpPrincipal): string {
@@ -204,7 +204,7 @@ export function conversationTools(env: Env): McpTool[] {
         'محادثات المستخدم على المنصة، أحدثها أولاً — ما بدأه في المنصة وما حُفظ من أدواته. ' +
         'لإكمال محادثةٍ: get_conversation ثم append_to_conversation.',
       readOnly: true,
-      visibleTo: isMember,
+      visibleTo: canWrite,
       inputSchema: {
         type: 'object',
         properties: {
@@ -241,7 +241,7 @@ export function conversationTools(env: Env): McpTool[] {
       title: 'فتح محادثة من المنصة',
       description: 'رسائل محادثةٍ للمستخدم على المنصة بترتيبها، لتكملها. المحادثة الطويلة تُعاد من آخرها.',
       readOnly: true,
-      visibleTo: isMember,
+      visibleTo: canWrite,
       inputSchema: {
         type: 'object',
         properties: { conversation_id: { type: 'string' } },
