@@ -15,6 +15,7 @@ import { api, McpConnection, McpGuest } from '../lib/api';
 import { formatDate } from '../lib/format';
 import { Icon, ICON_SM, ICON_MD } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
+import ErrorBox from './ErrorBox';
 
 /** «مربوط» أو «غير مربوط» — أيقونة ونصّ، لا لونٌ وحده (§6). */
 function StatusPill({ status }: { status: 'connected' | 'not_connected' }) {
@@ -41,16 +42,6 @@ function ToolName({ name }: { name: string | null }) {
 
 const dateCell = (v: number | null) => (v ? <bdi>{formatDate(v)}</bdi> : '—');
 
-function ErrorBox({ message }: { message: string }) {
-  if (!message) return null;
-  return (
-    <div className="error-box" role="alert">
-      <Icon.failed size={ICON_SM} aria-hidden />
-      <span>{message}</span>
-    </div>
-  );
-}
-
 /** رابط الربط مع زرّ نسخه — «نسخ الرابط» ثم «تم النسخ» (§١ و§١٥). */
 function ConnectUrl() {
   const url = `${window.location.origin}/mcp`;
@@ -70,7 +61,9 @@ function ConnectUrl() {
         رابط الربط
       </label>
       <div className="mcp-url-row">
-        <input id="mcp-url" className="mcp-url-input" value={url} readOnly dir="ltr" onFocus={(e) => e.currentTarget.select()} />
+        <div className="field mcp-url-field">
+          <input id="mcp-url" value={url} readOnly dir="ltr" onFocus={(e) => e.currentTarget.select()} />
+        </div>
         <button className="btn-sm primary" onClick={copy}>
           <Icon.copy size={ICON_SM} aria-hidden /> {copied ? 'تم النسخ' : 'نسخ الرابط'}
         </button>
