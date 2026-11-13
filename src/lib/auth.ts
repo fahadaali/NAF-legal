@@ -38,7 +38,13 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * لم يكتب في المنصة شيئاً. ومنعُه يترك شارة القارئ لا تنطفئ أبداً، وهو
  * إزعاجٌ بلا مقابل: لا محتوى يُحمى بمنعه.
  */
-const READER_WRITABLE_PATHS = new Set(['/api/notifications/read']);
+const READER_WRITABLE_PATHS = new Set([
+  '/api/notifications/read',
+  // ربطُ أداة ذكاءٍ اصطناعي وإلغاؤه — للقراءة عند القارئ، ولا يكتب في المحتوى
+  // شيئاً. وأدوات الكتابة لا تظهر له في الأداة أصلاً (`mcp/conversations.ts`).
+  '/api/mcp/connect/approve',
+  '/api/mcp/connections/revoke',
+]);
 
 /**
  * القارئ يقرأ ولا يكتب.

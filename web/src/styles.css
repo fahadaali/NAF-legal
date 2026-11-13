@@ -1250,3 +1250,45 @@ button svg, .pill svg, .verify-badge svg, .modal-title svg,
   background: var(--warning-soft); color: var(--warning-strong);
   border-radius: var(--radius-md); line-height: var(--leading-relaxed, 1.9);
 }
+
+/* ============================================================
+   أدوات الذكاء الاصطناعي وبابُ ربطها — naf-terms.md §١٥.
+   كل قيمةٍ هنا من رموز naf-theme.css؛ لا لون ولا مسافة تُكتب باليد.
+   ============================================================ */
+.mcp-lead { color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); margin-top: 0; max-width: 70ch; }
+.mcp-muted { color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); margin-top: 0; }
+.mcp-url { margin-block: var(--space-4); }
+.mcp-url-label { display: block; font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 600; margin-bottom: var(--space-2); }
+.mcp-url-row { display: flex; gap: var(--space-2); align-items: stretch; flex-wrap: wrap; }
+.mcp-url-input {
+  flex: 1 1 16rem; min-width: 0; padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--muted); color: var(--foreground);
+  font: inherit; font-size: var(--text-sm); line-height: var(--text-sm--line-height); text-align: start;
+}
+.mcp-url-input:focus-visible { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
+.mcp-status { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--success-strong); font-size: var(--text-sm); line-height: var(--text-sm--line-height); font-weight: 600; }
+.mcp-tool-name { display: inline-flex; align-items: center; gap: var(--space-1); }
+.mcp-guest-form { display: flex; gap: var(--space-2); align-items: flex-end; flex-wrap: wrap; margin-bottom: var(--space-4); }
+.mcp-guest-form .field { flex: 1 1 16rem; margin-bottom: 0; }
+
+/* «من ‹الأداة›» في قائمة المحادثات وترويستها ورسالتها — بجوار «جارٍ» وبوزنها. */
+.conv-origin { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--muted-foreground); font-size: var(--text-xs); line-height: var(--text-xs--line-height); white-space: nowrap; }
+
+.msg-origin { margin-inline-start: var(--space-2); font-weight: 400; }
+
+.connect-card { max-width: 30rem; }
+.connect-title { font-size: var(--text-xl); line-height: var(--text-xl--line-height); font-weight: 700; text-align: center; margin: 0 0 var(--space-5); color: var(--foreground); }
+.connect-doors { display: grid; gap: var(--space-3); }
+.connect-door { display: inline-flex; justify-content: center; align-items: center; gap: var(--space-2); text-decoration: none; width: 100%; }
+.connect-cancel { justify-self: center; }
+.connect-scope { margin-bottom: var(--space-4); }
+.connect-scope p { margin: 0 0 var(--space-2); font-size: var(--text-sm); line-height: var(--text-sm--line-height); }
+.connect-muted { color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--text-sm--line-height); }
+/* العنوان وأيقونته في سطرٍ واحد — الأيقونة قبله لا فوقه. */
+.section-title.mcp-section { display: flex; align-items: center; gap: var(--space-2); }
+.connect-actions { display: flex; gap: var(--space-2); justify-content: flex-end; flex-wrap: wrap; }
+.connect-code { letter-spacing: 0.3em; text-align: center; font-variant-numeric: tabular-nums; }
+.connect-done { display: flex; align-items: center; justify-content: center; gap: var(--space-2); text-align: center; color: var(--success-strong); font-weight: 600; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

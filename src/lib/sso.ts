@@ -26,14 +26,22 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
  * و `/review/:token` كانتا مفتوحتين للعميل الخارجي بلا حساب، وقرار هذه
  * الجلسة إخضاعهما للدخول الموحّد. الأثر موصوف في `audit/sso-report.md`.
  */
-const PUBLIC_PATHS = ['/auth/callback', '/auth/mcp/callback', '/denied', '/api/health'];
+const PUBLIC_PATHS = ['/auth/callback', '/auth/mcp/callback', '/mcp', '/denied', '/api/health'];
 
 /**
  * الأصول الساكنة — بادئات مُعلنة لا اجتهاد على الامتداد.
  * `/assets/` حزمة Vite، و `/brand/` العلامة وأيقونة التبويب، وكلتاهما
  * تلزمان صفحة الرفض نفسها: صفحةٌ لا تحمّل نمطها ليست صفحة رفض.
+ *
+ * و`/oauth/` و`/.well-known/oauth-` خادمُ تفويض MCP: تطلبه الأداة خادماً لخادم
+ * والضيفُ بلا حساب. مُركَّبٌ قبل الوسيط أصلاً (`routes/mcpAuthServer.ts`)،
+ * وذكرُه هنا يمنع الحزمة من تحويله إن تغيّر ترتيب التركيب.
+ *
+ * و`/connect/` بابُ الربط في الواجهة: يفتحه الضيف ولا حساب له، فتُقدَّم له
+ * الواجهة بلا جلسة. وسماحُ العضو في `/connect-member/` — خارج هذه القائمة
+ * عمداً، فيمرّ بالوسيط ويدخل من المركز قبل أن يرى شاشة الإذن.
  */
-const PUBLIC_PREFIXES = ['/assets/', '/brand/'];
+const PUBLIC_PREFIXES = ['/assets/', '/brand/', '/oauth/', '/.well-known/oauth-', '/connect/'];
 
 /** الدور الافتراضي لأول دخول — يرقّيه مسؤول المنصة من إعداداتها. */
 export const DEFAULT_ROLE: PlatformRole = 'viewer';

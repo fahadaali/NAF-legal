@@ -48,6 +48,29 @@ export interface Conversation {
   folder_id?: string | null;
   created_at: number;
   updated_at: number;
+  /** `mcp` لما بدأ في أداةٍ مربوطة، ومعه اسمُها — علامة «من {الأداة}» (هجرة 0043). */
+  origin?: string | null;
+  origin_client?: string | null;
+}
+
+/** ربطُ أداة ذكاءٍ اصطناعي — `naf-terms.md` §١٥. والحالة «مربوط» أو «غير مربوط» وحدهما. */
+export interface McpConnection {
+  id: string;
+  client_name: string | null;
+  subject_kind: 'member' | 'guest';
+  created_at: number;
+  last_used_at: number | null;
+  status: 'connected' | 'not_connected';
+  /** في لوحة الإدارة وحدها. */
+  owner_name?: string | null;
+  owner_email?: string | null;
+}
+
+export interface McpGuest {
+  id: string;
+  email: string;
+  created_at: number;
+  status: 'connected' | 'not_connected';
 }
 
 export interface Folder {
@@ -885,6 +908,20 @@ export const api = {
     document.body.appendChild(form);
     form.submit();
   },
+
+  // أدوات الذكاء الاصطناعي المربوطة — §١٥
+  mcpConnectInfo: (requestId: string) =>
+    req<{ client_name: string | null; can_save: boolean }>(`/mcp/connect/${encodeURIComponent(requestId)}`),
+  mcpApprove: (requestId: string) =>
+    req<{ ok: true; redirect: string }>('/mcp/connect/approve', { method: 'POST', body: JSON.stringify({ request_id: requestId }) }),
+  mcpConnections: () => req<{ connections: McpConnection[] }>('/mcp/connections'),
+  mcpRevoke: (id: string) => req<{ ok: true }>('/mcp/connections/revoke', { method: 'POST', body: JSON.stringify({ id }) }),
+  mcpAdminConnections: () => req<{ connections: McpConnection[] }>('/mcp/admin/connections'),
+  mcpAdminRevoke: (id: string) =>
+    req<{ ok: true }>('/mcp/admin/connections/revoke', { method: 'POST', body: JSON.stringify({ id }) }),
+  mcpGuests: () => req<{ guests: McpGuest[] }>('/mcp/admin/guests'),
+  mcpAddGuest: (email: string) => req<{ ok: true; id: string }>('/mcp/admin/guests', { method: 'POST', body: JSON.stringify({ email }) }),
+  mcpRemoveGuest: (id: string) => req<{ ok: true }>(`/mcp/admin/guests/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // الأعضاء والصلاحيات — لمدير المنصة
   members: () => req<{ members: Member[] }>('/members'),

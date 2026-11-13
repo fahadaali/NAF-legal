@@ -81,6 +81,8 @@ import {
   Share2,
   ShieldCheck,
   ShieldX,
+  Plug,
+  UserRound,
   SlidersHorizontal,
   SpellCheck,
   Square,
@@ -154,6 +156,8 @@ export const Icon = {
   systemCheck: Activity,   // فحص النظام — الفعل
   connected: Link2,        // مربوط
   disconnected: Link2Off,  // غير مربوط
+  aiTool: Plug,            // أداة مربوطة — كيانٌ، وحالُها `connected`/`disconnected`. وليست Server (مصدرٌ تقرأ منه المنصة)
+  guest: UserRound,        // ضيف — وليست User (عميل فرد) ولا UserPlus (عميل محتمل)
   vectorIndex: Boxes,      // الفهرس المتجهي — وليست Database (قاعدة بيانات)
   // حالات تضمين الوثيقة المرفوعة — naf-icons.md تحت «تضمين الوثيقة المرفوعة».
   // و«مضمَّنة» تأخذ `vectorIndex` أعلاه — أيقونةَ المكان الذي صارت فيه — فلا

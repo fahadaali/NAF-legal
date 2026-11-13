@@ -105,6 +105,8 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   // المحادثة). وكانت الترويسة تعرض أول خمسين حرفاً من رسالة المستخدم، وهي في
   // كل مرّة ترويسةُ نموذج الإدخال نفسها.
   const [convTitle, setConvTitle] = useState('');
+  /* مصدرُ المحادثة — علامة «من ‹الأداة›» في الترويسة كما في القائمة (naf-terms.md §١٥). */
+  const [convOrigin, setConvOrigin] = useState<{ client: string | null } | null>(null);
   const [configs, setConfigs] = useState<ConsultConfig[]>([]);
   const [intake, setIntake] = useState<ConsultConfig | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
@@ -185,10 +187,14 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
       if (token !== loadToken.current) return;
       setConvType(r.conversation.consultation_type);
       setConvTitle(r.conversation.title ?? '');
+      setConvOrigin(
+        (r.conversation as any).origin === 'mcp' ? { client: (r.conversation as any).origin_client ?? null } : null
+      );
       setConvFolder((r.conversation as any).folder_id ?? '');
       setGenerating(!!r.generating);
       const msgs = r.messages.map((m) => {
         let citations, fiqhCitations, clarifying, verification, missingRegulations;
+        let originClient: string | null | undefined;
         try {
           const meta = m.metadata_json ? JSON.parse(m.metadata_json) : {};
           citations = meta.citations;
@@ -196,8 +202,10 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
           clarifying = meta.clarifying;
           verification = meta.verification;
           missingRegulations = meta.missing_regulations;
+          // رسالةٌ حفظتها أداةٌ مربوطة — `null` اسمٌ لم تُعلنه الأداة، و`undefined` رسالةُ المنصة.
+          if (meta.origin?.via === 'mcp') originClient = meta.origin.client ?? null;
         } catch {}
-        return { ...m, citations, fiqhCitations, clarifying, verification, missingRegulations };
+        return { ...m, citations, fiqhCitations, clarifying, verification, missingRegulations, originClient };
       });
       setMessages(msgs);
       /* ما في صندوق الكتابة لا يُستبدل بما عند الخادم، بل يُضمّ إليه.
@@ -874,6 +882,12 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     <>
       <div className="chat-header">
         <span className="ch-title">{convTitle || 'محادثة جديدة'}</span>
+        {convOrigin && (
+          <span className="conv-origin">
+            <Icon.aiTool size={ICON_SM} aria-hidden /> من{' '}
+            {convOrigin.client ? <bdi>{convOrigin.client}</bdi> : 'أداة مربوطة'}
+          </span>
+        )}
         {folders.length > 0 && (
           <select className="folder-select" value={convFolder} onChange={(e) => assignFolder(e.target.value)} title="ربط بقضية">
             <option value="">بدون قضية</option>
@@ -893,7 +907,16 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
             <div key={m.id} className={`msg ${m.role}`}>
               <div className="msg-avatar">{m.role === 'user' ? 'أنت' : 'ن'}</div>
               <div className="msg-body">
-                <div className="msg-role">{m.role === 'user' ? 'أنت' : 'مستشار ناف'}</div>
+                <div className="msg-role">
+                  {m.role === 'user' ? 'أنت' : 'مستشار ناف'}
+                  {/* ما حفظته أداةٌ مربوطة يُعرف بعلامتها، لا يُنسب إلى المنصة وحدها (§١٥). */}
+                  {m.role === 'assistant' && (m as any).originClient !== undefined && (
+                    <span className="conv-origin msg-origin">
+                      <Icon.aiTool size={ICON_SM} aria-hidden /> من{' '}
+                      {(m as any).originClient ? <bdi>{(m as any).originClient}</bdi> : 'أداة مربوطة'}
+                    </span>
+                  )}
+                </div>
                 {/* مرفقاتُ هذه الرسالة، فوق نصِّها كما أُرسلت معه. وهي منفذ
                     النافذة العائمة: لا زرَّ ثالث في الفقاعة، الشارةُ نفسها
                     تفتح ما تسمّيه. */}

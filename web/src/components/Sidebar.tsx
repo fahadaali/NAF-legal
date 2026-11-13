@@ -10,7 +10,7 @@ import NafMark from './NafMark';
 interface Props {
   user: User;
   activeConv: string | null;
-  view: 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search';
+  view: 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search' | 'ai-tools';
   refreshKey: number;
   onSelectConv: (id: string) => void;
   onNewChat: () => void;
@@ -281,6 +281,14 @@ export default function Sidebar(props: Props) {
               {/* «دورٌ يجري» — شارةٌ نصّية لا لونٌ وحده (§6: لا معنى بلون
                   مفرد). و`aria-live` مرفوعٌ عنها: القائمة تُقرأ بالتنقّل،
                   وإعلانُ كل بدءٍ وختام في محادثةٍ أخرى ضجيجٌ للقارئ بالصوت. */}
+              {/* «من ‹الأداة›» — أين بدأت المحادثة لا من يكملها (naf-terms.md §١٥).
+                  أيقونةٌ ونصّ، والاسم بياناتٌ معزولة. */}
+              {c.origin === 'mcp' && (
+                <span className="conv-origin">
+                  <Icon.aiTool size={ICON_SM} aria-hidden /> من{' '}
+                  {c.origin_client ? <bdi>{c.origin_client}</bdi> : 'أداة مربوطة'}
+                </span>
+              )}
               {busyConvs.includes(c.id) && (
                 <span className="conv-busy" title="يجري توليد ردّ">
                   <Icon.embedding size={ICON_SM} className="icon-spin" aria-hidden /> جارٍ

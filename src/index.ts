@@ -4,6 +4,9 @@ import { secureHeaders } from 'hono/secure-headers';
 import authRoutes from './routes/auth';
 import ssoRoutes from './routes/ssoCallback';
 import mcpOAuthRoutes from './routes/mcpOAuth';
+import mcpServerRoutes from './routes/mcpServer';
+import mcpAuthServerRoutes from './routes/mcpAuthServer';
+import mcpConnectionRoutes from './routes/mcpConnections';
 import memberRoutes from './routes/members';
 import evalRoutes from './routes/eval';
 import researchRoutes from './routes/research';
@@ -26,6 +29,7 @@ import clauseRoutes from './routes/clauses';
 import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
 import legalRoutes from './routes/legal';
+import { purgeExpired as purgeMcpExpired } from './mcp/oauth';
 import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery, runLinkExtraction, runAttachmentRecovery } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
@@ -102,6 +106,16 @@ app.route('/auth', ssoRoutes);
 /* واستقبالُ تفويض المصادر الخارجية معه وللعلّة نفسها — وحارسُه حالتُه
    وكوكي ربطه لا الجلسة (انظر `routes/mcpOAuth.ts`). */
 app.route('/auth/mcp', mcpOAuthRoutes);
+
+/* وخادمُ MCP الذي تقرأ منه أدواتُ الذكاء الاصطناعي أنظمةَ المنصة — قبل الوسيط
+   لأن طالبه أداةٌ برمز `Bearer` لا متصفّحٌ بكوكي جلسة، والوسيط كان سيحوّله إلى
+   صفحة الدخول. وحارسُه الرمز (انظر `routes/mcpServer.ts`). وخارج `/api/*`
+   فلا يمسّه حدُّ المعدّل أدناه: السقف مفتوح بقرار صاحب المنصة. */
+app.route('/', mcpServerRoutes);
+
+/* وخادمُ تفويضه: الاكتشاف والتسجيل والرموز وبابُ الضيف — كلُّها بلا جلسة
+   بطبيعتها (`routes/mcpAuthServer.ts`). وسماحُ العضو ليس هنا بل خلف الوسيط. */
+app.route('/', mcpAuthServerRoutes);
 
 // الدخول الموحّد — يحمي كل ما بعده. وأي مسار جديد محمي افتراضياً ما لم
 // يُضَف صراحةً إلى القائمة العامة في `lib/sso.ts`.
@@ -199,6 +213,7 @@ app.route('/api/legal', legalRoutes);
 app.route('/api/members', memberRoutes);
 app.route('/api/eval', evalRoutes);
 app.route('/api/research', researchRoutes);
+app.route('/api/mcp', mcpConnectionRoutes);
 
 // أي مسار /api غير معروف
 app.all('/api/*', (c) => c.json({ error: 'مسار غير موجود' }, 404));
@@ -243,6 +258,8 @@ export default {
     // الإحالات بين المواد في كل نبضة كذلك — قواعدُ على القاعدة وحدها بلا نموذج.
     // ومرفقاتٌ علِق استخراجها تُوسَم متعثّرةً في كل نبضة — فلا تدور شارتُها بلا نهاية.
     ctx.waitUntil(runLinkExtraction(env));
+    // طلباتُ تفويض MCP ورموزه المنتهية — لا يُقرأ منها شيء بعد انتهائه.
+    ctx.waitUntil(purgeMcpExpired(env).catch((e) => console.error('mcp purge failed', e)));
     ctx.waitUntil(runAttachmentRecovery(env).then(() => {}));
     ctx.waitUntil(runImportRecovery(env).then(() => {}));
     if (!isNightlyTick(event.scheduledTime)) return;
