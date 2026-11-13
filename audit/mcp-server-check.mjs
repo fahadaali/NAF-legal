@@ -201,6 +201,14 @@ console.log('التفويض والمحادثات');
   check('وألفاظُ الحال المسجّلة (§٣)', ['نظام لاغٍ', 'لم يبدأ العمل به — من', 'تُلغى في', 'مستبقاة بعد إلغاء النظام', 'الرقم السابق'].every((t) => toolsSrc.includes(t)));
   const instr = readFileSync(new URL('../src/mcp/instructions.ts', import.meta.url), 'utf8');
   check('والتعليمات تشرح الأحوال وطريق النصوص السابقة', /include_repealed: true/.test(instr) && /get_article_amendment/.test(instr) && /لم يبدأ العمل به/.test(instr));
+  const browse = toolsSrc.slice(toolsSrc.indexOf("name: 'browse_law_articles'"), toolsSrc.indexOf("name: 'get_article_amendment'"));
+  check('التصفّح لا يُظهر ما ينتظر المراجعة', (browse.match(/includeDefective: false/g) ?? []).length === 2);
+  check('وإحصاءُ النظام بالمادة لا بالمقطع', /lawArticleStats\(env, lawId\)/.test(toolsSrc) && !/الموادّ: \$\{l\.effective\}/.test(toolsSrc));
+  const amend = toolsSrc.slice(toolsSrc.indexOf("name: 'get_article_amendment'"), toolsSrc.indexOf("name: 'get_law_changes'"));
+  check('النصُّ السابق من مواضعه الثلاثة، والتصحيحُ ليس نصّاً سابقاً', /a\.events/.test(amend) && /legal_chunk_versions/.test(amend) && /change_kind <> 'correction'/.test(amend));
+  check('ويُقال صراحةً حين لا يحفظ السجلّ نصّاً سابقاً', /لا يحفظ سجلُّ المنصة نصّاً سابقاً/.test(amend));
+  const instr2 = readFileSync(new URL('../src/mcp/instructions.ts', import.meta.url), 'utf8');
+  check('والصياغةُ النهائية نظيفة، والنافذُ بلا إشارة', /صياغةٍ نهائية/.test(instr2) && /النافذ لا يحتاج إشارةً/.test(instr2));
   check('القوائم الطويلة صفحاتٌ لا كتلة', (toolsSrc.match(/= paginate\(/g) ?? []).length === 2);
   check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
 }
