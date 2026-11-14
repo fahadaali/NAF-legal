@@ -147,7 +147,7 @@ app.post('/oauth/connect/:id/deny', async (c) => {
 
 app.post('/oauth/connect/:id/guest/code', async (c) => {
   const { email } = (await c.req.json().catch(() => ({}))) as { email?: unknown };
-  const r = await sendGuestCode(c.env, c.req.param('id'), typeof email === 'string' ? email : '');
+  const r = await sendGuestCode(c.env, c.req.param('id'), typeof email === 'string' ? email : '', new URL(c.req.url).origin);
   switch (r.kind) {
     case 'expired':
       return c.json({ error: EXPIRED, expired: true }, 410);

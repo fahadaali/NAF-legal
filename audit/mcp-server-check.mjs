@@ -184,6 +184,9 @@ console.log('التفويض والمحادثات');
   check('سقفا الضيف على الضيف لا على الطلب', /mcp_guest_throttle/.test(oauth) && /GUEST_FAILS_PER_WINDOW/.test(oauth));
   check('ومحاولةُ الرمز تُعدّ ذرّياً قبل المقارنة', /attempts = attempts \+ 1 WHERE request_id = \? AND attempts < \? RETURNING/.test(oauth));
   check('وإعادةُ رمز التجديد في المهلة لا تُلغي الربط', /REFRESH_RETRY_GRACE/.test(oauth));
+  const ce = readFileSync(new URL('../src/mcp/codeEmail.ts', import.meta.url), 'utf8');
+  check('بريدُ الرمز: الرمزُ أوّلَ الموضوع، وصورتان مصمَّمةٌ ونصّية بألفاظ §١٥', /const SUBJECT = \(code: string\) => `\$\{code\} — رمز التحقق لربط مستشار ناف`/.test(ce) && /html: mail\.html/.test(oauth) && /text: mail\.text/.test(oauth) && ce.includes('لم تطلب هذا الرمز؟ تجاهل هذه الرسالة، ولن يُربط شيء.'));
+  check('والرمزُ باتجاهٍ من اليسار في المتن', /<div dir="ltr"[^>]*>\$\{code\}<\/div>/.test(ce));
   check('والأدوات المهجورة تُكنس', /DELETE FROM mcp_clients WHERE created_at < \?/.test(oauth));
 
   const authSrv = readFileSync(new URL('../src/routes/mcpAuthServer.ts', import.meta.url), 'utf8');
