@@ -252,6 +252,8 @@ console.log('التفويض والمحادثات');
   check('ومصدرٌ لم يُجب يُقال بلفظه المسجّل، والحاشيةُ للمحقِّق', /تعذّر الوصول إلى المصدر/.test(fiqh) && /كلام المحقِّق لا المؤلِّف/.test(fiqh) && /«التأصيل الفقهي»/.test(fiqh));
   check('ولا تنادي نموذج المنصة، وللقراءة', !/callClaude|lib\/claude|logUsage/.test(fiqh) && /readOnly: true/.test(fiqh) && !/readOnly: false/.test(fiqh));
   check('ومركّبةٌ في الخادم', /\.\.\.fiqhTools\(c\.env\)/.test(srv));
+  check('أدواتُ القراءة تذكّر العضو بالحفظ — لا أدوات المحادثات', /\.\.\.withSaveReminder\(\[\.\.\.readTools\(c\.env\), \.\.\.fiqhTools\(c\.env\)\]\), \.\.\.conversationTools\(c\.env\)/.test(srv));
+  check('والتذكير لمن يكتب وحده، ولا في ردٍّ رافض', /canWrite\(p\) && !r\.isError \?/.test(conv) && /export const SAVE_REMINDER/.test(conv));
   const connect = readFileSync(new URL('../web/src/components/Connect.tsx', import.meta.url), 'utf8');
   check('وإذنُ العضو يذكرها بلفظ §١٥، والضيف على حاله', connect.includes('ومكتبة البنود وكتب الفقه في المصادر الخارجية، وتقرأ محادثاتك') && connect.includes("guestCan: 'ستبحث الأداة في الأنظمة واللوائح وتصنيفاتها ومكتبة البنود. لا يُحفظ شيءٌ في المنصة.'"));
   check('والتعليمات تفصل التأصيل عن السند', /التأصيل الفقهي — إن كانت أداة search_fiqh_sources/.test(instr2) && /قسمٍ ختاميّ وحده عنوانه «التأصيل الفقهي»/.test(instr2));

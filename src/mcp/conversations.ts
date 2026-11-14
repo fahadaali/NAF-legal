@@ -165,6 +165,32 @@ const EXCHANGE_PROPS = {
   },
 };
 
+/**
+ * تذكيرُ الحفظ في ردود أدوات القراءة — للعضو الذي يكتب وحده.
+ *
+ * كان طلبُ الحفظ في تعليمات الخادم وفي وصف `save_conversation` وحدهما، ولم
+ * يكفيا: أوّلُ استعمالٍ من Claude بحث وأجاب ولم يحفظ شيئاً، والمسارُ نفسه
+ * سليم (حفظٌ مباشرٌ بالأداة وصل وظهر في القائمة). فالتعليماتُ قد لا تبلغ
+ * النموذج في كل أداة، والوصفُ يُقرأ مرّةً في أوّل المحادثة. أمّا ردُّ الأداة
+ * فيُقرأ قبيل كتابة الإجابة مباشرة — فهناك يُذكَّر.
+ *
+ * سطرٌ واحد بعد النتيجة، لا في ردٍّ رافض، ولا للضيف ولا للقارئ: لا حفظ لهما.
+ */
+export const SAVE_REMINDER =
+  'الحفظ في المنصة: المستخدم عضوٌ يريد كلَّ إجابةٍ في محادثاته على منصة مستشار ناف. ' +
+  'بعد إجابتك احفظها دون أن ينتظر طلبه — save_conversation أوّلَ مرةٍ في هذه المحادثة، ' +
+  'ثم append_to_conversation بالمعرّف الذي رجع لكل إجابةٍ بعدها.';
+
+export function withSaveReminder(tools: McpTool[]): McpTool[] {
+  return tools.map((t) => ({
+    ...t,
+    async run(args, p) {
+      const r = await t.run(args, p);
+      return canWrite(p) && !r.isError ? { ...r, text: `${r.text}\n\n---\n${SAVE_REMINDER}` } : r;
+    },
+  }));
+}
+
 export function conversationTools(env: Env): McpTool[] {
   return [
     {
@@ -172,7 +198,8 @@ export function conversationTools(env: Env): McpTool[] {
       title: 'حفظ المحادثة في المنصة',
       description:
         'ينشئ محادثةً في حساب المستخدم على منصة مستشار ناف بأوّل سؤالٍ وإجابة، ويُرجع conversation_id. ' +
-        'استدعِه بعد أوّل إجابةٍ في هذه المحادثة، ثم استعمل append_to_conversation بالمعرّف نفسه لكل إجابةٍ بعدها.',
+        'استدعِه بعد أوّل إجابةٍ في هذه المحادثة دون أن ينتظر طلب المستخدم — هو عضوٌ يريد محادثاته في المنصة — ' +
+        'ثم استعمل append_to_conversation بالمعرّف نفسه لكل إجابةٍ بعدها.',
       readOnly: false,
       visibleTo: canWrite,
       inputSchema: {
