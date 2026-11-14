@@ -237,6 +237,16 @@ console.log('التفويض والمحادثات');
   check('والردُّ المحفوظ يحمل مئتي مصدر، تُقرأ دفعاتٍ', /const CITES_MAX = 200;/.test(conv) && /getChunksByIds\(env, unique, true\)/.test(conv) && !/getChunkById\(/.test(conv));
   check('وما زاد على سقف المصادر يُقال لا يسقط صامتاً', /dropped/.test(conv) && /نصُّ الإجابة محفوظٌ كاملاً/.test(conv));
   check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
+
+  const fiqh = strip(readFileSync(new URL('../src/mcp/fiqh.ts', import.meta.url), 'utf8'));
+  check('كتبُ الفقه للعضو وحده — المصدر مربوطٌ باسم المنصة', /visibleTo: isMember/.test(fiqh) && /const isMember = \(p: McpPrincipal\) => p\.kind === 'member'/.test(fiqh));
+  check('وبالمصادر المفعّلة نفسها ومحوّلها — لا نداءٌ ثانٍ', /enabledSources\(env, 'fiqh'\)/.test(fiqh) && /searchSources\(env, sources, query\)/.test(fiqh) && !/callTool|fetch\(/.test(fiqh));
+  check('ومصدرٌ لم يُجب يُقال بلفظه المسجّل، والحاشيةُ للمحقِّق', /تعذّر الوصول إلى المصدر/.test(fiqh) && /كلام المحقِّق لا المؤلِّف/.test(fiqh) && /«التأصيل الفقهي»/.test(fiqh));
+  check('ولا تنادي نموذج المنصة، وللقراءة', !/callClaude|lib\/claude|logUsage/.test(fiqh) && /readOnly: true/.test(fiqh) && !/readOnly: false/.test(fiqh));
+  check('ومركّبةٌ في الخادم', /\.\.\.fiqhTools\(c\.env\)/.test(srv));
+  const connect = readFileSync(new URL('../web/src/components/Connect.tsx', import.meta.url), 'utf8');
+  check('وإذنُ العضو يذكرها بلفظ §١٥، والضيف على حاله', connect.includes('ومكتبة البنود وكتب الفقه في المصادر الخارجية، وتقرأ محادثاتك') && connect.includes("guestCan: 'ستبحث الأداة في الأنظمة واللوائح وتصنيفاتها ومكتبة البنود. لا يُحفظ شيءٌ في المنصة.'"));
+  check('والتعليمات تفصل التأصيل عن السند', /التأصيل الفقهي — إن كانت أداة search_fiqh_sources/.test(instr2) && /قسمٍ ختاميّ وحده عنوانه «التأصيل الفقهي»/.test(instr2));
 }
 
 console.log(failed ? `\n${failed} فحصاً فشل` : '\nسليم');

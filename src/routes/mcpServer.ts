@@ -14,6 +14,7 @@ import type { Env } from '../types';
 import { handleMcpRequest } from '../mcp/protocol';
 import { readTools } from '../mcp/tools';
 import { conversationTools } from '../mcp/conversations';
+import { fiqhTools } from '../mcp/fiqh';
 import { authenticateMcp } from '../mcp/auth';
 import { MCP_INSTRUCTIONS } from '../mcp/instructions';
 
@@ -51,7 +52,7 @@ app.all('/mcp', async (c) => {
       websiteUrl: origin,
     },
     instructions: MCP_INSTRUCTIONS,
-    tools: [...readTools(c.env), ...conversationTools(c.env)],
+    tools: [...readTools(c.env), ...fiqhTools(c.env), ...conversationTools(c.env)],
     authenticate: (req) => authenticateMcp(c.env, req),
     resourceMetadataUrl: `${origin}/.well-known/oauth-protected-resource/mcp`,
     /* سجلُّ الاستخدام: من استعمل أيَّ أداةٍ ومتى — للمعرفة لا للمنع (لا سقف).
