@@ -31,6 +31,7 @@
  * - **وللربط سقفٌ مطلق** (تسعون يوماً، مدّة «تذكّرني» في المركز): بعده يعود
  *   صاحبه فيدخل من المركز من جديد مهما جدّدت الأداة رمزها.
  */
+import { buildCodeEmail } from './codeEmail';
 import type { Env } from '../types';
 import { uuid } from '../lib/crypto';
 import { base64UrlFromBytes } from '../lib/sealed';
@@ -405,7 +406,7 @@ async function guestFails(env: Env, guestId: string): Promise<number> {
   return row && row.window_start >= Date.now() - GUEST_WINDOW ? row.fails : 0;
 }
 
-export async function sendGuestCode(env: Env, requestId: string, emailRaw: string): Promise<SendCodeResult> {
+export async function sendGuestCode(env: Env, requestId: string, emailRaw: string, origin: string): Promise<SendCodeResult> {
   const req = await liveRequest(env, requestId);
   if (!req) return { kind: 'expired' };
   const email = normalizeEmail(emailRaw);
@@ -432,30 +433,29 @@ export async function sendGuestCode(env: Env, requestId: string, emailRaw: strin
   )
     .bind(requestId, guest.id, await sha256(`${requestId}:${code}`), Date.now() + GUEST_CODE_TTL)
     .run();
-  await sendCodeEmail(env, guest.email, code);
+  await sendCodeEmail(env, guest.email, code, origin);
   return { kind: 'sent' };
 }
 
 /**
- * بريدُ رمز التحقق — نصّه من `naf-terms.md` §١٥.
- *
- * نصٌّ خالص لا HTML: لا ألوان ولا أنماط تُكتب (استثناء القوالب البريدية في
- * `CLAUDE.md` §١ لا يلزم أصلاً)، والرمز في سطرٍ وحده فيُنسخ كما هو. وبلا
- * مفتاح البريد يُكتب في السجلّ ولا يُكشف للضيف: ردُّ الإرسال واحدٌ في كل حال.
+ * بريدُ رمز التحقق — قالبُه وألفاظُه في `mcp/codeEmail.ts` (§١٥). بلا مفتاح البريد
+ * يُكتب في السجلّ ولا يُكشف للضيف: ردُّ الإرسال واحدٌ في كل حال.
  */
-async function sendCodeEmail(env: Env, to: string, code: string): Promise<void> {
+async function sendCodeEmail(env: Env, to: string, code: string, origin: string): Promise<void> {
   if (!env.RESEND_API_KEY) {
     console.error('mcp guest code: RESEND_API_KEY غير مضبوط — لم يُرسل الرمز');
     return;
   }
+  const mail = buildCodeEmail(code, `${origin}/icons/icon-192.png`);
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       from: env.NOTIFY_FROM || 'no-reply@naf-legal.app',
       to: [to],
-      subject: 'رمز التحقق لربط مستشار ناف',
-      text: `رمز التحقق: ${code} — صالح عشر دقائق، ولمرة واحدة.\n\n${code}\n\nلم تطلب هذا الرمز؟ تجاهل هذه الرسالة، ولن يُربط شيء.\n\n— مستشار ناف`,
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
     }),
   }).catch((e) => {
     console.error('mcp guest code: send failed', e);
