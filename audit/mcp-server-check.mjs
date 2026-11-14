@@ -230,7 +230,15 @@ console.log('التفويض والمحادثات');
   check('بحثُ البنود بلا نمط GLOB يرفضه D1 في الكلمة الطويلة — في الأداة والشاشة', !/GLOB/.test(clauseTool) && !/GLOB/.test(clauseRoute) && /arabicMatchSql\(\['title', 'body', 'category'\]/.test(clauseTool) && /arabicMatchSql\(\['title', 'body', 'category'\]/.test(clauseRoute));
   const { arabicMatchSql } = await import('../src/lib/arabic.ts');
   const m = arabicMatchSql(['body'], 'الالتزامات الاتفاقية');
-  check('والمطابقةُ تطوي كلَّ صورةٍ إلى رأسها، والكلمةُ مطبَّعة', !!m && ['أ', 'إ', 'آ', 'ٱ', 'ة', 'ى', 'ئ', 'ؤ'].every((ch) => m.sql.includes(`'${ch}'`)) && m.binds.join(' ') === 'الالتزامات الاتفاقيه', JSON.stringify(m?.binds));
+  check('والكلمةُ الطويلة تُطوى كلُّ صورها إلى رؤوسها، مطبَّعة', !!m && ['أ', 'إ', 'آ', 'ٱ', 'ة', 'ى', 'ئ', 'ؤ'].every((ch) => m.sql.includes(`'${ch}'`)) && m.binds.join(' ') === 'الالتزامات الاتفاقيه' && !/GLOB/.test(m.sql), JSON.stringify(m?.binds));
+  const short = arabicMatchSql(['body'], 'التعويض');
+  check('والمعتادةُ على نمطها كما كانت — بكلفتها', short?.sql === '(body GLOB ?)' && short.binds[0].startsWith('*') && short.binds[0].endsWith('*'), JSON.stringify(short));
+  const edge = arabicMatchSql(['b'], 'ب'.repeat(24) + ' ' + 'ب'.repeat(25));
+  check('والحدُّ خمسون بايتاً بالضبط: ما بلغه نمط، وما زاد طيّ', /^\(b GLOB \?\) AND \(instr\(replace\(/.test(edge?.sql ?? ''), edge?.sql);
+  for (const [name, path] of [['البحث العام', '../src/routes/search.ts'], ['محادثاتُ الأداة', '../src/mcp/conversations.ts']]) {
+    const src = strip(readFileSync(new URL(path, import.meta.url), 'utf8'));
+    check(`و${name} بالمطابقة نفسها، بلا نمطٍ يُبنى في موضعه`, /arabicMatchSql\(/.test(src) && !/GLOB/.test(src) && !/arabicGlobPatterns/.test(src));
+  }
   check('ومكتبةُ البنود صفحاتٌ من القاعدة لا خمسمئةٌ مقصوصة', !/LIMIT 500/.test(toolsSrc) && /FROM clauses\$\{whereSql\} ORDER BY category, title, id LIMIT \? OFFSET \?/.test(toolsSrc));
   check('وأرشيفُ النصوص السابقة لا يقف عند عشرين', !/LIMIT 20`/.test(amend) && /ARCHIVE_MAX \+ 1/.test(amend));
   check('والمحادثةُ الطويلة تُقرأ كلُّها بـskip_latest', /skip_latest/.test(conv) && /const last = msgs\.length - 1 - skip/.test(conv));

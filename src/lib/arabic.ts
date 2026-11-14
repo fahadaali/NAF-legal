@@ -225,16 +225,19 @@ export function arabicGlobPatterns(query: string, max = 6): string[] {
 }
 
 /**
+ * أطولُ نمط `GLOB` يقبله D1، بالبايت. وما فوقه يُرفض بـ«LIKE or GLOB pattern too
+ * complex» فيسقط الاستعلام كلُّه. والحرف العربيّ بايتان، وصنفُ الألف وحده اثنا
+ * عشر — فـ«الالتزامات» و«الاتفاقية» تتجاوزانه.
+ */
+const GLOB_PATTERN_MAX_BYTES = 50;
+
+/**
  * تعبيرُ SQL يطوي عموداً خاماً إلى رؤوس أصناف الحروف (`LETTER_CLASSES`): كلُّ
  * همزةٍ على ألفٍ ألف، والتاءُ المربوطة هاء، وهكذا — فتُطابَق فيه كلمةٌ مطبَّعة
- * بـ`instr`.
+ * بـ`instr`، ولا سقفَ لطولها.
  *
- * **بديلُ نمط `GLOB` حيث يطول.** D1 يرفض نمطاً فوق خمسين بايتاً («LIKE or GLOB
- * pattern too complex»)، وصنفُ الألف وحده اثنا عشر بايتاً: فـ«الالتزامات» و
- * «الاتفاقية» كانتا تُسقطان البحث كلَّه بخطأ. و`instr` بلا سقف طول.
- *
- * والمطابقةُ هي هي: ما يقبله صنفٌ في النمط يُطوى هنا إلى رأسه، والاستعلامُ
- * مطبَّعٌ (`normalizeArabic`) إلى الرؤوس نفسها.
+ * والمطابقةُ هي مطابقةُ النمط نفسها: ما يقبله صنفٌ في النمط يُطوى هنا إلى
+ * رأسه، والكلمةُ مطبَّعةٌ (`normalizeArabic`) إلى الرؤوس نفسها.
  */
 export function arabicFoldSql(column: string): string {
   let expr = column;
@@ -245,12 +248,40 @@ export function arabicFoldSql(column: string): string {
 }
 
 /**
+ * شرطُ كلمةٍ واحدة في عمود: نمطُ `GLOB` ما دام في حدّ D1، والطيُّ و`instr` فيما
+ * يطول.
+ *
+ * والنمطُ أوّلاً لا الطيُّ دائماً: النمط مسحٌ واحد للنصّ، والطيُّ ثمانيةُ
+ * استبدالاتٍ متداخلة على كل صفّ — وفي البحث العام يمرّ على نصوص رسائل المستخدم
+ * كلِّها. فالكلمة المعتادة تبقى على كلفتها، والطويلة وحدها تدفع الطيّ.
+ */
+function tokenMatch(column: string, token: string): { sql: string; bind: string } {
+  const pattern = arabicGlobPattern(token);
+  return new TextEncoder().encode(pattern).length <= GLOB_PATTERN_MAX_BYTES
+    ? { sql: `${column} GLOB ?`, bind: pattern }
+    : { sql: `instr(${arabicFoldSql(column)}, ?) > 0`, bind: token };
+}
+
+/**
  * شرطُ SQL لكلمات الاستعلام في نصٍّ خام: كلُّ كلمةٍ يجب أن ترد (`AND`)، في أيٍّ
  * من الأعمدة (`OR`). و`null` حين لا كلمة في الاستعلام.
+ *
+ * **ولا يُبنى نمط `GLOB` خارج هذه الدالة:** نمطٌ يُبنى في موضعٍ آخر لا يعرف حدَّ
+ * D1، فتُسقط الكلمةُ الطويلة بحثَه بخطأ لا بنتيجة.
  */
 export function arabicMatchSql(columns: string[], query: string, max = 6): { sql: string; binds: string[] } | null {
   const tokens = tokenize(query).slice(0, max);
   if (!tokens.length) return null;
-  const one = `(${columns.map((c) => `instr(${arabicFoldSql(c)}, ?) > 0`).join(' OR ')})`;
-  return { sql: tokens.map(() => one).join(' AND '), binds: tokens.flatMap((t) => columns.map(() => t)) };
+  const binds: string[] = [];
+  const sql = tokens
+    .map((t) => {
+      const ors = columns.map((c) => {
+        const m = tokenMatch(c, t);
+        binds.push(m.bind);
+        return m.sql;
+      });
+      return `(${ors.join(' OR ')})`;
+    })
+    .join(' AND ');
+  return { sql, binds };
 }

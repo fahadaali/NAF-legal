@@ -23,7 +23,7 @@
 // وقاعدة المعرفة مشتركة. ولو غاب الشرط لقرأ كلُّ مستخدمٍ محادثات غيره.
 import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
-import { arabicGlobPatterns } from '../lib/arabic';
+import { arabicMatchSql } from '../lib/arabic';
 import { searchLegal } from '../lib/legal';
 import { enabledSources } from '../lib/sources';
 import { searchSources, type SourceOutcome } from '../lib/external';
@@ -41,13 +41,16 @@ const SNIPPET = 300;
 const SNIPPET_LEAD = 60;
 
 /**
- * يبني شرط المطابقة: كل كلمةٍ من الاستعلام يجب أن ترد في النصّ.
+ * شرط المطابقة في عمود: كل كلمةٍ من الاستعلام يجب أن ترد في النصّ.
  *
  * `AND` لا `OR`: البحث المباشر تضييقٌ للنتائج، ومن كتب كلمتين يريد ما
  * جمعهما لا ما ذكر إحداهما.
+ *
+ * وبـ`arabicMatchSql` لا بنمطٍ يُبنى هنا: النمطُ يطول في الكلمة الطويلة حتى
+ * يرفضه D1، فكان بحثُ «الالتزامات» خطأً لا نتيجة.
  */
-function globCondition(column: string, patterns: string[]): string {
-  return patterns.map(() => `${column} GLOB ?`).join(' AND ');
+function matchIn(column: string, q: string): { sql: string; binds: string[] } {
+  return arabicMatchSql([column], q) ?? { sql: '0', binds: [] };
 }
 
 /**
@@ -74,8 +77,7 @@ app.get('/', async (c) => {
   const semantic = c.req.query('semantic') === '1';
   if (!q) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, external: [], mode: 'empty' });
 
-  const patterns = arabicGlobPatterns(q);
-  if (!patterns.length) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, external: [], mode: 'empty' });
+  if (!arabicMatchSql(['x'], q)) return c.json({ chats: [], outputs: [], kb: { articles: [], documents: [] }, external: [], mode: 'empty' });
 
   const wants = (s: string) => scope === 'all' || scope === s;
   /* شرطُ القضية ومعامِله معاً — فلا يفترقان عند البناء.
@@ -87,17 +89,18 @@ app.get('/', async (c) => {
   // ── المحادثات ──
   let chats: unknown[] = [];
   if (wants('chats')) {
+    const chatMatch = matchIn('m.content', q);
     const rows = await c.env.DB.prepare(
       `SELECT c.id AS conversation_id, c.title, c.origin, c.origin_client, m.id AS message_id, m.role, m.created_at,
               ${snippetExpr('m.content')} AS snippet
        FROM messages m JOIN conversations c ON c.id = m.conversation_id
-       WHERE c.user_id = ? AND ${globCondition('m.content', patterns)}${folderCond}
+       WHERE c.user_id = ? AND ${chatMatch.sql}${folderCond}
        ORDER BY m.created_at DESC LIMIT ?`
     )
       // بترتيب ظهور العلامات في نصّ الاستعلام: علامةُ المقتطف في SELECT قبل
       // علامة المالك في WHERE. وكانت معكوسةً فيقع الاستعلام في `user_id` فلا
       // يطابق صفّاً، ويرجع كل بحثٍ في المحادثات والمخرجات فارغاً.
-      .bind(q, user.id, ...patterns, ...folderArg, LIMIT)
+      .bind(q, user.id, ...chatMatch.binds, ...folderArg, LIMIT)
       .all();
     chats = rows.results ?? [];
   }
@@ -105,6 +108,7 @@ app.get('/', async (c) => {
   // ── المخرجات: نُسخ المسودّات المحفوظة ──
   let outputs: unknown[] = [];
   if (wants('outputs')) {
+    const outMatch = matchIn('d.content', q);
     const rows = await c.env.DB.prepare(
       `SELECT d.id, d.message_id, d.version, d.note, d.created_at,
               c.id AS conversation_id, c.title,
@@ -112,13 +116,13 @@ app.get('/', async (c) => {
        FROM draft_versions d
        JOIN messages m ON m.id = d.message_id
        JOIN conversations c ON c.id = m.conversation_id
-       WHERE c.user_id = ? AND ${globCondition('d.content', patterns)}${folderCond}
+       WHERE c.user_id = ? AND ${outMatch.sql}${folderCond}
        ORDER BY d.created_at DESC LIMIT ?`
     )
       // بترتيب ظهور العلامات في نصّ الاستعلام: علامةُ المقتطف في SELECT قبل
       // علامة المالك في WHERE. وكانت معكوسةً فيقع الاستعلام في `user_id` فلا
       // يطابق صفّاً، ويرجع كل بحثٍ في المحادثات والمخرجات فارغاً.
-      .bind(q, user.id, ...patterns, ...folderArg, LIMIT)
+      .bind(q, user.id, ...outMatch.binds, ...folderArg, LIMIT)
       .all();
     outputs = rows.results ?? [];
   }
@@ -144,13 +148,14 @@ app.get('/', async (c) => {
       articles = [];
     }
     // الوثائق المرفوعة: بالعنوان — نصُّها في R2 لا في القاعدة فلا يُبحث فيه.
+    const docMatch = matchIn('title', q);
     const rows = await c.env.DB.prepare(
       `SELECT id, title, category, source_authority, status
        FROM kb_documents
-       WHERE ${globCondition('title', patterns)} AND (status IS NULL OR status != 'repealed')
+       WHERE ${docMatch.sql} AND (status IS NULL OR status != 'repealed')
        ORDER BY created_at DESC LIMIT ?`
     )
-      .bind(...patterns, LIMIT)
+      .bind(...docMatch.binds, LIMIT)
       .all();
     documents = rows.results ?? [];
   }
