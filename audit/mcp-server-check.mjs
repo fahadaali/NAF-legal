@@ -219,7 +219,17 @@ console.log('التفويض والمحادثات');
   check('شعارُ ناف في هويّة الخادم', /icons: \[/.test(srv) && /icon-512\.png/.test(srv) && /websiteUrl/.test(srv));
   const idx2 = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
   check('وأيقونةُ الموقع قبل الوسيط', idx2.indexOf("'/favicon.ico'") > 0 && idx2.indexOf("'/favicon.ico'") < idx2.indexOf("app.use('*', ssoMiddleware)"));
-  check('القوائم الطويلة صفحاتٌ لا كتلة', (toolsSrc.match(/= paginate\(/g) ?? []).length === 2);
+  check('القوائم الطويلة صفحاتٌ لا كتلة', (toolsSrc.match(/= paginate\(/g) ?? []).length === 1);
+  const searchTool = toolsSrc.slice(toolsSrc.indexOf("name: 'search_regulations'"), toolsSrc.indexOf("name: 'get_article'"));
+  check('البحث صفحاتٌ بـoffset إلى عمق المحرّك', /offset: \{ type: 'integer'/.test(searchTool) && /limit: SEARCH_DEPTH,/.test(searchTool) && /ranked\.slice\(offset, offset \+ limit\)/.test(searchTool));
+  check('وعمقُ المحرّك مئة — سقفُ Vectorize بلا بيانات وصفية', /export const SEARCH_DEPTH = 100;/.test(legalSrc) && /Math\.min\(Math\.max\(opts\.limit \?\? 10, 1\), SEARCH_DEPTH\)/.test(legalSrc) && /returnMetadata: 'none'/.test(legalSrc));
+  check('ومرشّحو المنصة كما كانوا (حتى خمسين)', /Math\.max\(Math\.min\(limit \* 4, 50\), limit\)/.test(legalSrc));
+  check('وعبارةُ IN للمتجهات على دفعات دون سقف المعاملات', /for \(let i = 0; i < seqs\.length; i \+= IN_CHUNK\)/.test(legalSrc));
+  check('ومكتبةُ البنود صفحاتٌ من القاعدة لا خمسمئةٌ مقصوصة', !/LIMIT 500/.test(toolsSrc) && /FROM clauses\$\{whereSql\} ORDER BY category, title, id LIMIT \? OFFSET \?/.test(toolsSrc));
+  check('وأرشيفُ النصوص السابقة لا يقف عند عشرين', !/LIMIT 20`/.test(amend) && /ARCHIVE_MAX \+ 1/.test(amend));
+  check('والمحادثةُ الطويلة تُقرأ كلُّها بـskip_latest', /skip_latest/.test(conv) && /const last = msgs\.length - 1 - skip/.test(conv));
+  check('والردُّ المحفوظ يحمل مئتي مصدر، تُقرأ دفعاتٍ', /const CITES_MAX = 200;/.test(conv) && /getChunksByIds\(env, unique, true\)/.test(conv) && !/getChunkById\(/.test(conv));
+  check('وما زاد على سقف المصادر يُقال لا يسقط صامتاً', /dropped/.test(conv) && /نصُّ الإجابة محفوظٌ كاملاً/.test(conv));
   check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
 }
 

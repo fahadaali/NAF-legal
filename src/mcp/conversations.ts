@@ -30,7 +30,7 @@
  */
 import type { Env } from '../types';
 import { uuid } from '../lib/crypto';
-import { getChunkById } from '../lib/legal';
+import { getChunksByIds } from '../lib/legal';
 import { fromLegalHit } from '../lib/rag';
 import { arabicGlobPatterns } from '../lib/arabic';
 import { isGenerating } from '../lib/generating';
@@ -39,7 +39,12 @@ import type { McpPrincipal, McpTool, McpToolResult } from './protocol';
 
 const QUESTION_MAX = 20_000;
 const ANSWER_MAX = 200_000;
-const CITES_MAX = 50;
+/**
+ * بطاقاتُ المصادر في ردٍّ محفوظ. كانت خمسين، ومقارنةٌ بين أنظمةٍ كثيرة تستشهد
+ * بأكثر منها فيسقط ما زاد بلا علامة. والمعرّفات تُقرأ في نداءاتٍ قليلة
+ * (`getChunksByIds`) لا نداءٍ لكلٍّ.
+ */
+const CITES_MAX = 200;
 /**
  * ما يُعاد من محادثةٍ طويلة: آخرُها أولى، والسقفُ سياقُ الأداة لا حدٌّ للمنصة.
  *
@@ -74,9 +79,10 @@ function titleFrom(question: string): string {
 
 /** بطاقاتُ المصادر من القاعدة — كما يبنيها `toCitation` في `routes/chat.ts`. */
 async function citationsFor(env: Env, ids: string[]) {
-  const unique = [...new Set(ids)].slice(0, CITES_MAX);
-  const hits = await Promise.all(unique.map((id) => getChunkById(env, id, true).catch(() => null)));
-  const found = hits.filter((h): h is NonNullable<typeof h> => !!h);
+  const all = [...new Set(ids)];
+  const unique = all.slice(0, CITES_MAX);
+  const dropped = all.length - unique.length;
+  const found = await getChunksByIds(env, unique, true);
   const citations = found.map((h) => {
     const r = fromLegalHit(h);
     return {
@@ -95,8 +101,9 @@ async function citationsFor(env: Env, ids: string[]) {
       sourceUrl: r.sourceUrl,
     };
   });
-  const missing = unique.filter((id) => !found.some((h) => h.id === id));
-  return { citations, missing };
+  const foundIds = new Set(found.map((h) => h.id));
+  const missing = unique.filter((id) => !foundIds.has(id));
+  return { citations, missing, dropped };
 }
 
 function readIds(args: Record<string, unknown>): string[] {
@@ -112,8 +119,8 @@ async function appendExchange(
   question: string,
   answer: string,
   ids: string[]
-): Promise<string[]> {
-  const { citations, missing } = await citationsFor(env, ids);
+): Promise<{ missing: string[]; dropped: number }> {
+  const { citations, missing, dropped } = await citationsFor(env, ids);
   const origin = { via: 'mcp', client: p.clientName };
   const now = Date.now();
   const answerId = uuid();
@@ -133,13 +140,18 @@ async function appendExchange(
     ).bind(uuid(), answerId, answer, 'النسخة الأولى المولَّدة', now + 1),
     env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?').bind(now + 1, conversationId, userIdOf(p)),
   ]);
-  return missing;
+  return { missing, dropped };
 }
 
-function missingNote(missing: string[]): string {
-  return missing.length
-    ? `\nلم تُعرف هذه المعرّفات فلم تُحفظ مصادرَ: ${missing.join('، ')}. المعرّف الصحيح هو id في نتائج search_regulations أو get_article.`
-    : '';
+function missingNote({ missing, dropped }: { missing: string[]; dropped: number }): string {
+  return [
+    missing.length
+      ? `\nلم تُعرف هذه المعرّفات فلم تُحفظ مصادرَ: ${missing.join('، ')}. المعرّف الصحيح هو id في نتائج search_regulations أو get_article.`
+      : '',
+    dropped
+      ? `\nحُفظت أوّلُ ${CITES_MAX} مادةٍ مصادرَ، ولم يُحفظ ما بعدها (${dropped}). نصُّ الإجابة محفوظٌ كاملاً.`
+      : '',
+  ].join('');
 }
 
 const EXCHANGE_PROPS = {
@@ -184,9 +196,9 @@ export function conversationTools(env: Env): McpTool[] {
         )
           .bind(id, userIdOf(p), title, now, now, p.clientName)
           .run();
-        const missing = await appendExchange(env, p, id, question, answer, readIds(args));
+        const saved = await appendExchange(env, p, id, question, answer, readIds(args));
         return ok(
-          `حُفظت المحادثة في المنصة.\nconversation_id: ${id}\nاستعمل append_to_conversation بهذا المعرّف لكل إجابةٍ تالية في هذه المحادثة.${missingNote(missing)}`
+          `حُفظت المحادثة في المنصة.\nconversation_id: ${id}\nاستعمل append_to_conversation بهذا المعرّف لكل إجابةٍ تالية في هذه المحادثة.${missingNote(saved)}`
         );
       },
     },
@@ -216,8 +228,8 @@ export function conversationTools(env: Env): McpTool[] {
         if (await isGenerating(env, id)) {
           return refuse('المنصة تولّد ردّاً في هذه المحادثة الآن. أعد الإضافة بعد دقيقة.');
         }
-        const missing = await appendExchange(env, p, id, question, answer, readIds(args));
-        return ok(`أُضيفت إلى المحادثة.\nconversation_id: ${id}${missingNote(missing)}`);
+        const saved = await appendExchange(env, p, id, question, answer, readIds(args));
+        return ok(`أُضيفت إلى المحادثة.\nconversation_id: ${id}${missingNote(saved)}`);
       },
     },
 
@@ -263,16 +275,22 @@ export function conversationTools(env: Env): McpTool[] {
     {
       name: 'get_conversation',
       title: 'فتح محادثة من المنصة',
-      description: 'رسائل محادثةٍ للمستخدم على المنصة بترتيبها، لتكملها. المحادثة الطويلة تُعاد من آخرها.',
+      description:
+        'رسائل محادثةٍ للمستخدم على المنصة بترتيبها، لتكملها. المحادثة الطويلة تُعاد من آخرها، ' +
+        'وما قبله بـ skip_latest: عددُ الرسائل الأخيرة التي تُتخطّى.',
       readOnly: true,
       visibleTo: canWrite,
       inputSchema: {
         type: 'object',
-        properties: { conversation_id: { type: 'string' } },
+        properties: {
+          conversation_id: { type: 'string' },
+          skip_latest: { type: 'integer', minimum: 0, description: 'لقراءة ما قبل المعروض: عددُ الرسائل الأخيرة التي تُتخطّى. الافتراضي 0.' },
+        },
         required: ['conversation_id'],
       },
       async run(args, p) {
         const id = argString(args, 'conversation_id', 100);
+        const skip = argInt(args, 'skip_latest', 0, 0, 1_000_000);
         if (!id) return refuse('conversation_id مطلوب.');
         const conv = await env.DB.prepare(`SELECT title FROM conversations WHERE id = ? AND user_id = ? AND ${NOT_CASE}`)
           .bind(id, userIdOf(p))
@@ -284,16 +302,23 @@ export function conversationTools(env: Env): McpTool[] {
           .bind(id)
           .all<{ role: string; content: string }>();
         const msgs = rows.results ?? [];
-        // من الآخر إلى الأوّل حتى السقف: آخرُ المحادثة هو ما يُكمَل.
+        /* من الآخر إلى الأوّل حتى السقف: آخرُ المحادثة هو ما يُكمَل. وما قبل السقف
+           لا يُحجب: `skip_latest` يتخطّى ما قُرئ فتُقرأ المحادثة كلُّها صفحةً بعد صفحة. */
         const kept: string[] = [];
         let used = 0;
-        for (let i = msgs.length - 1; i >= 0; i--) {
+        const last = msgs.length - 1 - skip;
+        if (last < 0) return ok(`# ${conv.title ?? 'محادثة'}\nconversation_id: ${id}\nلا رسائل قبل هذا الموضع — في المحادثة ${msgs.length} رسالة.`);
+        for (let i = last; i >= 0; i--) {
           const block = `### ${msgs[i].role === 'user' ? 'المستخدم' : 'المساعد'}\n${msgs[i].content}`;
           if (used + block.length > READ_CHARS_MAX && kept.length) break;
           kept.unshift(block);
           used += block.length;
         }
-        const cut = kept.length < msgs.length ? `(أُعيدت آخر ${kept.length} رسالة من ${msgs.length})\n\n` : '';
+        const from = last - kept.length + 2;
+        const cut =
+          kept.length < msgs.length
+            ? `(الرسائل ${from}–${last + 1} من ${msgs.length}${from > 1 ? ` — وما قبلها بـ skip_latest: ${skip + kept.length}` : ''})\n\n`
+            : '';
         return ok(`# ${conv.title ?? 'محادثة'}\nconversation_id: ${id}\n${cut}\n${kept.join('\n\n')}`);
       },
     },

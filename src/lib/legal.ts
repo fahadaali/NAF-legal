@@ -3722,6 +3722,19 @@ function byDuplicateOrder(a: LegalHit, b: LegalHit): number {
 
 // ── ٣) البحث الهجين ──
 
+/**
+ * أبعدُ ما يرتّبه البحث الواحد: مئة نتيجة.
+ *
+ * وهو سقفُ الفهرس المتجهي نفسه — `topK` في Vectorize مئةٌ حين لا تُطلب القيم
+ * ولا البيانات الوصفية (وهكذا يُستدعى هنا). وكان السقف خمسين، فما رُتّب بعدها
+ * لا يصل إليه نداءٌ ولا صفحةٌ تالية. وما وراء المئة طريقُه التضييقُ بالنظام أو
+ * تصفّحُه كاملاً، لا بحثٌ أعمق.
+ */
+export const SEARCH_DEPTH = 100;
+
+/** معرّفاتٌ في عبارة `IN` الواحدة — دون سقف D1 للمعاملات المربوطة (مئة) مع شروط النطاق. */
+const IN_CHUNK = 50;
+
 export interface LegalSearchOptions extends LegalFilters {
   limit?: number;
   /**
@@ -3753,9 +3766,11 @@ export interface LegalSearchOptions extends LegalFilters {
  * وكل مسار من المسارين يحمل شرط السريان في SQL نفسه — لا بعده.
  */
 export async function searchLegal(env: Env, query: string, opts: LegalSearchOptions = {}): Promise<LegalHit[]> {
-  const limit = Math.min(Math.max(opts.limit ?? 10, 1), 50);
+  const limit = Math.min(Math.max(opts.limit ?? 10, 1), SEARCH_DEPTH);
   const filters = buildFilters(opts);
-  const candidates = Math.min(limit * 4, 50);
+  // أربعةُ أضعاف المطلوب مرشّحين حتى خمسين — كما كان لكل نداءٍ في المنصة. وما
+  // طلب أكثر من خمسين (خادم MCP) فمرشّحوه بعدده: لا يُرتَّب ما لم يُسترجع.
+  const candidates = Math.max(Math.min(limit * 4, 50), limit);
 
   const lists: { name: string; hits: LegalHit[] }[] = [];
 
@@ -3835,14 +3850,18 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
         if (seq !== null) seqs.push(seq);
       }
       if (seqs.length) {
-        const marks = seqs.map(() => '?').join(',');
-        const rows = await env.DB.prepare(
-          `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE c.seq IN (${marks})${filters.sql}`
-        )
-          .bind(...seqs, ...filters.binds)
-          .all<HitRow>();
+        // على دفعات: مئةُ مرشّحٍ مع شروط النطاق تتجاوز سقف المعاملات في العبارة الواحدة.
+        const bySeq = new Map<number, LegalHit>();
+        for (let i = 0; i < seqs.length; i += IN_CHUNK) {
+          const slice = seqs.slice(i, i + IN_CHUNK);
+          const rows = await env.DB.prepare(
+            `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE c.seq IN (${slice.map(() => '?').join(',')})${filters.sql}`
+          )
+            .bind(...slice, ...filters.binds)
+            .all<HitRow>();
+          for (const r of rows.results ?? []) bySeq.set(r.seq, toHit(r));
+        }
         // الترتيب من الفهرس المتجهي، والتصفية من SQL: ما سقط بالشرط لا يعود.
-        const bySeq = new Map((rows.results ?? []).map((r) => [r.seq, toHit(r)]));
         const ordered: LegalHit[] = [];
         for (const seq of seqs) {
           const hit = bySeq.get(seq);
@@ -4005,6 +4024,26 @@ export async function getChunkById(
     .bind(id, ...filters.binds)
     .first<HitRow>();
   return row ? toHit(row) : null;
+}
+
+/**
+ * مقاطعُ بمعرّفاتها في نداءاتٍ قليلة لا نداءٍ لكلٍّ — بترتيب المعرّفات، وما حُجب
+ * أو لم يوجد يسقط. بشرط `getChunkById` نفسه.
+ */
+export async function getChunksByIds(env: Env, ids: string[], includeRepealed = false): Promise<LegalHit[]> {
+  const unique = [...new Set(ids)];
+  const filters = buildFilters({ includeRepealed });
+  const byId = new Map<string, LegalHit>();
+  for (let i = 0; i < unique.length; i += IN_CHUNK) {
+    const slice = unique.slice(i, i + IN_CHUNK);
+    const rows = await env.DB.prepare(
+      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE c.id IN (${slice.map(() => '?').join(',')})${filters.sql}`
+    )
+      .bind(...slice, ...filters.binds)
+      .all<HitRow>();
+    for (const r of rows.results ?? []) byId.set(r.id, toHit(r));
+  }
+  return unique.map((id) => byId.get(id)).filter((h): h is LegalHit => !!h);
 }
 
 /**
