@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
-import { arabicGlobPatterns } from '../lib/arabic';
+import { arabicMatchSql } from '../lib/arabic';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -18,25 +18,24 @@ app.use('*', requireAuth);
  *
  * وكلُّ كلمةٍ يجب أن ترد — `AND` لا `OR` — وفي أيٍّ من الحقول الثلاثة:
  * من كتب كلمتين يريد ما جمعهما، ولا يهمّه أوقعتا في العنوان أم في النصّ.
+ *
+ * والمطابقةُ بـ`arabicMatchSql` لا بنمط `GLOB`: النمطُ يطول في الكلمة الطويلة
+ * حتى يرفضه D1، فكان بحثُ «الالتزامات» خطأً لا نتيجة.
  */
 app.get('/', async (c) => {
   const q = c.req.query('q')?.trim();
-  const patterns = q ? arabicGlobPatterns(q) : [];
+  const match = q ? arabicMatchSql(['title', 'body', 'category'], q) : null;
   const cols = 'id, title, category, body, created_at';
 
-  if (!patterns.length) {
+  if (!match) {
     const rows = await c.env.DB.prepare(`SELECT ${cols} FROM clauses ORDER BY category, title LIMIT 200`).all();
     return c.json({ clauses: rows.results });
   }
 
-  const where = patterns
-    .map(() => '(title GLOB ? OR body GLOB ? OR category GLOB ?)')
-    .join(' AND ');
-  const args = patterns.flatMap((p) => [p, p, p]);
   const rows = await c.env.DB.prepare(
-    `SELECT ${cols} FROM clauses WHERE ${where} ORDER BY category, title LIMIT 200`
+    `SELECT ${cols} FROM clauses WHERE ${match.sql} ORDER BY category, title LIMIT 200`
   )
-    .bind(...args)
+    .bind(...match.binds)
     .all();
   return c.json({ clauses: rows.results });
 });

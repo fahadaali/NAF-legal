@@ -49,7 +49,7 @@ import {
 import type { LegalHit, LawSummary } from '../lib/legal';
 import { joinArticleParts, fromLegalHit, formatRagBlock } from '../lib/rag';
 import { approvedIssues } from '../lib/research/issues';
-import { arabicGlobPatterns } from '../lib/arabic';
+import { arabicGlobPatterns, arabicMatchSql } from '../lib/arabic';
 import { dualDate } from '../lib/hijri';
 import { argBool, argInt, argString } from './protocol';
 import type { McpTool, McpToolResult } from './protocol';
@@ -799,10 +799,10 @@ export function readTools(env: Env): McpTool[] {
       async run(args) {
         const q = argString(args, 'query', 300);
         const category = argString(args, 'category', 200);
-        // المطابقة المطبَّعة نفسها التي في `routes/clauses.ts`.
-        const patterns = q ? arabicGlobPatterns(q) : [];
-        const where: string[] = patterns.map(() => '(title GLOB ? OR body GLOB ? OR category GLOB ?)');
-        const binds: unknown[] = patterns.flatMap((p) => [p, p, p]);
+        // المطابقة المطبَّعة نفسها التي في `routes/clauses.ts` — بلا سقف طول الكلمة.
+        const match = q ? arabicMatchSql(['title', 'body', 'category'], q) : null;
+        const where: string[] = match ? [match.sql] : [];
+        const binds: unknown[] = match ? [...match.binds] : [];
         if (category) {
           where.push('category = ?');
           binds.push(category);

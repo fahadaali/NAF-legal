@@ -223,3 +223,34 @@ export function arabicGlobPattern(token: string): string {
 export function arabicGlobPatterns(query: string, max = 6): string[] {
   return tokenize(query).slice(0, max).map(arabicGlobPattern);
 }
+
+/**
+ * تعبيرُ SQL يطوي عموداً خاماً إلى رؤوس أصناف الحروف (`LETTER_CLASSES`): كلُّ
+ * همزةٍ على ألفٍ ألف، والتاءُ المربوطة هاء، وهكذا — فتُطابَق فيه كلمةٌ مطبَّعة
+ * بـ`instr`.
+ *
+ * **بديلُ نمط `GLOB` حيث يطول.** D1 يرفض نمطاً فوق خمسين بايتاً («LIKE or GLOB
+ * pattern too complex»)، وصنفُ الألف وحده اثنا عشر بايتاً: فـ«الالتزامات» و
+ * «الاتفاقية» كانتا تُسقطان البحث كلَّه بخطأ. و`instr` بلا سقف طول.
+ *
+ * والمطابقةُ هي هي: ما يقبله صنفٌ في النمط يُطوى هنا إلى رأسه، والاستعلامُ
+ * مطبَّعٌ (`normalizeArabic`) إلى الرؤوس نفسها.
+ */
+export function arabicFoldSql(column: string): string {
+  let expr = column;
+  for (const [head, members] of Object.entries(LETTER_CLASSES)) {
+    for (const ch of members) if (ch !== head) expr = `replace(${expr}, '${ch}', '${head}')`;
+  }
+  return expr;
+}
+
+/**
+ * شرطُ SQL لكلمات الاستعلام في نصٍّ خام: كلُّ كلمةٍ يجب أن ترد (`AND`)، في أيٍّ
+ * من الأعمدة (`OR`). و`null` حين لا كلمة في الاستعلام.
+ */
+export function arabicMatchSql(columns: string[], query: string, max = 6): { sql: string; binds: string[] } | null {
+  const tokens = tokenize(query).slice(0, max);
+  if (!tokens.length) return null;
+  const one = `(${columns.map((c) => `instr(${arabicFoldSql(c)}, ?) > 0`).join(' OR ')})`;
+  return { sql: tokens.map(() => one).join(' AND '), binds: tokens.flatMap((t) => columns.map(() => t)) };
+}
