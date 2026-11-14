@@ -32,7 +32,7 @@ import type { Env } from '../types';
 import { uuid } from '../lib/crypto';
 import { getChunksByIds } from '../lib/legal';
 import { fromLegalHit } from '../lib/rag';
-import { arabicGlobPatterns } from '../lib/arabic';
+import { arabicMatchSql } from '../lib/arabic';
 import { isGenerating } from '../lib/generating';
 import { argInt, argString } from './protocol';
 import type { McpPrincipal, McpTool, McpToolResult } from './protocol';
@@ -250,13 +250,13 @@ export function conversationTools(env: Env): McpTool[] {
       },
       async run(args, p) {
         const q = argString(args, 'query', 200);
-        const patterns = q ? arabicGlobPatterns(q) : [];
-        const where = patterns.map(() => 'title GLOB ?').join(' AND ');
+        // المطابقة المطبَّعة نفسها التي في البحث العام — بلا سقف طول الكلمة.
+        const match = q ? arabicMatchSql(['title'], q) : null;
         const rows = await env.DB.prepare(
           `SELECT id, title, origin, origin_client, updated_at FROM conversations
-           WHERE user_id = ? AND ${NOT_CASE}${where ? ` AND ${where}` : ''} ORDER BY updated_at DESC LIMIT ?`
+           WHERE user_id = ? AND ${NOT_CASE}${match ? ` AND ${match.sql}` : ''} ORDER BY updated_at DESC LIMIT ?`
         )
-          .bind(userIdOf(p), ...patterns, argInt(args, 'limit', 20, 1, 100))
+          .bind(userIdOf(p), ...(match?.binds ?? []), argInt(args, 'limit', 20, 1, 100))
           .all<{ id: string; title: string | null; origin: string | null; origin_client: string | null; updated_at: number }>();
         const list = rows.results ?? [];
         if (!list.length) return ok(q ? 'لا محادثات بهذا العنوان.' : 'لا محادثات بعد.');

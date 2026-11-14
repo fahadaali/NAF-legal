@@ -225,12 +225,36 @@ console.log('التفويض والمحادثات');
   check('وعمقُ المحرّك مئة — سقفُ Vectorize بلا بيانات وصفية', /export const SEARCH_DEPTH = 100;/.test(legalSrc) && /Math\.min\(Math\.max\(opts\.limit \?\? 10, 1\), SEARCH_DEPTH\)/.test(legalSrc) && /returnMetadata: 'none'/.test(legalSrc));
   check('ومرشّحو المنصة كما كانوا (حتى خمسين)', /Math\.max\(Math\.min\(limit \* 4, 50\), limit\)/.test(legalSrc));
   check('وعبارةُ IN للمتجهات على دفعات دون سقف المعاملات', /for \(let i = 0; i < seqs\.length; i \+= IN_CHUNK\)/.test(legalSrc));
+  const clauseTool = strip(toolsSrc.slice(toolsSrc.indexOf("name: 'search_clauses'"), toolsSrc.indexOf('function globToRegex')));
+  const clauseRoute = strip(readFileSync(new URL('../src/routes/clauses.ts', import.meta.url), 'utf8'));
+  check('بحثُ البنود بلا نمط GLOB يرفضه D1 في الكلمة الطويلة — في الأداة والشاشة', !/GLOB/.test(clauseTool) && !/GLOB/.test(clauseRoute) && /arabicMatchSql\(\['title', 'body', 'category'\]/.test(clauseTool) && /arabicMatchSql\(\['title', 'body', 'category'\]/.test(clauseRoute));
+  const { arabicMatchSql } = await import('../src/lib/arabic.ts');
+  const m = arabicMatchSql(['body'], 'الالتزامات الاتفاقية');
+  check('والكلمةُ الطويلة تُطوى كلُّ صورها إلى رؤوسها، مطبَّعة', !!m && ['أ', 'إ', 'آ', 'ٱ', 'ة', 'ى', 'ئ', 'ؤ'].every((ch) => m.sql.includes(`'${ch}'`)) && m.binds.join(' ') === 'الالتزامات الاتفاقيه' && !/GLOB/.test(m.sql), JSON.stringify(m?.binds));
+  const short = arabicMatchSql(['body'], 'التعويض');
+  check('والمعتادةُ على نمطها كما كانت — بكلفتها', short?.sql === '(body GLOB ?)' && short.binds[0].startsWith('*') && short.binds[0].endsWith('*'), JSON.stringify(short));
+  const edge = arabicMatchSql(['b'], 'ب'.repeat(24) + ' ' + 'ب'.repeat(25));
+  check('والحدُّ خمسون بايتاً بالضبط: ما بلغه نمط، وما زاد طيّ', /^\(b GLOB \?\) AND \(instr\(replace\(/.test(edge?.sql ?? ''), edge?.sql);
+  for (const [name, path] of [['البحث العام', '../src/routes/search.ts'], ['محادثاتُ الأداة', '../src/mcp/conversations.ts']]) {
+    const src = strip(readFileSync(new URL(path, import.meta.url), 'utf8'));
+    check(`و${name} بالمطابقة نفسها، بلا نمطٍ يُبنى في موضعه`, /arabicMatchSql\(/.test(src) && !/GLOB/.test(src) && !/arabicGlobPatterns/.test(src));
+  }
   check('ومكتبةُ البنود صفحاتٌ من القاعدة لا خمسمئةٌ مقصوصة', !/LIMIT 500/.test(toolsSrc) && /FROM clauses\$\{whereSql\} ORDER BY category, title, id LIMIT \? OFFSET \?/.test(toolsSrc));
   check('وأرشيفُ النصوص السابقة لا يقف عند عشرين', !/LIMIT 20`/.test(amend) && /ARCHIVE_MAX \+ 1/.test(amend));
   check('والمحادثةُ الطويلة تُقرأ كلُّها بـskip_latest', /skip_latest/.test(conv) && /const last = msgs\.length - 1 - skip/.test(conv));
   check('والردُّ المحفوظ يحمل مئتي مصدر، تُقرأ دفعاتٍ', /const CITES_MAX = 200;/.test(conv) && /getChunksByIds\(env, unique, true\)/.test(conv) && !/getChunkById\(/.test(conv));
   check('وما زاد على سقف المصادر يُقال لا يسقط صامتاً', /dropped/.test(conv) && /نصُّ الإجابة محفوظٌ كاملاً/.test(conv));
   check('ولا تنادي نموذج المنصة', !/callClaude|lib\/claude|logUsage/.test(conv));
+
+  const fiqh = strip(readFileSync(new URL('../src/mcp/fiqh.ts', import.meta.url), 'utf8'));
+  check('كتبُ الفقه للعضو وحده — المصدر مربوطٌ باسم المنصة', /visibleTo: isMember/.test(fiqh) && /const isMember = \(p: McpPrincipal\) => p\.kind === 'member'/.test(fiqh));
+  check('وبالمصادر المفعّلة نفسها ومحوّلها — لا نداءٌ ثانٍ', /enabledSources\(env, 'fiqh'\)/.test(fiqh) && /searchSources\(env, sources, query\)/.test(fiqh) && !/callTool|fetch\(/.test(fiqh));
+  check('ومصدرٌ لم يُجب يُقال بلفظه المسجّل، والحاشيةُ للمحقِّق', /تعذّر الوصول إلى المصدر/.test(fiqh) && /كلام المحقِّق لا المؤلِّف/.test(fiqh) && /«التأصيل الفقهي»/.test(fiqh));
+  check('ولا تنادي نموذج المنصة، وللقراءة', !/callClaude|lib\/claude|logUsage/.test(fiqh) && /readOnly: true/.test(fiqh) && !/readOnly: false/.test(fiqh));
+  check('ومركّبةٌ في الخادم', /\.\.\.fiqhTools\(c\.env\)/.test(srv));
+  const connect = readFileSync(new URL('../web/src/components/Connect.tsx', import.meta.url), 'utf8');
+  check('وإذنُ العضو يذكرها بلفظ §١٥، والضيف على حاله', connect.includes('ومكتبة البنود وكتب الفقه في المصادر الخارجية، وتقرأ محادثاتك') && connect.includes("guestCan: 'ستبحث الأداة في الأنظمة واللوائح وتصنيفاتها ومكتبة البنود. لا يُحفظ شيءٌ في المنصة.'"));
+  check('والتعليمات تفصل التأصيل عن السند', /التأصيل الفقهي — إن كانت أداة search_fiqh_sources/.test(instr2) && /قسمٍ ختاميّ وحده عنوانه «التأصيل الفقهي»/.test(instr2));
 }
 
 console.log(failed ? `\n${failed} فحصاً فشل` : '\nسليم');
