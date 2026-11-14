@@ -44,6 +44,7 @@ import {
   withParts,
   canonicalDocType,
   articleBaseId,
+  SEARCH_DEPTH,
 } from '../lib/legal';
 import type { LegalHit, LawSummary } from '../lib/legal';
 import { joinArticleParts, fromLegalHit, formatRagBlock } from '../lib/rag';
@@ -53,8 +54,17 @@ import { dualDate } from '../lib/hijri';
 import { argBool, argInt, argString } from './protocol';
 import type { McpTool, McpToolResult } from './protocol';
 
-/** سقفُ محرّك البحث نفسه (`searchLegal`) — لا حدٌّ للمنصة على الاستخدام. */
-const SEARCH_MAX = 50;
+/**
+ * صفحةُ البحث الواحدة — حجمُ ردٍّ لا حدُّ وصول.
+ *
+ * ما وراءها بـ`offset` حتى عمق المحرّك (`SEARCH_DEPTH`، مئة). والصفحة لا تُكبَّر
+ * إلى المئة: خمسون مادةً بنصوصها قريبٌ مما تقصّ عنده بعضُ الأدوات نتيجةَ الأداة
+ * الواحدة، والقصُّ عندها صامتٌ يُسقط آخر النتائج — وصفحتان أوفى من ردٍّ مقصوص.
+ */
+const SEARCH_PAGE_MAX = 50;
+
+/** نصوصُ المادة السابقة في أرشيف المنصة — ما يُعاد منها في نداء. */
+const ARCHIVE_MAX = 100;
 
 const ok = (text: string): McpToolResult => ({ text });
 const refuse = (text: string): McpToolResult => ({ text, isError: true });
@@ -222,7 +232,9 @@ export function readTools(env: Env): McpTool[] {
         'أو لم يبدأ العمل بها (بتاريخ نفاذها)، أو تُلغى في تاريخٍ قادم. ' +
         'ضيّق البحث بـ law_id (من list_laws) أو doc_type أو book أو issue_key (من list_legal_issues). ' +
         'الموادّ الملغاة لا تُخلط بالنافذة افتراضياً، ويُذكر عددُ ما طابق منها؛ ' +
-        'ومع include_repealed: true تظهر بوسم «ملغاة» — لسؤالٍ تاريخيّ أو مقارنةٍ بنصٍّ سابق.',
+        'ومع include_repealed: true تظهر بوسم «ملغاة» — لسؤالٍ تاريخيّ أو مقارنةٍ بنصٍّ سابق. ' +
+        `النتائج صفحات: ما بعد الأولى بـ offset، حتى ${SEARCH_DEPTH} نتيجة للبحث الواحد؛ ` +
+        'وما وراءها بتضييق البحث، أو بقراءة النظام كلّه في browse_law_articles.',
       readOnly: true,
       inputSchema: {
         type: 'object',
@@ -238,7 +250,8 @@ export function readTools(env: Env): McpTool[] {
             type: 'boolean',
             description: 'إظهار الموادّ الملغاة مع النافذة، كلٌّ بحاله. لسؤالٍ عن نصٍّ سابق أو نظامٍ لاغٍ. الافتراضي لا.',
           },
-          limit: { type: 'integer', minimum: 1, maximum: SEARCH_MAX, description: 'عدد النتائج. الافتراضي 10.' },
+          offset: { type: 'integer', minimum: 0, maximum: SEARCH_DEPTH, description: 'موضع الصفحة. الافتراضي 0.' },
+          limit: { type: 'integer', minimum: 1, maximum: SEARCH_PAGE_MAX, description: 'عدد النتائج في الصفحة. الافتراضي 10.' },
         },
       },
       async run(args) {
@@ -255,18 +268,25 @@ export function readTools(env: Env): McpTool[] {
           book: argString(args, 'book', 300),
           issueKey,
         };
-        const hits = await searchLegal(env, query, {
+        const offset = argInt(args, 'offset', 0, 0, SEARCH_DEPTH);
+        const limit = argInt(args, 'limit', 10, 1, SEARCH_PAGE_MAX);
+        /* يُرتَّب العمقُ كلُّه في كل نداء، والصفحةُ تُقتطع منه. فالترتيب واحدٌ في
+           الصفحات كلّها: لو طُلب بقدر الصفحة لاختلف عددُ المرشّحين بينها، فتتكرّر
+           مادةٌ في صفحتين أو تسقط بينهما. والاقتطاعُ بالمادة لا بأجزائها. */
+        const raw = await searchLegal(env, query, {
           ...scope,
-          limit: argInt(args, 'limit', 10, 1, SEARCH_MAX),
+          limit: SEARCH_DEPTH,
           includeRepealed,
           lexicalOnly: argString(args, 'mode', 20) === 'lexical',
         });
+        const ranked = joinArticleParts(raw);
+        const hits = ranked.slice(offset, offset + limit);
         /* الملغاة لا تُخلط بالنافذة، ولا تختفي: يُعدّ ما طابق منها بحثاً لفظياً بالنطاق
            نفسه — بلا نداء تضمين — ويُقال عددُه وكيف تُطلب. فالباحث في نصٍّ سابق يعرف
            أن له في المنصة جواباً، ومن يسأل عن الجاري لا يقرأ نصّاً سابقاً في نتائجه. */
         let repealedNote = '';
-        if (!includeRepealed) {
-          const all = await searchLegal(env, query, { ...scope, limit: SEARCH_MAX, includeRepealed: true, lexicalOnly: true }).catch(
+        if (!includeRepealed && offset === 0) {
+          const all = await searchLegal(env, query, { ...scope, limit: SEARCH_DEPTH, includeRepealed: true, lexicalOnly: true }).catch(
             () => [] as LegalHit[]
           );
           const repealed = joinArticleParts(all).filter(isRepealedHit).length;
@@ -276,14 +296,25 @@ export function readTools(env: Env): McpTool[] {
               'إن كان السؤال عن نصٍّ سابق أو نظامٍ لاغٍ، أعد البحث مع include_repealed: true فتظهر كلٌّ بحالها.';
           }
         }
-        if (!hits.length) {
+        if (!ranked.length) {
           return ok(
             ['لم يُعثر على موادّ نافذة مطابقة. وسّع البحث: احذف مرشّحاً، أو جرّب لفظاً آخر، أو mode: hybrid.', repealedNote]
               .filter(Boolean)
               .join('\n\n')
           );
         }
-        return ok(`${formatHits(hits)}${repealedNote ? `\n\n===\n\n${repealedNote}` : ''}`);
+        if (!hits.length) return ok(`النتائج: ${ranked.length} — لا شيء بعد الموضع ${offset}.`);
+        const end = offset + hits.length;
+        const header = `النتائج ${offset + 1}–${end} من ${ranked.length}`;
+        const more =
+          end < ranked.length
+            ? `التالي: offset ${end}`
+            : raw.length >= SEARCH_DEPTH
+              ? `هذا أبعدُ ما يرتّبه البحث الواحد. لما وراءه ضيّق البحث بـ law_id أو doc_type أو issue_key، أو اقرأ النظام كلّه بـ browse_law_articles.`
+              : '';
+        return ok(
+          `${header}\n\n${formatHits(hits)}${more ? `\n\n${more}` : ''}${repealedNote ? `\n\n===\n\n${repealedNote}` : ''}`
+        );
       },
     },
 
@@ -567,11 +598,20 @@ export function readTools(env: Env): McpTool[] {
           `SELECT text, amended_on, amendment_instrument FROM legal_chunk_versions
            WHERE (chunk_id = ? OR chunk_id LIKE ? ESCAPE '\\')
              AND (change_kind IS NULL OR change_kind <> 'correction') AND instr(changed_fields, 'text') > 0
-           ORDER BY archived_at ASC LIMIT 20`
+           ORDER BY archived_at ASC LIMIT ${ARCHIVE_MAX + 1}`
         )
           .bind(base, `${base.replace(/[\\%_]/g, (m) => `\\${m}`)}#%`)
           .all<{ text: string; amended_on: string | null; amendment_instrument: string | null }>();
-        const fresh = (archived.results ?? []).filter((r) => !shown.has(r.text.trim()));
+        /* كان السقف عشرين من الأقدم، فيسقط أحدثُ ما زاد بلا علامة. والنصُّ الذي
+           تكرّر في الأرشيف — تحديثٌ أعاد النصَّ نفسه — يُعرض مرّةً واحدة. */
+        const rowsArchived = archived.results ?? [];
+        const archiveCut = rowsArchived.length > ARCHIVE_MAX;
+        const fresh = rowsArchived.slice(0, ARCHIVE_MAX).filter((r) => {
+          const t = r.text.trim();
+          if (shown.has(t)) return false;
+          shown.add(t);
+          return true;
+        });
         if (fresh.length) {
           lines.push(
             '',
@@ -579,7 +619,8 @@ export function readTools(env: Env): McpTool[] {
             ...fresh.map(
               (r, i) =>
                 `\n[${i + 1}]${r.amendment_instrument ? ` ${r.amendment_instrument}` : ''}${r.amended_on ? ` — ${r.amended_on}` : ''}\n${r.text}`
-            )
+            ),
+            ...(archiveCut ? ['', `وفي السجلّ أكثرُ من ${ARCHIVE_MAX} نصّاً سابقاً؛ المعروض أقدمُها.`] : [])
           );
         }
 
@@ -766,15 +807,26 @@ export function readTools(env: Env): McpTool[] {
           where.push('category = ?');
           binds.push(category);
         }
-        const rows = await env.DB.prepare(
-          `SELECT id, title, category, body FROM clauses${where.length ? ` WHERE ${where.join(' AND ')}` : ''}
-           ORDER BY category, title LIMIT 500`
-        )
-          .bind(...binds)
-          .all<{ id: string; title: string; category: string | null; body: string }>();
-        const list = rows.results ?? [];
-        if (!list.length) return ok('لا بنود مطابقة. جرّب كلمةً واحدة أو احذف التصنيف.');
-        const { page, header, next } = paginate(list, args);
+        /* الصفحةُ من القاعدة لا من خمسمئةٍ تُقرأ ثم تُقتطع: كان ما بعد الخمسمئة لا
+           يصل إليه نداءٌ ولا صفحة، والعددُ المعلن يقف عندها. */
+        const whereSql = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+        const offset = argInt(args, 'offset', 0, 0, 1_000_000);
+        const limit = argInt(args, 'limit', LIST_DEFAULT, 1, LIST_MAX);
+        const [count, rows] = await Promise.all([
+          env.DB.prepare(`SELECT COUNT(*) AS n FROM clauses${whereSql}`)
+            .bind(...binds)
+            .first<{ n: number }>(),
+          env.DB.prepare(`SELECT id, title, category, body FROM clauses${whereSql} ORDER BY category, title, id LIMIT ? OFFSET ?`)
+            .bind(...binds, limit, offset)
+            .all<{ id: string; title: string; category: string | null; body: string }>(),
+        ]);
+        const total = count?.n ?? 0;
+        if (!total) return ok('لا بنود مطابقة. جرّب كلمةً واحدة أو احذف التصنيف.');
+        const page = rows.results ?? [];
+        const header = page.length
+          ? `العدد: ${total} — المعروض ${offset + 1}–${offset + page.length}`
+          : `العدد: ${total} — لا شيء بعد هذا الموضع`;
+        const next = offset + page.length < total ? `\n\nالتالي: offset ${offset + page.length}` : '';
         return ok(
           `${header}\n\n${page.map((c) => `## ${c.title}\nالتصنيف: ${c.category ?? '—'} · id: ${c.id}\n\n${c.body}`).join('\n\n---\n\n')}${next}`
         );
