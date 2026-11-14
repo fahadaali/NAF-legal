@@ -151,6 +151,13 @@ DATA_REGION = "auto"
 PLATFORM_ID = "NAF-legal"
 AUTH_ISSUER = "https://app.naflaw.sa"
 
+# ── البريد ──
+# عنوانُ المُرسِل لرسائل Resend (رمز تحقّق الضيف والإشعارات). ليس سرّاً، فيُكتب
+# هنا لا في اللوحة: ما يُضاف في اللوحة متغيّراً عادياً يمحوه النشر التالي، لأن
+# `wrangler deploy` يكتب `[vars]` من هذا الملف وحده. ونطاقُه يجب أن يكون موثّقاً
+# في Resend. ومفتاحُ `RESEND_API_KEY` سرٌّ يبقى في اللوحة.
+NOTIFY_FROM = "مستشار ناف <advisor@naflaw.sa>"
+
 # الأسرار المطلوبة (لا تُوضع هنا):
 #   ANTHROPIC_API_KEY   — مفتاح Claude API
 #   JWT_SECRET          — لم يعد له قارئ: توقيعُ الجلسات المحلية أُسقط مع
