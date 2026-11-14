@@ -43,6 +43,16 @@ const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 export const REQUEST_TTL = 15 * MIN;
 export const CODE_TTL = 5 * MIN;
+
+/**
+ * سجلُّ خطوات التفويض — سطرٌ لكل خطوة في سجلّ العامل (`mcp_oauth`)، يُقرأ في لوحة
+ * Cloudflare. فشلٌ يقع «أحياناً» بعد «سماح» يقع في نداءٍ بين الأداة والخادم لا
+ * يراه العضو، فلا يُعرف سببُه إلا من هنا. ولا رمزَ فيه ولا بريد: معرّفُ الطلب أو
+ * العميل والخطوةُ وسببُ الرفض بلفظ البروتوكول.
+ */
+function logOAuth(step: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ event: 'mcp_oauth', step, ...fields }));
+}
 export const ACCESS_TTL = 60 * MIN;
 export const REFRESH_TTL = 30 * DAY;
 export const CONNECTION_TTL = 90 * DAY;
@@ -236,16 +246,19 @@ export async function startAuthorization(env: Env, q: URLSearchParams, origin: s
   const clientId = q.get('client_id') ?? '';
   const redirectUri = q.get('redirect_uri') ?? '';
   const client = clientId ? await getClient(env, clientId) : null;
-  if (!client) return { kind: 'invalid', message: 'unknown client_id' };
+  if (!client) {
+    logOAuth('authorize', { ok: false, reason: 'unknown client_id', client: clientId });
+    return { kind: 'invalid', message: 'unknown client_id' };
+  }
   // بلا `redirect_uri` يُقبل الوحيدُ المسجّل وحده — وإلا فالطلب ناقص.
   const target = redirectUri || (client.redirectUris.length === 1 ? client.redirectUris[0] : '');
   if (!target || !client.redirectUris.includes(target)) return { kind: 'invalid', message: 'redirect_uri mismatch' };
 
   const state = q.get('state') ?? undefined;
-  const fail = (error: string, error_description: string): AuthorizeOutcome => ({
-    kind: 'redirect',
-    location: withParams(target, { error, error_description, state, iss: origin }),
-  });
+  const fail = (error: string, error_description: string): AuthorizeOutcome => {
+    logOAuth('authorize', { ok: false, client: client.id, reason: error, detail: error_description });
+    return { kind: 'redirect', location: withParams(target, { error, error_description, state, iss: origin }) };
+  };
   if (q.get('response_type') !== 'code') return fail('unsupported_response_type', 'response_type must be code');
   const challenge = q.get('code_challenge') ?? '';
   if (!challenge || q.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43,128}$/.test(challenge)) {
@@ -264,6 +277,7 @@ export async function startAuthorization(env: Env, q: URLSearchParams, origin: s
   )
     .bind(id, client.id, target, challenge, state ?? null, SCOPE, now, now + REQUEST_TTL)
     .run();
+  logOAuth('authorize', { ok: true, client: client.id, request: id, redirect_host: redirectHost(target) });
   return { kind: 'door', requestId: id };
 }
 
@@ -344,11 +358,18 @@ export type ApproveResult = { ok: true; redirect: string } | { ok: false; reason
 /** العضو سمح — وقد مرّ بوسيط الدخول، فهويّته من المركز لا من الطلب. */
 export async function approveMember(env: Env, requestId: string, memberId: string, origin: string): Promise<ApproveResult> {
   const req = await liveRequest(env, requestId);
-  if (!req) return { ok: false, reason: 'expired' };
+  if (!req) {
+    logOAuth('approve', { ok: false, request: requestId, reason: 'expired' });
+    return { ok: false, reason: 'expired' };
+  }
   const member = await env.DB.prepare('SELECT is_active FROM members WHERE user_id = ?')
     .bind(memberId)
     .first<{ is_active: number }>();
-  if (!member || member.is_active !== 1) return { ok: false, reason: 'inactive' };
+  if (!member || member.is_active !== 1) {
+    logOAuth('approve', { ok: false, request: requestId, client: req.client_id, reason: 'inactive' });
+    return { ok: false, reason: 'inactive' };
+  }
+  logOAuth('approve', { ok: true, request: requestId, client: req.client_id });
   return { ok: true, redirect: await issueCode(env, req, { kind: 'member', memberId }, origin) };
 }
 
@@ -363,6 +384,7 @@ export async function denyRequest(env: Env, requestId: string, origin: string): 
     env.DB.prepare('DELETE FROM mcp_auth_requests WHERE id = ?').bind(req.id),
     env.DB.prepare('DELETE FROM mcp_guest_codes WHERE request_id = ?').bind(req.id),
   ]);
+  logOAuth('deny', { request: requestId, client: req.client_id });
   return withParams(req.redirect_uri, { error: 'access_denied', state: req.state ?? undefined, iss: origin });
 }
 
@@ -506,11 +528,10 @@ export async function verifyGuestCode(
 
 export type TokenResult = { ok: true; body: Record<string, unknown> } | { ok: false; status: number; err: OAuthError };
 
-const grantErr = (error: string, error_description: string, status = 400): TokenResult => ({
-  ok: false,
-  status,
-  err: { error, error_description },
-});
+const grantErr = (error: string, error_description: string, status = 400): TokenResult => {
+  logOAuth('token', { ok: false, reason: error, detail: error_description });
+  return { ok: false, status, err: { error, error_description } };
+};
 
 async function issueTokens(env: Env, connectionId: string, connectionExpires: number): Promise<Record<string, unknown>> {
   const access = randomToken(32);
@@ -590,6 +611,7 @@ export async function exchangeToken(env: Env, form: URLSearchParams): Promise<To
     )
       .bind(id, row.client_id, client?.name ?? null, row.subject_kind, row.member_id, row.guest_id, row.scope, now, now, expires)
       .run();
+    logOAuth('token', { ok: true, grant: 'authorization_code', client: row.client_id, connection: id });
     return { ok: true, body: await issueTokens(env, id, expires) };
   }
 
