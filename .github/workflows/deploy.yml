@@ -65,6 +65,7 @@ jobs:
           npm run check:external
           npm run check:oauth
           npm run check:platform
+          npm run check:update-checks
 
       - name: بناء الواجهة
         run: npm run build:web
