@@ -161,7 +161,7 @@ app.use('/api/*', async (c, next) => {
   const user = c.get('user');
   const key = user ? `rl:${user.id}` : `rl:ip:${c.req.header('cf-connecting-ip') ?? 'x'}`;
   // 60 طلباً في الدقيقة
-  if (!(await withinRateLimit(c.env, key, 60, 60))) return c.json({ error: RATE_LIMIT_MESSAGE }, 429);
+  if (!(await withinRateLimit(c.env, key, 60, 60, (p) => c.executionCtx.waitUntil(p)))) return c.json({ error: RATE_LIMIT_MESSAGE }, 429);
   await next();
 });
 

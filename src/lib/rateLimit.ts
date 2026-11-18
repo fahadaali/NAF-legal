@@ -14,7 +14,21 @@
  */
 import type { Env } from '../types';
 
-export async function withinRateLimit(env: Env, key: string, limit: number, windowSec: number): Promise<boolean> {
+/**
+ * وكتابةُ العدّاد لا ينتظرها الطلب حين يُعطى `defer` (وهو `waitUntil`).
+ *
+ * كتابةُ KV تذهب إلى المخزن المركزي، وكانت تُنتظر قبل كل نداءٍ إلى `/api/*`
+ * — فيدفع كلُّ ضغطةٍ في المنصة ثمنَ رحلةٍ لا يحتاج نتيجتها: الحكمُ قد صدر
+ * من القراءة قبلها. والعدّ بعدها تقريبيٌّ أصلاً (KV متّسقٌ في النهاية)، فلا
+ * يفقد الحدُّ بالتأجيل شيئاً لم يكن يفقده.
+ */
+export async function withinRateLimit(
+  env: Env,
+  key: string,
+  limit: number,
+  windowSec: number,
+  defer?: (pending: Promise<unknown>) => void
+): Promise<boolean> {
   try {
     const now = Date.now();
     const raw = await env.KV.get(key);
@@ -33,7 +47,9 @@ export async function withinRateLimit(env: Env, key: string, limit: number, wind
     }
     if (count >= limit) return false;
     const ttl = Math.max(60, Math.ceil((resetAt - now) / 1000));
-    await env.KV.put(key, JSON.stringify({ c: count + 1, r: resetAt }), { expirationTtl: ttl });
+    const write = env.KV.put(key, JSON.stringify({ c: count + 1, r: resetAt }), { expirationTtl: ttl });
+    if (defer) defer(write.catch(() => {}));
+    else await write;
     return true;
   } catch {
     return true;

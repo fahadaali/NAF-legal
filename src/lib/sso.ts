@@ -239,6 +239,38 @@ export function ssoConfig(env: Env): AuthConfig {
  * لنداء `fetch`، و403 ومعه `denied` للعضو الموقوف — والفرعان يُقرآن في
  * `web/src/lib/api.ts`.
  */
+type LocalMemberRow = { local_user_id: string | null; email: string | null; display_name: string | null };
+
+/**
+ * جسرُ العضو إلى سجلّه المحلي — مخبَّأً في ذاكرة النسخة دقائق.
+ *
+ * كان يُقرأ من D1 في كل طلبٍ محمي، بعد قراءة الحزمة للصفّ نفسه مباشرةً
+ * (`getMember`) — رحلتان إلى القاعدة على التوالي قبل أن يبدأ المسار عمله.
+ *
+ * والتخبئة هنا آمنة لأن ما يُقرأ لا يحكم بشيء: الدورُ وحالةُ التفعيل تقرؤهما
+ * الحزمة من القاعدة في كل طلب ولا يمرّان بهذا المخبأ — فإيقافُ عضوٍ أو تغييرُ
+ * صلاحيته يسري في الطلب التالي كما كان. والذي يُخبَّأ `local_user_id` (لا
+ * يتغيّر بعد إنشائه) والاسمُ والبريد (يتغيّران عند الدخول وحده، ويظهر الجديد
+ * خلال دقائق). وصفٌّ لم يوجد لا يُخبَّأ: قد يُنشأ في الطلب التالي.
+ */
+const MEMBER_ROW_TTL_MS = 5 * 60 * 1000;
+const MEMBER_ROW_MAX = 1000;
+const memberRows = new Map<string, { row: LocalMemberRow; at: number }>();
+
+async function localMemberRow(env: Env, memberId: string): Promise<LocalMemberRow | null> {
+  const hit = memberRows.get(memberId);
+  if (hit && Date.now() - hit.at < MEMBER_ROW_TTL_MS) return hit.row;
+
+  const row = await env.DB.prepare('SELECT local_user_id, email, display_name FROM members WHERE user_id = ?')
+    .bind(memberId)
+    .first<LocalMemberRow>();
+  if (row?.local_user_id) {
+    if (memberRows.size >= MEMBER_ROW_MAX) memberRows.clear();
+    memberRows.set(memberId, { row, at: Date.now() });
+  }
+  return row;
+}
+
 export async function ssoMiddleware(c: Ctx, next: Next) {
   const config = ssoConfig(c.env);
   const result = await authenticate(c.req.raw, c.env, config);
@@ -246,11 +278,7 @@ export async function ssoMiddleware(c: Ctx, next: Next) {
   if (result.response) return result.response;
 
   if (result.user) {
-    const row = await c.env.DB.prepare(
-      'SELECT local_user_id, email, display_name FROM members WHERE user_id = ?'
-    )
-      .bind(result.user.id)
-      .first<{ local_user_id: string | null; email: string | null; display_name: string | null }>();
+    const row = await localMemberRow(c.env, result.user.id);
 
     c.set('user', {
       id: row?.local_user_id ?? result.user.id,
