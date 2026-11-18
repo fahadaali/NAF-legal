@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { api, AdminSource, DiscoveredAuth, ConsultConfig, DocTemplate, FieldDef, FieldType, LegalStats, RegulationRequest } from '../lib/api';
+import { api, AdminSource, DiscoveredAuth, ConsultConfig, DocTemplate, FieldDef, FieldType, LegalStats, RegulationRequest, UpdateChecksView, UpdateFinding } from '../lib/api';
 import { printDocument, fetchLetterhead, PRINT_TEMPLATE_FALLBACK } from '../lib/print';
 import { AiToolsAdmin } from './AiTools';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
@@ -800,6 +800,8 @@ function TrackingTab() {
 
   return (
     <div>
+      <UpdateChecksSection />
+
       <p className="source-note"><Icon.officialSource size={ICON_SM} aria-hidden /> {TRACKING_SOURCES_NOTE} يفحص النظام دوريًا (يوميًا) كل نظام في قاعدة المعرفة مقابل هذه المصادر لرصد التعديلات، ويضع علامة «يحتاج مراجعة».</p>
       <div className="admin-actions">
         <button className="btn-sm primary" onClick={scan} disabled={scanning}>
@@ -841,6 +843,217 @@ function TrackingTab() {
       <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', marginTop: 16 }}>
         الأنظمة واللوائح الجديدة تُرصد في تبويب «خلاصة الأخبار» من المصادر الرسمية.
       </p>
+    </div>
+  );
+}
+
+/** ما رصده الفحص — بلفظٍ يقرؤه المسؤول. */
+const FINDING_KIND: Record<string, string> = {
+  amendment: 'تعديل لم يُستورد',
+  status: 'تغيّرت حال النظام',
+  instrument: 'أداة إصدار',
+  dates: 'تاريخا الإصدار والنشر',
+  count: 'عدد المواد',
+  text: 'نصّ المواد',
+  brief: 'نبذة النظام',
+  missing: 'غير مستورد',
+  new_law: 'نظام جديد',
+  version: 'نسخة أخرى باسمه',
+  replacement: 'حلّ محلّه نظام',
+  external: 'ملف الجهة',
+};
+
+const FINDING_LEVEL: Record<number, [string, string]> = {
+  1: ['عالية', 'error'],
+  2: ['متوسطة', 'warn'],
+  3: ['للعلم', 'pending'],
+};
+
+/**
+ * الفحص الشهري لمصادر الأنظمة المستوردة (§١٥ في عقد الاستيراد).
+ *
+ * يُرفع هنا `report.json` من مجلد الفحص في مشروع الاستيراد، فتُحفظ بنوده ويُنبَّه
+ * القارئ على كل مادةٍ صدر تعديلها ولم يُستورد. والبند يُغلق وحده حين يُستورد ما
+ * رُصد — والاستبعاد لما لا يستحقّ، كنافذةٍ قديمة لم تُربط بمادة منذ السحب.
+ */
+function UpdateChecksSection() {
+  const [data, setData] = useState<UpdateChecksView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showClosed, setShowClosed] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const load = () => api.updateChecks().then(setData).catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const r = await api.uploadUpdateCheck(await file.text(), file.name);
+      alert(
+        r.duplicate
+          ? `هذا التقرير مرفوعٌ من قبل (${isolate(r.run)}).`
+          : `تم الرفع: بنود جديدة ${isolate(r.added)} · محدَّثة ${isolate(r.updated)} · أُغلقت ${isolate(r.resolved)} · مواد عليها تنبيه ${isolate(r.notices)}.`
+      );
+      load();
+    } catch (e: any) {
+      alert(e.message ?? 'تعذّر رفع التقرير');
+    } finally {
+      setBusy(false);
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  const dismiss = async (f: UpdateFinding) => {
+    const note = prompt('سبب الاستبعاد (اختياري) — يُرفع تنبيه البند، ولا يعود ما دام المرصودُ نفسه.');
+    if (note === null) return;
+    try {
+      await api.dismissUpdateFinding(f.id, note.trim() || null);
+      load();
+    } catch (e: any) {
+      alert(e.message ?? 'تعذّر الاستبعاد');
+    }
+  };
+
+  const reopen = async (f: UpdateFinding) => {
+    try {
+      await api.reopenUpdateFinding(f.id);
+      load();
+    } catch (e: any) {
+      alert(e.message ?? 'تعذّر فتح البند');
+    }
+  };
+
+  const last = data?.checks[0];
+  const closedLabel = (f: UpdateFinding) =>
+    f.state === 'dismissed' ? 'مستبعد' : f.resolved_how === 'imported' ? 'أُغلق بالاستيراد' : 'لم يعد يُرصد';
+
+  return (
+    <div>
+      <div className="section-title">الفحص الشهري للأنظمة المستوردة</div>
+      <p className="source-note">
+        <Icon.officialSource size={ICON_SM} aria-hidden /> يُرفع هنا تقرير الفحص الشهري من مشروع الاستيراد
+        (report.json). كل مادةٍ صدر تعديلها في المصدر الرسمي ولم يُستورد يظهر عليها تنبيه في البحث والمساعد
+        حتى يُستورد، ثم يُغلق البند وحده.
+      </p>
+      <div className="admin-actions">
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
+        />
+        <button className="btn-sm primary" onClick={() => fileInput.current?.click()} disabled={busy}>
+          {busy ? <><span className="spinner" /> جارٍ الرفع</> : <><Icon.upload size={ICON_SM} aria-hidden /> رفع تقرير الفحص</>}
+        </button>
+        {last ? (
+          <span className="muted-line">
+            آخر تقرير: <bdi>{last.run}</bdi> · {last.mode === 'full' ? 'فحص كامل' : 'فحص سريع'}
+          </span>
+        ) : null}
+      </div>
+
+      {!data ? null : data.open.length === 0 ? (
+        <div className="empty-state">لا بنود مفتوحة. ارفع تقرير الفحص الشهري بعد كل فحص ليبقى ما في المنصة مطابقاً لمصادره.</div>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>الأولوية</th>
+                <th>النظام</th>
+                <th>ما رُصد</th>
+                <th>منذ</th>
+                <th>مواد عليها تنبيه</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.open.map((f) => {
+                const [label, tone] = FINDING_LEVEL[f.level] ?? FINDING_LEVEL[2];
+                return (
+                  <tr key={f.id}>
+                    <td>
+                      <span className={`pill ${tone}`}>{label}</span>
+                    </td>
+                    <td>
+                      {f.url ? (
+                        <a href={f.url} target="_blank" rel="noopener noreferrer">
+                          <strong>{f.law_title || f.law_id}</strong> <Icon.externalLink size={ICON_SM} aria-hidden />
+                        </a>
+                      ) : (
+                        <strong>{f.law_title || f.law_id}</strong>
+                      )}
+                    </td>
+                    <td>
+                      <strong>{FINDING_KIND[f.kind] ?? f.kind}</strong>
+                      <div>{f.detail}</div>
+                      {f.samples[0] ? (
+                        <div className="muted-line">{f.samples[0]}</div>
+                      ) : null}
+                    </td>
+                    <td><bdi>{f.first_run}</bdi></td>
+                    <td>{f.notices ? <bdi>{formatNumber(f.notices)}</bdi> : '—'}</td>
+                    <td>
+                      <button className="btn-sm" onClick={() => dismiss(f)}>
+                        استبعاد
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {data && data.closed.length ? (
+        <>
+          <div className="admin-actions">
+            <button className="btn-sm" onClick={() => setShowClosed((v) => !v)} aria-expanded={showClosed}>
+              {showClosed ? 'إخفاء ما أُغلق' : `ما أُغلق مؤخراً (${isolate(data.closed.length)})`}
+            </button>
+          </div>
+          {showClosed ? (
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>النظام</th>
+                    <th>ما رُصد</th>
+                    <th>الحال</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.closed.map((f) => (
+                    <tr key={f.id}>
+                      <td>{f.law_title || f.law_id}</td>
+                      <td>
+                        {FINDING_KIND[f.kind] ?? f.kind}
+                        {f.dismiss_note ? <div className="muted-line">{f.dismiss_note}</div> : null}
+                      </td>
+                      <td>
+                        {closedLabel(f)}
+                        {f.resolved_at ? <> · <bdi>{formatDate(f.resolved_at)}</bdi></> : null}
+                      </td>
+                      <td>
+                        {f.state === 'dismissed' ? (
+                          <button className="btn-sm" onClick={() => reopen(f)}>
+                            إلغاء الاستبعاد
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </div>
   );
 }
