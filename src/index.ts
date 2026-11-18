@@ -34,6 +34,7 @@ import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
 import { withinRateLimit, RATE_LIMIT_MESSAGE } from './lib/rateLimit';
+import { framedFileMiddleware } from './lib/framedFile';
 import type { Env, Variables } from './types';
 
 // مهامّ البحث في الخلفية — يُصدَّر من المدخل ليجده الربط `RESEARCH`.
@@ -80,6 +81,11 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 /** إحصاءات Cloudflare — النصُّ ومستقبِلُ إرساله، كما يوثّقهما Cloudflare. */
 const CF_ANALYTICS_SCRIPT = 'https://static.cloudflareinsights.com';
 const CF_ANALYTICS_BEACON = 'https://cloudflareinsights.com';
+
+/* الملفُّ المعروض في إطار المنصة يأخذ سياسته هو لا سياسة الصفحة — والتفصيل في
+   `lib/framedFile.ts`. وهذا الوسيط مُسجَّلٌ قبل `secureHeaders` عمداً: الأبعدُ
+   يعمل آخِراً بعد `next()`، فيكتب فوق ما كتبه ذاك لا العكس. */
+app.use('*', framedFileMiddleware);
 
 app.use('*', (c, next) =>
   secureHeaders({

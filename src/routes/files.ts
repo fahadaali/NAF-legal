@@ -1,5 +1,6 @@
 // مسارات الملفات: الرفع والاستخراج والتصدير — §11
 import { Hono, type Context } from 'hono';
+import { FRAMED_FILE_HEADER } from '../lib/framedFile';
 import { requireAuth } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { TRUNCATED_NOTE, UNREAD_PAGE_NOTE } from '../lib/extract';
@@ -232,7 +233,8 @@ app.get('/attachments/:id/file', async (c) => {
     headers: {
       'content-type': type,
       'x-content-type-options': 'nosniff',
-      ...(kind?.ext === 'pdf' ? {} : { 'content-security-policy': 'sandbox' }),
+      // السياسة يكتبها وسيطٌ بعد `secureHeaders` — كانت تُكتب هنا فيمحوها (`lib/framedFile.ts`).
+      [FRAMED_FILE_HEADER]: kind?.ext === 'pdf' ? 'pdf' : 'sandbox',
       // الاسم عربيٌّ غالباً، و`filename` وحدها لا تحمل غير ASCII.
       'content-disposition': `${disposition}; filename*=UTF-8''${encodeURIComponent(att.filename)}`,
       'cache-control': 'private, max-age=300',

@@ -33,6 +33,10 @@ const routes = await bundle(
    export { default as folders } from './folders';
    export { default as conversations } from './conversations';
    export { default as cases } from './cases';
+   export { default as members } from './members';
+   export { framedFileMiddleware, FRAMED_FILE_HEADER } from '../lib/framedFile';
+   export { Hono } from 'hono';
+   export { secureHeaders } from 'hono/secure-headers';
    export { isOfficialUrl } from './admin';
    export { default as evalRoutes } from './eval';
    export { extractPendingLinks, parseRefs, ordinalToNumber } from '../lib/research/links';
@@ -638,7 +642,8 @@ await t.check('نوع الملف المرفوع من الخادم لا من ال
   const served = await routes.files.request('/attachments/old/file', {}, { ...env, R2 });
   assert.equal(served.headers.get('content-type'), 'text/plain; charset=utf-8');
   assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
-  assert.equal(served.headers.get('content-security-policy'), 'sandbox');
+  // السياسة يكتبها وسيطٌ بعد `secureHeaders` من هذا الوسم — فحصُها مركَّباً في «الملفُّ المعروض في إطار المنصة».
+  assert.equal(served.headers.get(routes.FRAMED_FILE_HEADER), 'sandbox');
 });
 
 await t.check('ملفٌّ بنوعٍ غير مدعوم يُرفض', async () => {
@@ -722,6 +727,49 @@ await t.check('ملفُّ قضيةٍ بأكثر من مئة محادثة يُف�
   globalThis.__naf_user = { id: 'u2', email: 'u2@x', role: 'editor' };
   try {
     assert.equal((await routes.cases.request('/f1', {}, env)).status, 404, 'فتح غيرُ صاحبها قضيتَه');
+  } finally {
+    globalThis.__naf_user = undefined;
+  }
+});
+
+await t.check('الملفُّ المعروض في إطار المنصة يأخذ سياسته لا سياسة الصفحة', async () => {
+  // بترتيب `src/index.ts`: وسيطُ الملف ثم `secureHeaders` بسياسة الصفحة.
+  const app = new routes.Hono();
+  app.use('*', routes.framedFileMiddleware);
+  app.use('*', routes.secureHeaders({ contentSecurityPolicy: { defaultSrc: ["'self'"], frameAncestors: ["'none'"] } }));
+  app.get('/doc', () => new Response('x', { headers: { [routes.FRAMED_FILE_HEADER]: 'sandbox' } }));
+  app.get('/pdf', () => new Response('x', { headers: { [routes.FRAMED_FILE_HEADER]: 'pdf' } }));
+  app.get('/page', () => new Response('x'));
+
+  const doc = await app.request('/doc');
+  assert.equal(doc.headers.get('content-security-policy'), "sandbox; frame-ancestors 'self'", 'ضاع العزل أو مُنع الإطار');
+  assert.equal(doc.headers.get(routes.FRAMED_FILE_HEADER), null, 'بقي الوسم في الردّ');
+  assert.equal((await app.request('/pdf')).headers.get('content-security-policy'), "frame-ancestors 'self'");
+  assert.match((await app.request('/page')).headers.get('content-security-policy'), /frame-ancestors 'none'/, 'الصفحة فقدت سياستها');
+});
+
+await t.check('مسؤولان يُنزل كلٌّ منهما الآخر: يبقى أحدُهما مسؤولاً', async () => {
+  const db = await makeDb();
+  db.q("INSERT INTO members (user_id, role, is_active, created_at) VALUES ('A','admin',1,1), ('B','admin',1,1), ('E','editor',1,1)");
+  const env = { ...ENV_BASE, DB: db.DB, KV: makeKv() };
+  const as = (memberId) => (globalThis.__naf_user = { id: memberId, email: '', role: 'admin', memberId });
+  const patch = (path, body) =>
+    routes.members.request(path, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, env, makeCtx());
+  try {
+    as('A');
+    assert.equal((await patch('/B/role', { role: 'editor' })).status, 200);
+    // وصل طلبُ B بعد أن نزل — والفحص قبل الكتابة كان قد مرّ وهو مسؤول.
+    as('B');
+    const second = await patch('/A/role', { role: 'editor' });
+    assert.equal(second.status, 409);
+    assert.equal((await second.json()).error, 'لا بد من مسؤول واحد على الأقل');
+    const revoke = await patch('/A/active', { is_active: false, reason: 'سبب' });
+    assert.equal(revoke.status, 409);
+    assert.deepEqual({ ...db.q("SELECT role, is_active FROM members WHERE user_id = 'A'")[0] }, { role: 'admin', is_active: 1 });
+    // وما سوى المسؤول الأخير يمرّ كما كان.
+    as('A');
+    assert.equal((await patch('/E/role', { role: 'viewer' })).status, 200);
+    assert.equal((await patch('/E/active', { is_active: false, reason: 'سبب' })).status, 200);
   } finally {
     globalThis.__naf_user = undefined;
   }

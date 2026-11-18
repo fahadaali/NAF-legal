@@ -56,6 +56,9 @@ app.get('/', async (c) => {
   });
 });
 
+/** naf-terms.md §٧ «آخر مسؤول». والعضو موجودٌ يقيناً هنا — قُرئ صفّه قبل الكتابة. */
+const LAST_ADMIN = 'لا بد من مسؤول واحد على الأقل';
+
 app.patch('/:id/role', async (c) => {
   const id = c.req.param('id');
   const { role } = await c.req.json<{ role?: string }>().catch(() => ({ role: undefined }));
@@ -75,10 +78,18 @@ app.patch('/:id/role', async (c) => {
     .first<{ email: string | null }>();
   if (!row) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
 
-  const res = await c.env.DB.prepare('UPDATE members SET role = ? WHERE user_id = ?')
-    .bind(role, id)
+  /* ويبقى مسؤولٌ نشِطٌ غيرُه — شرطاً في الكتابة نفسها لا فحصاً قبلها.
+     منعُ المسؤول من إنزال نفسه لا يكفي: مسؤولان يُنزل كلٌّ منهما الآخر في
+     اللحظة نفسها يمرّ كلاهما بفحصٍ يسبق الكتابة، فتبقى المنصة بلا مسؤول.
+     والقاعدة تكتب واحداً بعد واحد، فالثاني يجد الأول قد نزل فلا يُكتب. */
+  const res = await c.env.DB.prepare(
+    `UPDATE members SET role = ? WHERE user_id = ?
+       AND (? = 'admin' OR EXISTS (
+         SELECT 1 FROM members o WHERE o.role = 'admin' AND o.is_active = 1 AND o.user_id <> ?))`
+  )
+    .bind(role, id, role, id)
     .run();
-  if (!res.meta.changes) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
+  if (!res.meta.changes) return c.json({ error: LAST_ADMIN }, 409);
 
   await audit(c, 'member.role_change', id, { role });
 
@@ -132,10 +143,15 @@ app.patch('/:id/active', async (c) => {
     .first<{ email: string | null; role: string }>();
   if (!row) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
 
-  const res = await c.env.DB.prepare('UPDATE members SET is_active = ? WHERE user_id = ?')
-    .bind(body.is_active ? 1 : 0, id)
+  // ولا يُسحب وصولُ مسؤولٍ إلا ويبقى غيرُه — للعلّة نفسها في تغيير الصلاحية.
+  const res = await c.env.DB.prepare(
+    `UPDATE members SET is_active = ? WHERE user_id = ?
+       AND (? = 1 OR role <> 'admin' OR EXISTS (
+         SELECT 1 FROM members o WHERE o.role = 'admin' AND o.is_active = 1 AND o.user_id <> ?))`
+  )
+    .bind(body.is_active ? 1 : 0, id, body.is_active ? 1 : 0, id)
     .run();
-  if (!res.meta.changes) return c.json({ error: 'لا عضو بهذا المعرّف' }, 404);
+  if (!res.meta.changes) return c.json({ error: LAST_ADMIN }, 409);
 
   await audit(c, body.is_active ? 'member.grant' : 'member.revoke', id, { reason });
 
