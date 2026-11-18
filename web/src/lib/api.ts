@@ -918,14 +918,40 @@ export function isNetworkError(e: unknown): boolean {
   return e instanceof TypeError || (e instanceof DOMException && e.name === 'TimeoutError');
 }
 
+/** محاولات «تعذّر التحقق الآن» قبل أن يُعدّ فشلاً — مجموع الانتظار نحو دقيقة. */
+const AUTH_UNAVAILABLE_TRIES = 8;
+
+/**
+ * نداءٌ من الفعل الطويل يصبر على «تعذّر التحقق الآن».
+ *
+ * الوسيط يردّ ٥٠٣ `auth_unavailable` حين يتعثّر التحقق من الرمز عند المركز
+ * والجلسة باقية، ومعه `Retry-After`. والاستيراد يمتدّ أطول من عمر الرمز
+ * فيبلغ هذا الردّ، وكان يعدّه فشلاً فيقف في منتصف الكتابة ويُردّ كلُّ ما كُتب.
+ * والردّ يقع قبل المسار، فالطلب لم يبلغ الخادم وإعادتُه إرسالُه أوّلَ مرّة.
+ *
+ * و`init` دالّةٌ لا قيمة: لكل محاولةٍ مهلتُها (`AbortSignal.timeout`) وجسمُها.
+ */
+async function fetchHeld(url: string, init: () => RequestInit): Promise<{ res: Response; data: unknown }> {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(url, init());
+    const data = await res.json().catch(() => ({}));
+    const unavailable = res.status === 503 && (data as { error?: string }).error === 'auth_unavailable';
+    if (!unavailable || attempt >= AUTH_UNAVAILABLE_TRIES) return { res, data };
+    const after = Number(res.headers.get('retry-after')) || 2;
+    await new Promise((resume) => setTimeout(resume, after * 1000 * attempt));
+  }
+}
+
 /** كـ`req`، إلا أن انتهاء الجلسة يُرمى `SessionExpired` ولا يُحوِّل — للاستيراد. */
-async function reqHeld<T>(path: string, opts: RequestInit = {}): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    ...opts,
-    headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
-    credentials: 'same-origin',
+async function reqHeld<T>(path: string, opts: RequestInit | (() => RequestInit) = {}): Promise<T> {
+  const { res, data } = await fetchHeld(`/api${path}`, () => {
+    const o = typeof opts === 'function' ? opts() : opts;
+    return {
+      ...o,
+      headers: { 'content-type': 'application/json', ...(o.headers ?? {}) },
+      credentials: 'same-origin',
+    };
   });
-  const data = await res.json().catch(() => ({}));
   throwIfSessionExpired(res, data);
   if (handleAuthRedirect(res, data)) return pending<T>();
   if (!res.ok) throw new Error((data as any).error ?? 'خطأ في الاتصال');
@@ -1177,7 +1203,7 @@ export const api = {
   legalDiff: (batch: string, after: number, room: number) =>
     reqHeld<LegalDiffStep>(
       `/legal/diff?${new URLSearchParams({ batch, after: String(after), room: String(room) })}`,
-      { method: 'POST', signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS) }
+      () => ({ method: 'POST', signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS) })
     ),
   /** إلغاءُ دفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ. */
   legalAbort: (batch: string) =>
@@ -1248,14 +1274,14 @@ export const api = {
       ...(opts.sha256 ? { sha256: opts.sha256 } : {}),
       ...(opts.stage ? { stage: '1' } : {}),
     });
-    const res = await fetch(`/api/legal/import?${query}`, {
+    const body = lines.join('\n');
+    const { res, data } = await fetchHeld(`/api/legal/import?${query}`, () => ({
       method: 'POST',
       headers: { 'content-type': 'application/x-ndjson' },
-      body: lines.join('\n'),
+      body,
       credentials: 'same-origin',
       signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS),
-    });
-    const data = await res.json().catch(() => ({}));
+    }));
     // انتهاء الجلسة يُرمى ولا يُحوِّل: الاستيراد يقف عنده ويكمل بعد التجديد.
     throwIfSessionExpired(res, data);
     if (handleAuthRedirect(res, data)) return pending<LegalImportReport>();
