@@ -2629,6 +2629,49 @@ await check('٢٧ · والدفعة المتروكة تُردّ من المؤق�
   assert.deepEqual(cols9(), pre);
 });
 
+await check('٢٧ · والردّ على أجزاء: يحفظ موضعه، ولا تُكمَل كتابته، ويتمّ من حيث وقف', async () => {
+  // ردُّ ملفٍّ كامل في نداءٍ واحد يتجاوز سقف الاستعلامات (ألفٌ للنداء) فيتعذّر عند
+  // الموضع نفسه في كل محاولة، وتبقى أنظمته مجمَّدة. فصار أجزاءً بموضعٍ محفوظ.
+  const pre = cols9();
+  const v = lib.parseJsonl([
+    N9({ id: 'تاسعة/1', article_no: 1, text: 'نصٌّ يُردّ على أجزاء.' }),
+    N9({ id: 'تاسعة/2', article_no: 2, text: 'نصٌّ ثانٍ يُردّ على أجزاء.' }),
+    N9({ id: 'تاسعة/7', article_no: 7, text: 'مادةٌ مُدرَجةٌ تُحذف عند الردّ.' }),
+    N10({ id: 'عاشرة/1', article_no: 1, text: 'نصٌّ للعاشرة يُردّ على أجزاء.' }),
+  ].join('\n'));
+  await lib.stageChunks(env, 'batch-s7', v.rows, { lines: 4, failed: 0 });
+  await lib.commitStep(env, 'batch-s7', { actorId: 'مسؤول', budget: 3 });
+  const snaps = q("SELECT COUNT(*) AS n FROM legal_snapshots WHERE batch_id = 'batch-s7'")[0].n;
+  assert.ok(snaps >= 2, `صورٌ أقلّ من المتوقَّع: ${snaps}`);
+
+  const r1 = await lib.rollbackBatch(env, 'batch-s7', 'تعذّرٌ أوّل', { budget: 1 });
+  assert.deepEqual([r1.done, r1.restored], [false, 1], JSON.stringify(r1));
+  const b1 = await lib.getBatch(env, 'batch-s7');
+  assert.equal(b1.state, 'committing');
+  assert.ok(b1.rollback_after > 0, 'الموضع لم يُحفظ');
+  assert.deepEqual(q("SELECT law_id FROM legal_law_locks WHERE batch_id = 'batch-s7'").map((r) => r.law_id), ['ninth'],
+    'ما كتبته الدفعة غير مجمَّدٍ وهو يُردّ');
+  await assert.rejects(lib.commitStep(env, 'batch-s7', { actorId: 'مسؤول' }), (e) => e.code === 'missing',
+    'دفعةٌ بدأ ردُّها أُكملت كتابتُها');
+
+  // والمؤقّت يكمل ما بدأ ردُّه وإن لم يمضِ ربعُ ساعة — جزءاً في كل نبضة، ولا يعدّه حتى يتمّ.
+  let rounds = 0;
+  let rec;
+  do {
+    rec = await lib.recoverStaleBatches(env, Date.now(), { budget: 1 });
+    rounds++;
+  } while (rec.rolledBack === 0 && rounds < 50);
+  assert.equal(rec.rolledBack, 1, 'المؤقّت لم يُتمّ الردّ');
+  assert.ok(rounds >= 2, 'الردّ تمّ في نبضةٍ واحدة — الفحص لا يفحص الأجزاء');
+  const b = await lib.getBatch(env, 'batch-s7');
+  assert.equal(b.state, 'rolled_back');
+  assert.equal(b.error, 'تعذّرٌ أوّل', 'سببُ الردّ ليس سببَه الأول');
+  assert.deepEqual(cols9(), pre, 'القاعدة لم تعد إلى ما كانت عليه');
+  for (const t of ['legal_law_locks', 'legal_staging', 'legal_batch_ids', 'legal_snapshots']) {
+    assert.equal(q(`SELECT COUNT(*) AS n FROM ${t} WHERE batch_id = 'batch-s7'`)[0].n, 0, `بقي أثرُ الدفعة في ${t}`);
+  }
+});
+
 await check('٢٧ · والمسار يجمع ويُتمّ ويُلغي، والمؤقّت القصير وحده', () => {
   const routes = readFileSync(path.join(ROOT, 'src', 'routes', 'legal.ts'), 'utf8');
   assert.match(routes, /c\.req\.query\('stage'\) === '1'[\s\S]{0,400}stageChunks\(/, '`/import` لا يجمع');

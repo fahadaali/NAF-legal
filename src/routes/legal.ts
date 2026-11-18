@@ -37,6 +37,7 @@ import {
   planCommit,
   commitStep,
   rollbackBatch,
+  ROUTE_ROLLBACK_BUDGET,
   recoverStaleBatches,
   getBatch,
   BatchError,
@@ -167,7 +168,8 @@ app.post('/import', requireAdmin, async (c) => {
   if (c.req.query('stage') === '1') {
     const stageBatch = c.req.query('batch');
     if (!stageBatch) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
-    await recoverStaleBatches(c.env);
+    // ردُّ المتروك هنا جزءٌ صغير: النداء نفسه يكتب بعده من سقف استعلاماته.
+    await recoverStaleBatches(c.env, Date.now(), { budget: ROUTE_ROLLBACK_BUDGET });
     try {
       const { staged } = await stageChunks(c.env, stageBatch, parsed.rows, {
         filename: filename || null,
@@ -487,7 +489,8 @@ app.post('/finalize', requireAdmin, async (c) => {
 app.post('/commit', requireAdmin, async (c) => {
   const batchId = c.req.query('batch') ?? '';
   if (!batchId) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
-  await recoverStaleBatches(c.env);
+  // ردُّ المتروك هنا جزءٌ صغير: النداء نفسه يكتب بعده من سقف استعلاماته.
+  await recoverStaleBatches(c.env, Date.now(), { budget: ROUTE_ROLLBACK_BUDGET });
 
   if (!c.req.query('apply')) {
     const plan = await planCommit(c.env, batchId);
@@ -523,9 +526,10 @@ app.post('/commit', requireAdmin, async (c) => {
     console.error(`legal commit ${batchId} failed:`, reason);
     // تعذّر في أثناء الكتابة: يُردّ ما كُتب. وإن تعذّر الردُّ نفسه بقيت الدفعة
     // «تُكتب» فيردّها المؤقّت — ولا يُقال «أُعيدت» عن ردٍّ لم يتمّ.
-    await rollbackBatch(c.env, batchId, reason);
-    await audit(c, 'legal.import_rolled_back', batchId, { reason });
-    return c.json({ ok: false, rolled_back: true, error: BATCH_MESSAGES.rolledBack }, 500);
+    // والردُّ أجزاء: ما لم يتمّ هنا يكمله الإلغاء (الشاشة تناديه حتى يتمّ) أو المؤقّت.
+    const r = await rollbackBatch(c.env, batchId, reason);
+    await audit(c, 'legal.import_rolled_back', batchId, { reason, done: r.done });
+    return c.json({ ok: false, rolled_back: r.done, error: BATCH_MESSAGES.rolledBack }, 500);
   }
 });
 
@@ -557,6 +561,7 @@ app.post('/diff', requireAdmin, async (c) => {
 app.post('/abort', requireAdmin, async (c) => {
   const batchId = c.req.query('batch') ?? '';
   if (!batchId) return c.json({ error: 'معرّف الدفعة مطلوب' }, 400);
+  // جزءٌ من الردّ في كل نداء، و`done` يقول هل تمّ — والشاشة والسكربت يناديانه حتى يتمّ.
   const result = await rollbackBatch(c.env, batchId, 'aborted');
   return c.json({ ok: true, ...result });
 });
