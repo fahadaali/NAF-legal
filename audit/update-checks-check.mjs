@@ -221,6 +221,45 @@ await t.check('«نظامٌ جديد» يُغلق حين يُستورد نظام
   assert.equal(openOf(db, id).length, 0);
 });
 
+console.log('\nجريدة أم القرى (الإصدار الثالث من الفحص)');
+
+/** تقريرٌ بالإصدار الثالث: تعديلٌ منشور في أم القرى لم تُدرجه البوابة، ونظامٌ نُشر فيها وليس في البوابة. */
+const GAZETTE_REPORT = {
+  ...REPORT, version: 3, newLaws: [{ name: 'نظام المعاملات التجارية', url: 'https://www.uqn.gov.sa/decisions-and-regulations/4002380',
+    issued_hijri: '1448-6-03', status: null, source: 'أم القرى' }],
+  findings: [{ law_id: 'نظام-القضاء', law_name: 'نظام القضاء', kind: 'amendment', level: 1, source: 'أم القرى',
+    gazette_url: 'https://www.uqn.gov.sa/decisions-and-regulations/4001933',
+    detail: 'منشور في أم القرى ولم تُدرجه البوابة: مرسوم ملكي رقم (م/100) وتاريخ 03/04/1448هـ (نُشر 1448-4-14) — المادة 36',
+    windows: [{ article_no: '36', year: 1448, recent: true, fresh: true,
+      text: 'المرسوم الملكي رقم (م/100) وتاريخ 1448/4/3هـ — 4- تعديل المادة (السادسة والثلاثين)، لتصبح بالنص الآتي: «…»' }] }],
+};
+
+await t.check('معرّف ما ليس في القاعدة من رابطه: البوابة boe:، وأم القرى uqn: بصيغتي رابطها', () => {
+  assert.equal(lib.sourceId('https://laws.boe.gov.sa/BoeLaws/Laws/LawDetails/EA1765A3-DEC3-41A0-A32F-A9A700F26D58/1'), 'boe:ea1765a3-dec3-41a0-a32f-a9a700f26d58');
+  assert.equal(lib.sourceId('https://www.uqn.gov.sa/decisions-and-regulations/4002380'), 'uqn:4002380');
+  assert.equal(lib.sourceId('https://www.uqn.gov.sa/decisions-and-regulations/rules-and-regulations/4001861'), 'uqn:4001861');
+  assert.equal(lib.sourceId('https://www.uqn.gov.sa/details?p=23627'), 'uqn:23627');
+  assert.equal(lib.sourceId('https://example.com/x.pdf'), null);
+});
+
+await t.check('تعديلٌ منشور في أم القرى ولم تُدرجه البوابة يُنبِّه على مادته — والنظام الجديد منها بندٌ بمعرّفها', async () => {
+  const { db, env } = await fixture();
+  const r = await lib.ingestReport(env, JSON.stringify(GAZETTE_REPORT));
+  assert.equal(r.notices, 1);
+  assert.match((await article(env, '36')).pendingUpdate ?? '', /بالمرسوم الملكي رقم \(م\/100\) وتاريخ 1448\/4\/3هـ/);
+  assert.equal((await article(env, '35')).pendingUpdate, null);
+  const nl = openOf(db, 'uqn:4002380');
+  assert.equal(nl.length, 1);
+  assert.match(nl[0].detail, /في جريدة أم القرى وليس في القاعدة — نُشر 1448-6-03هـ/);
+  // يُستورد من رابطه في أم القرى ← يُغلق
+  await lib.upsertLegalChunks(env, lib.parseJsonl(JSON.stringify({
+    id: 'نظام-المعاملات-التجارية/art-001', law_id: 'نظام-المعاملات-التجارية', law_title: 'نظام المعاملات التجارية', article_no: '1',
+    doc_type: 'law', status: 'active', captured_at: '2026-11-18T13:00:00Z',
+    source_url: 'https://www.uqn.gov.sa/decisions-and-regulations/4002380', text: 'نص', embed_text: 'نص',
+  })).rows);
+  assert.equal(openOf(db, 'uqn:4002380').length, 0);
+});
+
 console.log('\nالمسارات');
 
 await t.check('POST ‎/api/legal/update-checks يستقبل الملف، وGET يعرض بنوده، والاستبعاد يُغلقها', async () => {

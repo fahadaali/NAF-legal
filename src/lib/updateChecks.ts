@@ -59,6 +59,9 @@ export interface ReportFinding {
   to?: string;
   to_repealed?: boolean;
   baseline?: boolean;
+  /** مصدر الرصد إن لم يكن صفحة النظام في البوابة — «أم القرى» من الإصدار الثالث. */
+  source?: string;
+  gazette_url?: string;
 }
 
 export interface UpdateReport {
@@ -68,7 +71,7 @@ export interface UpdateReport {
   mode: 'full' | 'quick';
   findings: ReportFinding[];
   checked_ids?: string[];
-  newLaws?: { name: string; url: string; guid?: string; issued_hijri?: string | null; status?: string | null }[];
+  newLaws?: { name: string; url: string; guid?: string; issued_hijri?: string | null; status?: string | null; source?: string }[];
   versions?: { name: string; url: string; existing: string; issued_hijri?: string | null }[];
   replacements?: { name: string; url: string; target: string; target_id: string | null }[];
   external?: { changed?: { law_id: string; detail: string; suspect?: boolean }[] };
@@ -190,9 +193,18 @@ export function noticesFor(kind: string, run: string, data: FindingData): { arti
 
 // ─────────────────────────── جمع البنود من التقرير ───────────────────────────
 
-const boeId = (url: string | undefined, guid?: string) => {
-  const g = guid || (String(url ?? '').match(/LawDetails\/([0-9a-f-]{36})/i) ?? [])[1];
-  return g ? `boe:${g.toLowerCase()}` : null;
+/**
+ * معرّف ما ليس في القاعدة بعدُ من رابطه الرسمي: `boe:<GUID>` من البوابة، و`uqn:<رقم>`
+ * من جريدة أم القرى (الإصدار الثالث من الفحص يقرؤها: نظامٌ أو لائحةٌ نُشرت ولم تُدرجها
+ * البوابة). ويُغلق البند حين يُستورد نظامٌ مصدرُه الرابطُ نفسه.
+ */
+export const sourceId = (url: string | undefined, guid?: string) => {
+  const u = String(url ?? '');
+  const g = guid || (u.match(/LawDetails\/([0-9a-f-]{36})/i) ?? [])[1];
+  if (g) return `boe:${g.toLowerCase()}`;
+  const q = (u.match(/uqn\.gov\.sa\/(?:[\w-]+\/)*decisions-and-regulations\/(?:[\w-]+\/)?(\d+)/i) ??
+             u.match(/uqn\.gov\.sa\/details\?p=(\d+)/i) ?? [])[1];
+  return q ? `uqn:${q}` : null;
 };
 
 async function sha256Hex(text: string): Promise<string> {
@@ -248,14 +260,15 @@ async function collect(report: UpdateReport): Promise<Collected[]> {
     });
   }
   for (const n of report.newLaws ?? []) {
-    const id = boeId(n.url, n.guid);
+    const id = sourceId(n.url, n.guid);
     if (!id) continue;
     await add({
       law_id: id,
       law_title: n.name,
       kind: 'new_law',
       level: 2,
-      detail: `في المصدر الرسمي وليس في القاعدة${n.issued_hijri ? ` — صدر ${n.issued_hijri}هـ` : ''}${n.status ? ` · ${n.status}` : ''}`,
+      detail: `في ${n.source ? `جريدة ${n.source.replace(/^جريدة\s+/, '')}` : 'المصدر الرسمي'} وليس في القاعدة` +
+        `${n.issued_hijri ? ` — ${n.source ? 'نُشر' : 'صدر'} ${n.issued_hijri}هـ` : ''}${n.status ? ` · ${n.status}` : ''}`,
       data: { url: n.url },
     });
   }
@@ -485,7 +498,7 @@ export async function resolveOnImport(env: Env, lawIds: string[], batchId: strin
         .first<{ captured: string | null; repealed: number | null; scheduled: string | null; url: string | null }>();
       if (!law) continue;
       const ids = [lawId];
-      const g = boeId(law.url ?? undefined);
+      const g = sourceId(law.url ?? undefined);
       if (g) ids.push(g);
       const open = await env.DB.prepare(
         `SELECT id, law_id, kind, level, state, signature, first_run, data_json FROM legal_update_findings
