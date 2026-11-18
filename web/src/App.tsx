@@ -1,21 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback } from 'react';
 import { api, User } from './lib/api';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
-import Admin from './components/Admin';
-import Tools from './components/Tools';
-import ReviewPage from './components/ReviewPage';
-import Deadlines from './components/Deadlines';
-import SearchPage from './components/SearchPage';
-import CaseFile from './components/CaseFile';
-import Support from './components/Support';
 import Denied from './components/Denied';
-import Members from './components/Members';
 import AccountMenu from './components/AccountMenu';
 import NotificationBell from './components/NotificationBell';
 import SessionBar from './components/SessionBar';
-import { AiToolsMember } from './components/AiTools';
-import { ConnectDoor, ConnectConsent } from './components/Connect';
 import {
   AppShell,
   AppContent,
@@ -31,6 +21,55 @@ import {
 import { useTheme, type ThemeChoice } from './lib/theme';
 import { subscribeChatActivity } from './lib/chatStream';
 import { Icon, ICON_LG } from './lib/icons';
+
+/* ══ الشاشات خارج حزمة البدء ══
+ *
+ * كانت المنصة حزمةً واحدة بنصف ميغابايت يحمّلها كلُّ زائرٍ قبل أوّل رسم — وأكثرُ
+ * من ربعها لوحةُ الإدارة وأدوات الاستيراد والمراجعة التي لا يفتحها إلا المسؤول.
+ * فهذه تُحمَّل حين تُفتح. وما يفتحه المستخدم العادي منها (البحث، القضية،
+ * المواعيد، الأدوات، الدعم) يُحمَّل في الخلفية بعد أوّل رسم (`preloadScreens`)،
+ * فلا ينتظر أوّلَ ضغطةٍ عليه. والمحادثة نفسها في الحزمة: هي الشاشة الأولى. */
+const loadAdmin = () => import('./components/Admin');
+const loadMembers = () => import('./components/Members');
+const loadTools = () => import('./components/Tools');
+const loadDeadlines = () => import('./components/Deadlines');
+const loadSearch = () => import('./components/SearchPage');
+const loadCase = () => import('./components/CaseFile');
+const loadSupport = () => import('./components/Support');
+const loadAiTools = () => import('./components/AiTools');
+const loadConnect = () => import('./components/Connect');
+
+const Admin = lazy(loadAdmin);
+const Members = lazy(loadMembers);
+const Tools = lazy(loadTools);
+const Deadlines = lazy(loadDeadlines);
+const SearchPage = lazy(loadSearch);
+const CaseFile = lazy(loadCase);
+const Support = lazy(loadSupport);
+const ReviewPage = lazy(() => import('./components/ReviewPage'));
+const AiToolsMember = lazy(() => loadAiTools().then((m) => ({ default: m.AiToolsMember })));
+const ConnectDoor = lazy(() => loadConnect().then((m) => ({ default: m.ConnectDoor })));
+const ConnectConsent = lazy(() => loadConnect().then((m) => ({ default: m.ConnectConsent })));
+
+/** شاشاتُ المستخدم العادي — تُجلب في وقت فراغ المتصفّح بعد أوّل رسم. */
+function preloadScreens(role: string): void {
+  const run = () => {
+    const all = [loadSearch, loadCase, loadDeadlines, loadTools, loadSupport, loadAiTools];
+    if (role === 'admin') all.push(loadAdmin, loadMembers);
+    for (const load of all) load().catch(() => {});
+  };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 4000 });
+  else setTimeout(run, 2000);
+}
+
+/** ما يظهر لحظةَ تحميل شاشةٍ لم تُجلب بعد — الدوّار نفسه الذي تبدأ به المنصة. */
+function ScreenFallback() {
+  return (
+    <div className="center-load">
+      <div className="spinner" style={{ width: 32, height: 32 }} />
+    </div>
+  );
+}
 
 type View = 'chat' | 'admin' | 'members' | 'tools' | 'deadlines' | 'case' | 'support' | 'search' | 'ai-tools';
 
@@ -68,13 +107,13 @@ export default function App() {
      المسارات العامة في `src/lib/sso.ts`، فلا يبلغ هذا السطرَ إلا من دخل.
      وكلاهما صفحةُ بابٍ بلا هيكل، كصفحة الرفض. */
   const connectMatch = location.pathname.match(/^\/connect\/([\w-]+)\/?$/);
-  if (connectMatch) return <ConnectDoor requestId={connectMatch[1]} />;
+  if (connectMatch) return <Suspense fallback={<ScreenFallback />}><ConnectDoor requestId={connectMatch[1]} /></Suspense>;
   const consentMatch = location.pathname.match(/^\/connect-member\/([\w-]+)\/?$/);
-  if (consentMatch) return <ConnectConsent requestId={consentMatch[1]} />;
+  if (consentMatch) return <Suspense fallback={<ScreenFallback />}><ConnectConsent requestId={consentMatch[1]} /></Suspense>;
 
   // مسار المراجعة العامة (بلا مصادقة)
   const reviewMatch = location.pathname.match(/^\/review\/([\w-]+)/);
-  if (reviewMatch) return <ReviewPage token={reviewMatch[1]} />;
+  if (reviewMatch) return <Suspense fallback={<ScreenFallback />}><ReviewPage token={reviewMatch[1]} /></Suspense>;
 
   const [theme, setTheme] = useTheme();
   const [user, setUser] = useState<User | null>(null);
@@ -107,6 +146,7 @@ export default function App() {
       .then((r) => {
         setUser(r.user);
         setCenter(r.center ?? null);
+        if (r.user) preloadScreens(r.user.role);
       })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
@@ -291,6 +331,7 @@ function AppBody({
         </AppHeader>
 
         <AppContent flush>
+        <Suspense fallback={<ScreenFallback />}>
         {view === 'chat' && (
           <ChatView
             key={activeConv ?? 'new'}
@@ -327,6 +368,7 @@ function AppBody({
             }}
           />
         )}
+        </Suspense>
         </AppContent>
 
         <div className="disclaimer-bar">

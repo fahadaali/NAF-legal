@@ -144,6 +144,8 @@ export interface Message {
   content: string;
   metadata_json?: string;
   created_at: number;
+  /** تقييمُ صاحب المحادثة لهذا الردّ (١ أو −١) — يأتي مع المحادثة لا بنداءٍ لكل ردّ. */
+  rating?: number | null;
 }
 
 /**
@@ -892,16 +894,56 @@ export interface LegalImportReport {
  * على نداءٍ ينتظره القارئ يجعله يقف أمام شاشةٍ لا تتحرّك.
  */
 async function req<T>(path: string, opts: RequestInit = {}, background = false): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    ...opts,
-    headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
-    credentials: 'same-origin',
-  });
-  const data = await res.json().catch(() => ({}));
+  const method = (opts.method ?? 'GET').toUpperCase();
+  const isRead = method === 'GET' || method === 'HEAD';
+  let res: Response;
+  let data: unknown;
+  try {
+    ({ res, data } = await fetchHeld(
+      `/api${path}`,
+      () => ({
+        ...opts,
+        headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
+        credentials: 'same-origin',
+        /* القراءة وحدها تُقطع بمهلة: كتابةٌ تُقطع وهي جارية في الخادم ثم
+           يُعيدها صاحبها تجعل كتابتين. وما جاء بإشارته يبقى على إشارته. */
+        signal: opts.signal ?? (isRead ? AbortSignal.timeout(READ_TIMEOUT_MS) : undefined),
+      }),
+      READ_AUTH_UNAVAILABLE_TRIES
+    ));
+  } catch (e) {
+    // انقطاعٌ أو مهلة — والقارئ يقرأ المصطلح المسجَّل لا نصَّ المتصفّح بالإنجليزية.
+    if (isNetworkError(e)) throw new Error(MSG_NETWORK);
+    throw e;
+  }
   if (handleAuthRedirect(res, data, background)) return pending<T>();
-  if (!res.ok) throw new Error((data as any).error ?? 'خطأ في الاتصال');
+  if (!res.ok) {
+    const error = (data as { error?: string }).error;
+    // `auth_unavailable` رمزٌ من الوسيط لا جملة: بقي بعد المحاولات، فهو عطلٌ في النظام.
+    throw new Error(!error || error === 'auth_unavailable' ? MSG_SERVER : error);
+  }
   return data as T;
 }
+
+/**
+ * مهلةُ القراءة. `fetch` لا مهلة له: طلبٌ لا يصله ردٌّ كان يُبقي الشاشة تدور بلا
+ * نهاية. ونصفُ دقيقة أطولُ من كل قراءةٍ سويّة في المنصة بفارقٍ كبير.
+ */
+const READ_TIMEOUT_MS = 30_000;
+
+/**
+ * محاولاتُ «تعذّر التحقق الآن» للنداء العادي — ثلاث، نحو ست ثوانٍ.
+ *
+ * الوسيط يردّ ٥٠٣ `auth_unavailable` حين يتعثّر التحقق عند المركز والجلسة باقية،
+ * والطلب لم يبلغ المسار — فإعادتُه آمنة، قراءةً كان أو كتابة. وكان كلُّ نداءٍ
+ * غير الاستيراد يعدّه فشلاً من أوّل مرّة، فيرى القارئ شاشةً فارغة أو الرمزَ خاماً.
+ * وأقلُّ من محاولات الاستيراد: القارئ هنا ينتظر أمام الشاشة.
+ */
+const READ_AUTH_UNAVAILABLE_TRIES = 3;
+
+/** naf-terms.md §٧ «فشل الاتصال» و«خطأ خادم». */
+const MSG_NETWORK = 'تعذّر الاتصال. تحقق من الشبكة وأعد المحاولة';
+const MSG_SERVER = 'حدث خطأ في النظام. أعد المحاولة بعد قليل';
 
 /**
  * مهلةُ رفع الجزء ومقارنتِه — والمهلة تُرمى كانقطاع الشبكة.
@@ -934,12 +976,16 @@ const AUTH_UNAVAILABLE_TRIES = 8;
  *
  * و`init` دالّةٌ لا قيمة: لكل محاولةٍ مهلتُها (`AbortSignal.timeout`) وجسمُها.
  */
-async function fetchHeld(url: string, init: () => RequestInit): Promise<{ res: Response; data: unknown }> {
+async function fetchHeld(
+  url: string,
+  init: () => RequestInit,
+  tries = AUTH_UNAVAILABLE_TRIES
+): Promise<{ res: Response; data: unknown }> {
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(url, init());
     const data = await res.json().catch(() => ({}));
     const unavailable = res.status === 503 && (data as { error?: string }).error === 'auth_unavailable';
-    if (!unavailable || attempt >= AUTH_UNAVAILABLE_TRIES) return { res, data };
+    if (!unavailable || attempt >= tries) return { res, data };
     const after = Number(res.headers.get('retry-after')) || 2;
     await new Promise((resume) => setTimeout(resume, after * 1000 * attempt));
   }

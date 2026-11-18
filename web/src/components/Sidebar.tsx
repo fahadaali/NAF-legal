@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, Conversation, Folder, User } from '../lib/api';
 import { optionFor } from '../lib/consultations';
 import { ConsultationIcon, Icon, ICON_SM } from '../lib/icons';
@@ -67,16 +67,24 @@ export default function Sidebar(props: Props) {
   const [busyConvs, setBusyConvs] = useState<string[]>(() => streamingConversationIds());
   useEffect(() => subscribeChatActivity(() => setBusyConvs(streamingConversationIds())), []);
 
+  /** رمزُ آخر طلبٍ للقائمة — ردٌّ سبقه طلبٌ أحدث لا يُكتب فوقه (قضيةٌ بُدّلت، بحثٌ مُسح). */
+  const listToken = useRef(0);
   const load = () => {
     setNoMatches(false);
-    api.listConversations(undefined, activeFolder ?? undefined).then((r) => setConvs(r.conversations)).catch(() => {});
+    const token = ++listToken.current;
+    api
+      .listConversations(undefined, activeFolder ?? undefined)
+      .then((r) => token === listToken.current && setConvs(r.conversations))
+      .catch(() => {});
   };
   const loadFolders = () => api.folders().then((r) => setFolders(r.folders)).catch(() => {});
 
+  /* القضايا لا تتبع القضيةَ المختارة — اختيارُ قضيةٍ لا يغيّر قائمتها. والقائمة
+     نفسها يجلبها أثرُ البحث أدناه وحده: كان هذا الأثر يجلبها أيضاً، فتُطلب مرّتين
+     عند الفتح وعند كل تبديلٍ للقضية. */
   useEffect(() => {
-    if (!search) { load(); }
     loadFolders();
-  }, [props.refreshKey, activeFolder]);
+  }, [props.refreshKey]);
 
   /* المنصة مفتوحةٌ في أكثر من نافذة: محادثةٌ بدأت أو حُذفت أو أُعيدت
      تسميتها في واحدةٍ لا تعلم بها الأخرى. فتُجلب القائمة عند العودة إلى
@@ -112,9 +120,11 @@ export default function Sidebar(props: Props) {
      صفحةً ناقصة أو فارغة. */
   useEffect(() => {
     if (!search) { load(); return; }
+    const token = ++listToken.current;
     const t = setTimeout(() => {
       // ترشيح المحادثات في الشريط: بحثٌ لفظيّ في المحادثات وحدها.
       api.search(search, 'chats', activeFolder ?? undefined).then((r) => {
+        if (token !== listToken.current) return;
         const seen = new Set<string>();
         const found = r.chats
           .filter((x) => (seen.has(x.conversation_id) ? false : seen.add(x.conversation_id)))
@@ -132,7 +142,7 @@ export default function Sidebar(props: Props) {
       }).catch(() => {});
     }, 350);
     return () => clearTimeout(t);
-  }, [search, activeFolder]);
+  }, [search, activeFolder, props.refreshKey]);
 
   const del = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();

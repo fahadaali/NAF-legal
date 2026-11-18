@@ -19,7 +19,10 @@ export default function NotificationBell() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 60_000); // تحديث كل دقيقة
+    // تحديث كل دقيقة — ولا نبضة والنافذة في الخلفية: لا أحد يقرأ الشارة.
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, 60_000);
     return () => clearInterval(t);
   }, []);
 

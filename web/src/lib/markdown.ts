@@ -15,7 +15,27 @@ import {
 
 export { splitDocTitle, stripLawyerNotes, toPlainText };
 
+/**
+ * مخبأُ العرض — النصُّ نفسه يُعطي الـHTML نفسه، فلا يُعاد تحليله.
+ *
+ * شاشة المحادثة تعرض كلَّ رسائلها في كل رسم، والرسمُ يقع مع كل مقطعٍ يصل أثناء
+ * البثّ ومع كل حرفٍ يُكتب في الصندوق — فكان كلُّ ردٍّ قديم يُحلَّل من جديد
+ * عشرات المرّات في الثانية. والنصُّ نفسه يعود بالسلسلة نفسها، فلا يكتب React
+ * في شجرته شيئاً، ولا يُعاد ربطُ الموادّ والتظليلُ عليها.
+ */
+const RENDER_CACHE_MAX = 300;
+const renderCache = new Map<string, string>();
+
 export function renderMarkdown(md: string): string {
+  const hit = renderCache.get(md);
+  if (hit !== undefined) return hit;
+  const html = renderMarkdownUncached(md);
+  if (renderCache.size >= RENDER_CACHE_MAX) renderCache.delete(renderCache.keys().next().value as string);
+  renderCache.set(md, html);
+  return html;
+}
+
+function renderMarkdownUncached(md: string): string {
   /* كل وسمٍ في سطرٍ مستقل، كما كان العارض السابق يكتبه: التظليل المحفوظ
      إزاحاتٌ على نصّ العرض (`lib/highlight.ts`)، والفاصل بين الأسطر جزءٌ من
      ذلك النصّ — فلو تغيّر لانزاح كل تظليلٍ يقع بعد قائمة. */
