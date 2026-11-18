@@ -4907,15 +4907,8 @@ export interface LawSummary {
   repealed: number;
 }
 
-/**
- * الأنظمة المستوردة وحالُ كلٍّ منها.
- *
- * `MAX` على حقول النظام لا لأنها تتفاوت بين مواده — هي واحدة لكلّها — بل
- * لأن التجميع يفرض دالّة. وأوّل ما يتفاوت منها يظهر خللاً في الملف لا هنا.
- */
-export async function listLaws(env: Env): Promise<LawSummary[]> {
-  const rows = await env.DB.prepare(
-    `SELECT c.law_id AS law_id,
+/** أعمدةُ بطاقة النظام مجمَّعةً من موادّه — واحدةٌ لقائمة الأنظمة ولبطاقة نظامٍ بعينه. */
+const LAW_SUMMARY_SELECT = `SELECT c.law_id AS law_id,
             MAX(c.law_title) AS law_title,
             MAX(c.parent_law_id) AS parent_law_id,
             MAX(c.doc_type) AS doc_type,
@@ -4937,7 +4930,17 @@ export async function listLaws(env: Env): Promise<LawSummary[]> {
             COUNT(*) AS chunks,
             SUM(CASE WHEN ${EFFECTIVE_SQL} THEN 1 ELSE 0 END) AS effective,
             SUM(CASE WHEN ${REPEALED_SQL} THEN 1 ELSE 0 END) AS repealed
-     FROM legal_chunks c
+     FROM legal_chunks c`;
+
+/**
+ * الأنظمة المستوردة وحالُ كلٍّ منها.
+ *
+ * `MAX` على حقول النظام لا لأنها تتفاوت بين مواده — هي واحدة لكلّها — بل
+ * لأن التجميع يفرض دالّة. وأوّل ما يتفاوت منها يظهر خللاً في الملف لا هنا.
+ */
+export async function listLaws(env: Env): Promise<LawSummary[]> {
+  const rows = await env.DB.prepare(
+    `${LAW_SUMMARY_SELECT}
      WHERE c.law_id IS NOT NULL
      GROUP BY c.law_id
      ORDER BY law_title`
@@ -5078,7 +5081,21 @@ export async function getLawWithRegulations(
   env: Env,
   lawId: string
 ): Promise<{ law: LawSummary | null; regulations: LawSummary[] }> {
-  const laws = await listLaws(env);
+  /* النظامُ ولوائحُه وحدها — لا القاعدة كلُّها. كان يُجمِّع كلَّ نظامٍ في القاعدة
+     ليختار منها واحداً، فكان فتحُ نظامٍ أو لائحةٍ مسحاً للقاعدة القانونية كلِّها.
+     والحكم على النتيجة كما كان حرفاً بحرف (`find` و`filter` على المجمَّع): كلُّ
+     نظامٍ أبوه هذا فيه مادةٌ واحدة على الأقل `parent_law_id` فيها هذا، فلا يفوت
+     الاستعلامَ أحدٌ ممّا كانت القائمة الكاملة تعطيه. والفهرسان `idx_legal_law`
+     و`idx_legal_parent` يحملانه. */
+  const rows = await env.DB.prepare(
+    `${LAW_SUMMARY_SELECT}
+     WHERE c.law_id = ? OR c.law_id IN (SELECT law_id FROM legal_chunks WHERE parent_law_id = ?)
+     GROUP BY c.law_id
+     ORDER BY law_title`
+  )
+    .bind(lawId, lawId)
+    .all<LawSummary>();
+  const laws = rows.results ?? [];
   return {
     law: laws.find((l) => l.law_id === lawId) ?? null,
     regulations: laws.filter((l) => l.parent_law_id === lawId),

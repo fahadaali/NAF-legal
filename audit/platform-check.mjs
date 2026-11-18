@@ -32,6 +32,7 @@ const routes = await bundle(
    export { default as files } from './files';
    export { default as folders } from './folders';
    export { default as conversations } from './conversations';
+   export { default as cases } from './cases';
    export { isOfficialUrl } from './admin';
    export { default as evalRoutes } from './eval';
    export { extractPendingLinks, parseRefs, ordinalToNumber } from '../lib/research/links';
@@ -694,6 +695,33 @@ await t.check('فتحُ المحادثة يحمل تقييم كل ردّ ومر�
   try {
     const other = await routes.conversations.request('/c1', {}, env);
     assert.equal(other.status, 404, 'فتح غيرُ صاحبها محادثتَه');
+  } finally {
+    globalThis.__naf_user = undefined;
+  }
+});
+
+await t.check('ملفُّ قضيةٍ بأكثر من مئة محادثة يُفتح، بمقتطفٍ لا بنصٍّ كامل، ولصاحبه وحده', async () => {
+  const { env, db } = await chatFixture();
+  db.q("INSERT INTO case_folders (id, user_id, name, color, created_at) VALUES ('f1','u1','قضية','primary',1)");
+  // مئةٌ وعشرون: كان الملفُّ يطلب مسوّداتها بمعاملٍ لكل محادثة، وD1 يرفض ما فوق المئة.
+  for (let i = 0; i < 120; i++) {
+    db.q('INSERT INTO conversations (id, user_id, title, folder_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', `k${i}`, 'u1', `م${i}`, 'f1', i, i);
+  }
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('d1','k7','assistant',?,5)", 'أ'.repeat(5000));
+  db.q("INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, created_at) VALUES ('a9','k9','k','a.pdf','application/pdf',1,1)");
+
+  const res = await routes.cases.request('/f1', {}, env);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.conversations.length, 120);
+  assert.equal(body.drafts.length, 1);
+  assert.equal(body.drafts[0].content, undefined, 'العرض حمل نصَّ المسوّدة كاملاً');
+  assert.equal(body.drafts[0].excerpt.length, 200);
+  assert.equal(body.attachments.length, 1);
+
+  globalThis.__naf_user = { id: 'u2', email: 'u2@x', role: 'editor' };
+  try {
+    assert.equal((await routes.cases.request('/f1', {}, env)).status, 404, 'فتح غيرُ صاحبها قضيتَه');
   } finally {
     globalThis.__naf_user = undefined;
   }

@@ -242,7 +242,7 @@ app.get('/attachments/:id/file', async (c) => {
 
 /** النصّ المستخرَج — تعرضه النافذة لِما لا يُعرض في إطار (docx ونصّ). */
 app.get('/attachments/:id/text', async (c) => {
-  const att = await ownedAttachment(c);
+  const att = await ownedAttachment(c, true);
   if (!att) return c.json({ error: 'المرفق غير موجود' }, 404);
   return new Response(att.parsed_text ?? '', {
     headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
@@ -286,11 +286,14 @@ interface AttachmentRow {
  * والمعرِّف وحده يفتح ملفَّ غيرِك لو لم يُقيَّد. والقيد في `JOIN` واحد
  * يمرّ به كلُّ مسارٍ هنا — لا في كلِّ مسارٍ على حدة حيث يُنسى واحد.
  */
-async function ownedAttachment(c: AppContext): Promise<AttachmentRow | null> {
+/* `withText`: النصُّ المستخرج لمسار النصّ وحده. هو حتى مئتي ألف حرف، والشاشة
+   تسأل عن حال المرفق كلَّ ثوانٍ وهو يُستخرج — فكان كلُّ سؤالٍ يقرأ النصَّ كلَّه
+   من القاعدة ليردّ حالَه وحدها. */
+async function ownedAttachment(c: AppContext, withText = false): Promise<AttachmentRow | null> {
   const user = c.get('user');
   return await c.env.DB.prepare(
     `SELECT a.id, a.conversation_id, a.message_id, a.r2_key, a.filename, a.mime, a.size,
-            a.parsed_text, a.parse_status, a.created_at
+            ${withText ? 'a.parsed_text' : 'NULL AS parsed_text'}, a.parse_status, a.created_at
      FROM attachments a
      JOIN conversations cv ON cv.id = a.conversation_id
      WHERE a.id = ? AND cv.user_id = ?`
