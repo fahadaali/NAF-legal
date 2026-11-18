@@ -100,6 +100,11 @@ export interface RagResult {
    * بتاريخ نفاذه والنافذ قبله (§5-5).
    */
   retrievalWarning?: string;
+  /**
+   * ما رصده الفحص الشهري ولم يُستورد: تعديلٌ صدر لهذه المادة، أو صار نظامُها
+   * لاغياً في مصدره. نصُّه جاهزٌ بعد «تنبيه:» (`lib/updateChecks.ts`).
+   */
+  pendingUpdate?: string;
   /** صفحاتُ السجل في ملف الجهة — للائحة من خارج البوابة (§3-13). */
   sourcePages?: [number, number];
   /** نسخةُ الجهة كما في ملفها. */
@@ -210,6 +215,8 @@ export function joinArticleParts(hits: LegalHit[]): LegalHit[] {
               amendedOn: h.amendedOn,
             }
           : {}),
+        // وتنبيهُ الفحص الشهري لأيِّ جزءٍ تنبيهٌ للمادة كلِّها.
+        pendingUpdate: last.pendingUpdate ?? h.pendingUpdate,
         text: `${last.text}\n${h.text}`,
         // وصفحاتُ المادة من أوّل جزءٍ إلى آخره: الاستشهاد بها لا بصفحة جزئها الأوّل.
         sourcePages:
@@ -255,6 +262,7 @@ export function fromLegalHit(h: LegalHit): RagResult {
       h.retrievalStatus === RETRIEVAL_WARNING ? (h.retrievalWarning ?? AMENDMENT_NOTICE) : undefined,
     sourcePages: h.sourcePages ?? undefined,
     sourceVersion: h.sourceVersion ?? undefined,
+    pendingUpdate: h.pendingUpdate ?? undefined,
   };
 }
 
@@ -333,6 +341,8 @@ export function noticeLines(r: RagResult): string {
   if (r.effectivePending && r.retrievalWarning !== DEFERRED_NOTICE) {
     lines.push(`تنبيه: ${DEFERRED_NOTICE}${r.effectiveFrom ? ` (${r.effectiveFrom})` : ''}`);
   }
+  // وما رصده الفحص الشهري في المصدر ولم يُستورد: النصّ قد لا يكون النافذ.
+  if (r.pendingUpdate) lines.push(`تنبيه: ${r.pendingUpdate}`);
   return lines.length ? `${lines.join('\n')}\n` : '';
 }
 

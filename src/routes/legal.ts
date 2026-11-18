@@ -9,6 +9,7 @@ import { tagPendingArticles, retagAll } from '../lib/research/issues';
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
+import { ingestReport, listUpdateChecks, dismissFinding, reopenFinding, UpdateCheckError, MAX_REPORT_BYTES } from '../lib/updateChecks';
 import {
   parseJsonl,
   summarizeErrors,
@@ -619,6 +620,60 @@ app.get('/stats', requireAdmin, async (c) =>
  * واحداً لا خمسةَ أسطر لملفٍ قُسِّم خمساً.
  */
 app.get('/imports', requireAdmin, async (c) => c.json({ imports: await listImports(c.env) }));
+
+/**
+ * الفحص الشهري لمصادر الأنظمة المستوردة (`lib/updateChecks.ts`، §١٥ في العقد).
+ *
+ * يُرفع `report.json` من مجلد الفحص في مشروع الاستيراد — ملفاً في الحقل `file`
+ * أو جسماً كما هو. والملف نفسه مرّةً واحدة، والفحص الكامل الأقدم من آخر كاملٍ
+ * مرفوع يُرفض. والردّ يقول ما أُضيف وما حُدِّث وما أُغلق وكم مادةً صار عليها تنبيه.
+ */
+app.post('/update-checks', requireAdmin, async (c) => {
+  const contentType = c.req.header('content-type') ?? '';
+  let text = '';
+  let filename = c.req.query('filename') ?? '';
+  if (contentType.includes('multipart/form-data')) {
+    const form = await c.req.formData();
+    const file = form.get('file');
+    if (!(file instanceof File)) return c.json({ error: 'أرفِق report.json في الحقل file' }, 400);
+    if (file.size > MAX_REPORT_BYTES) return c.json({ error: 'التقرير أكبر مما يُقبل — ارفع report.json لا pages.jsonl' }, 413);
+    text = await file.text();
+    filename = filename || file.name;
+  } else {
+    text = await c.req.text();
+  }
+  if (!text.trim()) return c.json({ error: 'الملف فارغ' }, 400);
+  try {
+    const result = await ingestReport(c.env, text, { actorId: c.get('user').id, filename: filename || undefined });
+    if (!result.duplicate) await audit(c, 'legal.update_check', result.check_id, { ...result, filename });
+    return c.json({ ok: true, ...result });
+  } catch (e) {
+    if (e instanceof UpdateCheckError) return c.json({ ok: false, error: e.message, code: e.code }, e.code === 'stale' ? 409 : 400);
+    throw e;
+  }
+});
+
+app.get('/update-checks', requireAdmin, async (c) => c.json(await listUpdateChecks(c.env)));
+
+/** استبعاد بند: لا يستحقّ — يُرفع تنبيهه، ولا يعود ما دام المرصودُ نفسه. */
+app.post('/update-checks/findings/:id/dismiss', requireAdmin, async (c) => {
+  const id = c.req.param('id') ?? '';
+  const body = await c.req.json<{ note?: string }>().catch(() => ({}) as { note?: string });
+  const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 500) : null;
+  const ok = await dismissFinding(c.env, id, c.get('user').id, note);
+  if (!ok) return c.json({ ok: false, error: 'البند ليس مفتوحاً' }, 404);
+  await audit(c, 'legal.update_check_dismiss', id, { note });
+  return c.json({ ok: true });
+});
+
+/** التراجع عن استبعاد — يُفتح البند بتنبيهاته، إلا أن يكون للنظام والنوع بندٌ مفتوحٌ بعده. */
+app.post('/update-checks/findings/:id/reopen', requireAdmin, async (c) => {
+  const id = c.req.param('id') ?? '';
+  const ok = await reopenFinding(c.env, id);
+  if (!ok) return c.json({ ok: false, error: 'تعذّر فتح البند: له بندٌ مفتوحٌ أحدث، أو هو مفتوحٌ أصلاً' }, 409);
+  await audit(c, 'legal.update_check_reopen', id, {});
+  return c.json({ ok: true });
+});
 
 /**
  * ما ينتظر المراجعة البشرية.

@@ -38,6 +38,7 @@ import { normalizeArabic, normalizeArticleNo, extractArticleNo, ftsMatchExpressi
 import { toHijri } from './hijri';
 import { embed, embedBatch } from './embed';
 import { uuid } from './crypto';
+import { resolveOnImport, reopenForBatch } from './updateChecks';
 import type { Env } from '../types';
 
 // ── ثوابت العقد ──
@@ -255,7 +256,10 @@ const HIT_COLUMNS = `c.seq, c.id, c.law_id, c.parent_law_id, c.doc_type, c.artic
     c.is_attachment, c.attachment_of, c.has_attachment, c.text_from_attachment,
     c.former_article_no, c.former_article_no_norm, c.is_annex, c.is_mukarrar,
     c.source_kind, c.source_pages, c.source_version,
-    c.meta_json`;
+    c.meta_json,
+    (SELECT p.notice FROM legal_pending_updates p
+      WHERE p.law_id = c.law_id AND (p.article_no_norm = '' OR p.article_no_norm = c.article_no_norm)
+      ORDER BY p.article_no_norm = '', p.detected_run DESC LIMIT 1) AS pending_update`;
 
 /** سقف طول مدخل التضمين. تجاوزُه يقصّ **مدخل المتجه وحده** ولا يقسم المقطع. */
 const EMBED_MAX_CHARS = 8000;
@@ -392,6 +396,12 @@ export interface LegalHit {
   sourcePages: [number, number] | null;
   /** نسخةُ الجهة كما في ملفها — تُعرض بجوار النص. */
   sourceVersion: string | null;
+  /**
+   * ما رصده الفحص الشهري ولم يُستورد بعد — تعديلٌ صدر لهذه المادة، أو صار
+   * نظامُها لاغياً في مصدره (`lib/updateChecks.ts`). نصُّه جاهزٌ للعرض بعد
+   * «تنبيه:»، ويسقط وحده حين يُستورد ما رُصد أو يستبعده المسؤول.
+   */
+  pendingUpdate: string | null;
   meta: Record<string, unknown> | null;
   score: number;
   /** الإشارات التي رشّحت هذه النتيجة: دلالي، لفظي، مطابقة رقم مادة. */
@@ -1942,6 +1952,9 @@ export async function upsertLegalChunks(
   }
 
   await markLawsWithKeptRepealed(env, rows.map((r) => r.law_id));
+  // ما رصده الفحص الشهري لهذه الأنظمة وعالجه هذا الاستيراد يُغلق ويُرفع تنبيهه —
+  // بشرط أن يكون السحب يوم الرصد أو بعده (`resolveOnImport`). ولا يرمي.
+  await resolveOnImport(env, rows.map((r) => r.law_id).filter((x): x is string => !!x), opts.batchId ?? opts.importId ?? null);
 
   return { inserted: rows.length - updated, updated, archived, superseded };
 }
@@ -2249,6 +2262,8 @@ export async function revertLaw(
     await env.DB.prepare('UPDATE legal_imports SET reverted_at = ?, reverted_by = ? WHERE batch_id = ?')
       .bind(Date.now(), opts.actorId ?? null, batchId)
       .run();
+    // وما أغلقته الدفعة من بنود الفحص الشهري لهذا النظام يُفتح ثانيةً بتنبيهاته.
+    await reopenForBatch(env, batchId, lawId);
   }
 
   return { restored, removed };
@@ -2959,6 +2974,8 @@ export async function rollbackBatch(
     ),
     env.DB.prepare('DELETE FROM legal_law_locks WHERE batch_id = ?').bind(batchId),
   ]);
+  // ما أغلقته الدفعة من بنود الفحص الشهري يُفتح ثانيةً: ما كتبته رُدّ.
+  await reopenForBatch(env, batchId);
   return { restored, removed: removedRows.length };
 }
 
@@ -3530,6 +3547,7 @@ interface HitRow {
   former_article_no: string | null; former_article_no_norm: string | null; is_annex: number; is_mukarrar: number;
   source_kind: string | null; source_pages: string | null; source_version: string | null;
   meta_json: string | null;
+  pending_update: string | null;
 }
 
 /** الصفحاتُ كما خُزِّنت — وما لم يُقرأ منها عددين يُردّ `null` لا يُعرض خطأً. */
@@ -3644,6 +3662,7 @@ function toHit(r: HitRow): LegalHit {
     sourceKind: r.source_kind,
     sourcePages: readSourcePages(r.source_pages),
     sourceVersion: r.source_version,
+    pendingUpdate: r.pending_update ?? null,
     meta,
     score: 0,
     signals: [],

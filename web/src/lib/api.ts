@@ -487,12 +487,58 @@ export interface LegalLaw {
 }
 
 /** مادةٌ كما تُعرض — `text` وحده، ولا أثر لـ`embed_text`. */
+/** بندٌ من الفحص الشهري — ما رُصد لنظامٍ في مصدره الرسمي. */
+export interface UpdateFinding {
+  id: string;
+  law_id: string;
+  law_title: string | null;
+  /** amendment · status · instrument · dates · count · text · brief · missing · new_law · version · replacement · external */
+  kind: string;
+  /** ١ عالية · ٢ متوسطة · ٣ للعلم */
+  level: number;
+  detail: string;
+  /** open · resolved · dismissed */
+  state: string;
+  first_run: string;
+  last_run: string;
+  /** imported · gone */
+  resolved_how: string | null;
+  resolved_at: number | null;
+  dismiss_note: string | null;
+  /** النظام في القاعدة — و«نظامٌ جديد» ليس فيها. */
+  in_base: boolean;
+  url: string | null;
+  samples: string[];
+  /** عدد المواد التي عليها تنبيهٌ منه الآن. */
+  notices: number;
+}
+
+export interface UpdateChecksView {
+  checks: { id: string; run: string; mode: string; summary: Record<string, unknown>; added: number; updated: number; resolved: number; created_at: number }[];
+  open: UpdateFinding[];
+  closed: UpdateFinding[];
+}
+
+export interface UpdateCheckResult {
+  ok: boolean;
+  duplicate: boolean;
+  run: string;
+  mode: 'full' | 'quick';
+  added: number;
+  updated: number;
+  resolved: number;
+  skipped_dismissed: number;
+  notices: number;
+}
+
 export interface LegalArticle {
   id: string;
   /** حالُ الاسترجاع: `effective` · `effective_warning` · `repealed`. */
   retrievalStatus?: string;
   /** نصّ التحذير جاهزاً — يأتي من طبقة الاسترجاع لا يُركَّب في الشاشة. */
   retrievalWarning?: string | null;
+  /** ما رصده الفحص الشهري في المصدر الرسمي ولم يُستورد — نصُّه جاهزٌ للعرض. */
+  pendingUpdate?: string | null;
   hasDefect?: boolean;
   defectKind?: string | null;
   lawId: string | null;
@@ -1068,6 +1114,18 @@ export const api = {
       `/legal/laws/${encodeURIComponent(lawId)}/changes?offset=${offset}&limit=${limit}`
     ),
   legalImports: () => req<{ imports: LegalImportRecord[] }>('/legal/imports'),
+  /** الفحص الشهري لمصادر الأنظمة المستوردة: آخر التقارير وبنودها. */
+  updateChecks: () => req<UpdateChecksView>('/legal/update-checks'),
+  /** رفع `report.json` من مجلد الفحص — يُرسل نصُّه كما هو. */
+  uploadUpdateCheck: (text: string, filename: string) =>
+    req<UpdateCheckResult>(`/legal/update-checks?filename=${encodeURIComponent(filename)}`, { method: 'POST', body: text }),
+  dismissUpdateFinding: (id: string, note: string | null) =>
+    req<{ ok: boolean }>(`/legal/update-checks/findings/${encodeURIComponent(id)}/dismiss`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+  reopenUpdateFinding: (id: string) =>
+    req<{ ok: boolean }>(`/legal/update-checks/findings/${encodeURIComponent(id)}/reopen`, { method: 'POST' }),
   /** ما ينتظر المراجعة — هذا المسار وحده يراه، والبحث لا يصله. */
   legalReviewQueue: (filters: ReviewFilters = {}, offset = 0, limit = 25) =>
     req<{ articles: LegalArticle[]; total: number }>(`/legal/review?${reviewQuery(filters, offset, limit)}`),
