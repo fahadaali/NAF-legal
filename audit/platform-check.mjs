@@ -673,6 +673,32 @@ await t.check('حذف المحادثة يحذف ملفاتها من R2 وما ت
   assert.equal(db.q('SELECT COUNT(*) AS n FROM draft_versions')[0].n, 0, 'بقيت نسخ المسودّة يتيمة');
 });
 
+await t.check('فتحُ المحادثة يحمل تقييم كل ردّ ومرفقاتها، ولا يفتحها غيرُ صاحبها', async () => {
+  const { env, db } = await chatFixture();
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('q1','c1','user','سؤال',1)");
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('m1','c1','assistant','ردّ أول',2)");
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('m2','c1','assistant','ردّ ثان',3)");
+  db.q("INSERT INTO message_feedback (id, message_id, user_id, rating, created_at) VALUES ('f1','m1','u1',1,1)");
+  // تقييمُ غيره على الردّ نفسه لا يظهر له.
+  db.q("INSERT INTO message_feedback (id, message_id, user_id, rating, created_at) VALUES ('f2','m2','u9',-1,1)");
+  db.q("INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, created_at) VALUES ('a1','c1','k','a.pdf','application/pdf',1,1)");
+
+  const res = await routes.conversations.request('/c1', {}, env);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.messages.map((m) => [m.id, m.rating ?? null]), [['q1', null], ['m1', 1], ['m2', null]]);
+  assert.equal(body.attachments.length, 1);
+  assert.equal(body.conversation.id, 'c1');
+
+  globalThis.__naf_user = { id: 'u2', email: 'u2@x', role: 'editor' };
+  try {
+    const other = await routes.conversations.request('/c1', {}, env);
+    assert.equal(other.status, 404, 'فتح غيرُ صاحبها محادثتَه');
+  } finally {
+    globalThis.__naf_user = undefined;
+  }
+});
+
 await t.check('الاستيعاب من رابط: مصادر رسمية بـhttps وحدها', async () => {
   assert.equal(routes.isOfficialUrl('https://laws.boe.gov.sa/x'), true);
   assert.equal(routes.isOfficialUrl('https://www.uqn.gov.sa/a'), true);

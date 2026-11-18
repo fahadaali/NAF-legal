@@ -47,7 +47,12 @@ export async function makeDb() {
       sqlite.exec('BEGIN');
       try {
         const out = [];
-        for (const s of statements) out.push(await s.run());
+        /* كـD1: الدفعة تعيد صفوفَ ما يقرأ (`results`) لا عددَ ما تغيّر وحده —
+           مسارٌ يقرأ في دفعةٍ واحدة كان يأخذ هنا جسماً بلا صفوف. */
+        for (const s of statements) {
+          const reads = /^\s*(select|with)\b/i.test(s.sql) || /\breturning\b/i.test(s.sql);
+          out.push(reads ? await s.all() : await s.run());
+        }
         sqlite.exec('COMMIT');
         return out;
       } catch (e) {
