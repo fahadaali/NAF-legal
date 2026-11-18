@@ -10,7 +10,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, type LegalAmendment, type LegalArticle } from '../lib/api';
 import { DiffText } from '../lib/diff';
-import { formatDualDate, formatNumber } from '../lib/format';
+import { formatDualDate, formatNumber, isolate } from '../lib/format';
 import { splitLegalText } from '../lib/legalText';
 import { Icon, ICON_SM } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
@@ -273,6 +273,14 @@ export function ArticleFlags({ a }: { a: LegalArticle }) {
 }
 
 /**
+ * نصٌّ جاهزٌ من الخادم فيه أرقامُ أدواتٍ وتواريخ: «(م/100) وتاريخ 1448/4/3هـ»،
+ * «2026-11-18 (1448/05/27)». كلٌّ منها يُعزل اتجاهُه (§2) فلا يقلبه العربيّ حوله.
+ */
+function isolateRefs(text: string): string {
+  return text.replace(/\((?:م\/)?[\d\u0660-\u0669/]+\)|[\d\u0660-\u0669]+(?:[/-][\d\u0660-\u0669]+)+/g, (m) => isolate(m));
+}
+
+/**
  * التنبيهات فوق النصّ لا تحته.
  *
  * ما يُقرأ بعد النصّ يُقرأ متأخراً — وقد نُسخ النصُّ إلى مذكرةٍ قبل أن يبلغه
@@ -292,10 +300,21 @@ export function ArticleNotices({ a, onOpenAmendment }: { a: LegalArticle; onOpen
   const effectiveOn = a.effectiveFrom || a.effectiveFromHijri;
   // تنبيه النفاذ المؤجَّل لا يتكرّر إن كان هو نصَّ الشريط نفسه.
   const deferred = a.effectivePending && !(warned && warning === DEFERRED_NOTICE);
-  if (!warned && !deferred && !a.duplicateOf) return null;
+  if (!warned && !deferred && !a.duplicateOf && !a.pendingUpdate) return null;
 
   return (
     <>
+      {/* ما رصده الفحص الشهري في المصدر ولم يُستورد — أوّلُ التنبيهات: يقول إن
+          النصّ المعروض كلَّه قد لا يكون النافذ، فيُقرأ قبل ما سواه. */}
+      {a.pendingUpdate ? (
+        <div className="legal-notice">
+          <Icon.warning size={ICON_SM} aria-hidden />
+          <div>
+            <p>{isolateRefs(a.pendingUpdate)}</p>
+          </div>
+        </div>
+      ) : null}
+
       {warned ? (
         <div className="legal-notice">
           <Icon.warning size={ICON_SM} aria-hidden />

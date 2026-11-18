@@ -147,6 +147,9 @@ function statusLines(h: LegalHit): string[] {
     lines.push(`عُدّلت${times}${current}. نصوصُها السابقة وأدواتُ تعديلها وتواريخُها: get_article_amendment.`);
   }
   if (h.formerArticleNo) lines.push(`الرقم السابق: المادة ${h.formerArticleNo}`);
+  // ما رصده الفحص الشهري في المصدر الرسمي ولم يُستورد — يغيّر حكمَ الاستشهاد،
+  // فيبدأ بـ«تنبيه:» وتنقله الأداة مع النصّ كسائر التنبيهات.
+  if (h.pendingUpdate && !isRepealedHit(h)) lines.push(`تنبيه: ${h.pendingUpdate}`);
   return lines;
 }
 
