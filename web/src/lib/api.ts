@@ -918,6 +918,9 @@ export function isNetworkError(e: unknown): boolean {
   return e instanceof TypeError || (e instanceof DOMException && e.name === 'TimeoutError');
 }
 
+/** كم نداءً يُكمل به الإلغاءُ ردَّ دفعةٍ على أجزاء — أربعة آلاف صورةٍ لكلٍّ، فخمسون تكفي ملفّاً بمئتي ألف سطر. */
+const ABORT_CALLS = 50;
+
 /** محاولات «تعذّر التحقق الآن» قبل أن يُعدّ فشلاً — مجموع الانتظار نحو دقيقة. */
 const AUTH_UNAVAILABLE_TRIES = 8;
 
@@ -1205,12 +1208,22 @@ export const api = {
       `/legal/diff?${new URLSearchParams({ batch, after: String(after), room: String(room) })}`,
       () => ({ method: 'POST', signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS) })
     ),
-  /** إلغاءُ دفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ. */
-  legalAbort: (batch: string) =>
-    req<{ ok: boolean; restored: number; removed: number }>(
-      `/legal/abort?${new URLSearchParams({ batch })}`,
-      { method: 'POST' }
-    ),
+  /**
+   * إلغاءُ دفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ — جزءاً في كل نداء، ويُنادى
+   * حتى يعود `done`. وسقفُ النداءات حارسٌ لا حدّ: ما بقي بعده يكمله المؤقّت.
+   */
+  legalAbort: async (batch: string): Promise<{ ok: boolean; restored: number; removed: number; done: boolean }> => {
+    let total = { ok: true, restored: 0, removed: 0, done: false };
+    for (let call = 0; call < ABORT_CALLS && !total.done; call++) {
+      const r = await reqHeld<{ ok: boolean; restored: number; removed: number; done?: boolean }>(
+        `/legal/abort?${new URLSearchParams({ batch })}`,
+        { method: 'POST' }
+      );
+      // خادمٌ قبل الردّ على أجزاء لا يقول `done`: ردُّه كان كاملاً في نداءٍ واحد.
+      total = { ok: r.ok, restored: total.restored + r.restored, removed: total.removed + r.removed, done: r.done ?? true };
+    }
+    return total;
+  },
   legalFinalize: (batch: string, apply = false) =>
     req<{ ok: boolean; applied: boolean; count?: number; deleted?: number; skipped?: number; error?: string }>(
       `/legal/finalize?${new URLSearchParams({ batch, ...(apply ? { apply: '1' } : {}) })}`,

@@ -511,9 +511,10 @@ export function LegalImport() {
       }
       /* الخادم ردّ ما كتب وقال جملته. وإن تعذّر الإلغاء فالمؤقّت يردّه بعد دقائق —
          ولا يُقال «أُعيدت» عن ردٍّ لم يتحقّق. */
-      const aborted = await api.legalAbort(batchId).then(() => true).catch(() => false);
+      const aborted = await api.legalAbort(batchId).then((r) => r.done).catch(() => false);
       clearPending();
-      const error = e instanceof Error && e.message ? e.message : aborted ? STAGE_INTERRUPTED : NETWORK_ERROR;
+      // «أُعيدت» لا تُقال إلا عن ردٍّ تمّ: وما لم يتمّ يكمله المؤقّت، فيُقال الانقطاع.
+      const error = !aborted ? NETWORK_ERROR : e instanceof Error && e.message ? e.message : STAGE_INTERRUPTED;
       return { name: file.name, ok: false, inserted: 0, updated: 0, report: { ok: false, error } };
     }
   };

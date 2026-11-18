@@ -188,9 +188,15 @@ const totals = { failed: 0, withheld: 0, amendmentPending: 0 };
 const post = (url) =>
   fetch(url, { method: 'POST', headers: { accept: 'application/json', cookie } }).then(async (r) => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) }));
 const commitUrl = (extra = {}) => `${origin}/api/legal/commit?${new URLSearchParams({ batch: batchId, ...extra })}`;
-// إلغاءُ الدفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ. ويُحاوَل ولا يُعوَّل عليه —
-// ما لم يبلغ الخادمَ يردّه مؤقّتُه بعد دقائق.
-const abort = () => post(`${origin}/api/legal/abort?${new URLSearchParams({ batch: batchId })}`).catch(() => {});
+// إلغاءُ الدفعة: ما جُمع يُسقط، وما بدأت كتابتُه يُردّ — جزءاً في كل نداء، فيُنادى
+// حتى يقول `done` (وخادمٌ لا يقوله ردَّ في نداءٍ واحد). ويُحاوَل ولا يُعوَّل عليه —
+// ما لم يبلغ الخادمَ أو لم يتمّ يكمله مؤقّتُه بعد دقائق.
+const abort = async () => {
+  for (let call = 0; call < 50; call++) {
+    const r = await post(`${origin}/api/legal/abort?${new URLSearchParams({ batch: batchId })}`).catch(() => null);
+    if (!r || !r.ok || r.body.done !== false) return;
+  }
+};
 
 // ── ١) الأجزاء تُجمع جانباً — لا يمسّ القاعدةَ منها شيء ──
 const of = Math.ceil(lines.length / batchSize);

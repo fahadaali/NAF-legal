@@ -2385,6 +2385,14 @@ export const COMMIT_SLICE = 500;
 export const BATCH_STALE_MS = 15 * 60 * 1000;
 /** وما جُمع ولم تبدأ كتابتُه يسقط بعد يوم. */
 export const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * كم صورةً تُردّ في النداء الواحد. النداء لا يتجاوز ألفَ استعلامٍ لـ D1، والصفحةُ
+ * ثلاثةُ استعلامات لكل `DB_BATCH` صورة — فأربعة آلاف نحو خمسمئة استعلام، ومعها
+ * تجميدُ الأنظمة وحذفُ المُدرَج وختامُ الدفعة دون السقف بهامشٍ واسع.
+ */
+export const ROLLBACK_BUDGET = 4000;
+/** وما يُردّ من المتروك في مسار الرفع والإتمام قبل عمله — النداء نفسه يكتب بعده. */
+export const ROUTE_ROLLBACK_BUDGET = 1000;
 /** أعمدة الصفّ المستعاد في العبارة الواحدة — دون سقف المعاملات المربوطة في D1 (مئة). */
 const RESTORE_COLS = 60;
 
@@ -2430,6 +2438,8 @@ export interface BatchRow {
   commit_started_at: number | null;
   committed_at: number | null;
   error: string | null;
+  /** آخرُ صورةٍ رُدّت إن بدأ ردُّ الدفعة — NULL: لم يبدأ (`0047`). */
+  rollback_after?: number | null;
 }
 
 export async function getBatch(env: Env, batchId: string): Promise<BatchRow | null> {
@@ -2718,6 +2728,8 @@ export async function commitStep(
   if (batch.state !== 'staging' && batch.state !== 'committing') {
     throw new BatchError('missing', BATCH_MESSAGES.missing);
   }
+  // دفعةٌ بدأ ردُّها لا تُكمَل كتابتها: الردُّ يمضي من موضعه حتى يتمّ.
+  if (batch.rollback_after != null) throw new BatchError('missing', BATCH_MESSAGES.missing);
 
   if (batch.state === 'staging') {
     // الحذف لا يُعرض على ملفٍّ تُخطّيت منه أسطر، ولا يُكتب نظامٌ تكتبه دفعةٌ أخرى.
@@ -2862,20 +2874,26 @@ function restoreStatements(env: Env, row: Record<string, unknown>, exists: boole
 }
 
 /**
- * يردّ دفعةً لم تتمّ — كأنها لم تُكتب.
+ * يردّ دفعةً لم تتمّ — كأنها لم تُكتب — على أجزاءٍ إن طالت.
  *
  * ما كتبته فوق قائمٍ يعود من صورته، وما حذفته من الغائب يعود من صورته، وما
  * أدرجته يُحذف بلا أثرٍ في سجلّ التحديث — لم يقع ما يُؤرَّخ له. وكلُّ نظامٍ
- * مجمَّدٌ وهو يُردّ، فلا يُقرأ نصفُ ردّ. ويصلح أن يُعاد إن انقطع: كلُّ خطوةٍ فيه
- * تُعاد بلا أثرٍ ثانٍ، وآثارُ الدفعة لا تُمحى إلا في آخره.
+ * مجمَّدٌ وهو يُردّ، فلا يُقرأ نصفُ ردّ.
+ *
+ * والنداء الواحد يردّ `budget` صورةً على الأكثر، ويحفظ موضعه في
+ * `rollback_after`، ويعود `done: false` إن بقي شيء — فيكمله النداء التالي من
+ * موضعه: الإلغاء يُنادى حتى يتمّ، والمؤقّت يكمل ما تُرك. وكان يردّ الدفعة كلَّها
+ * في نداءٍ واحد فيتجاوز سقف الاستعلامات في ملفٍّ كبير، فيتعذّر عند الموضع نفسه
+ * في كل محاولة. وكلُّ خطوةٍ تُعاد بلا أثرٍ ثانٍ، وآثارُ الدفعة لا تُمحى إلا في آخره.
  */
 export async function rollbackBatch(
   env: Env,
   batchId: string,
-  reason?: string
-): Promise<{ restored: number; removed: number }> {
+  reason?: string,
+  opts: { budget?: number } = {}
+): Promise<{ restored: number; removed: number; done: boolean }> {
   const batch = await getBatch(env, batchId);
-  if (!batch || batch.state === 'committed' || batch.state === 'rolled_back') return { restored: 0, removed: 0 };
+  if (!batch || batch.state === 'committed' || batch.state === 'rolled_back') return { restored: 0, removed: 0, done: true };
   const now = Date.now();
   if (batch.state !== 'committing') {
     // جُمع ولم يُكتب منه شيء: يُسقط ما جُمع وحده.
@@ -2885,39 +2903,53 @@ export async function rollbackBatch(
         reason ?? null, now, batchId
       ),
     ]);
-    return { restored: 0, removed: 0 };
+    return { restored: 0, removed: 0, done: true };
   }
+  let budget = Math.max(1, opts.budget ?? ROLLBACK_BUDGET);
 
-  // الأنظمة التي مسّتها — تُجمَّد كلُّها قبل أن يُردّ منها سطر.
-  const laws = await env.DB.prepare(
-    `SELECT law_id FROM legal_batch_ids WHERE batch_id = ? AND law_id IS NOT NULL
-     UNION SELECT law_id FROM legal_snapshots WHERE batch_id = ? AND law_id IS NOT NULL
-     UNION SELECT law_id FROM legal_law_locks WHERE batch_id = ?`
-  )
-    .bind(batchId, batchId, batchId)
-    .all<{ law_id: string }>();
-  for (const { law_id } of laws.results ?? []) {
-    await env.DB.prepare(
-      `INSERT INTO legal_law_locks (law_id, batch_id, since) VALUES (?, ?, ?)
-       ON CONFLICT(law_id) DO UPDATE SET batch_id = excluded.batch_id, since = excluded.since`
+  // أوّلَ الردّ: الأنظمة التي مسّتها تُجمَّد كلُّها قبل أن يُردّ منها سطر — في
+  // دفعاتٍ لا عبارةً عبارة، فملفٌّ بخمسمئة نظام لا يستنفد سقف الاستعلامات بالتجميد.
+  // ثم يُكتب الموضع، فما بعده إكمالٌ لا بدءٌ جديد، والسببُ الأول هو المحفوظ.
+  let after: number | null = batch.rollback_after ?? null;
+  if (after == null) {
+    const laws = await env.DB.prepare(
+      `SELECT law_id FROM legal_batch_ids WHERE batch_id = ? AND law_id IS NOT NULL
+       UNION SELECT law_id FROM legal_snapshots WHERE batch_id = ? AND law_id IS NOT NULL
+       UNION SELECT law_id FROM legal_law_locks WHERE batch_id = ?`
     )
-      .bind(law_id, batchId, now)
+      .bind(batchId, batchId, batchId)
+      .all<{ law_id: string }>();
+    const lawIds = (laws.results ?? []).map((l) => l.law_id);
+    for (let i = 0; i < lawIds.length; i += DB_BATCH) {
+      await env.DB.batch(
+        lawIds.slice(i, i + DB_BATCH).map((lawId) =>
+          env.DB.prepare(
+            `INSERT INTO legal_law_locks (law_id, batch_id, since) VALUES (?, ?, ?)
+             ON CONFLICT(law_id) DO UPDATE SET batch_id = excluded.batch_id, since = excluded.since`
+          ).bind(lawId, batchId, now)
+        )
+      );
+    }
+    after = 0;
+    await env.DB.prepare('UPDATE legal_batches SET rollback_after = 0, error = ?, updated_at = ? WHERE batch_id = ?')
+      .bind(reason ?? null, now, batchId)
       .run();
   }
 
-  // ١) ما كان قائماً قبلها يعود — كتبت فوقه أو حذفته.
+  // ١) ما كان قائماً قبلها يعود — كتبت فوقه أو حذفته. والموضع يتقدّم مع آخر
+  //    عبارات الصفحة في معاملتها، فانقطاعٌ في وسطها يُعيدها كلَّها ولا يتخطّاها.
   let restored = 0;
-  let after = 0;
   for (;;) {
+    if (budget <= 0) return { restored, removed: 0, done: false };
     const page = await env.DB.prepare(
       `SELECT rowid AS r, chunk_id, row_json FROM legal_snapshots WHERE batch_id = ? AND rowid > ?
        ORDER BY rowid LIMIT ?`
     )
-      .bind(batchId, after, DB_BATCH)
+      .bind(batchId, after, Math.min(DB_BATCH, budget))
       .all<{ r: number; chunk_id: string; row_json: string }>();
-    const snaps = page.results ?? [];
+    const snaps: { r: number; chunk_id: string; row_json: string }[] = page.results ?? [];
     if (!snaps.length) break;
-    after = snaps[snaps.length - 1].r;
+    const last: number = snaps[snaps.length - 1].r;
     const marks = snaps.map(() => '?').join(',');
     const present = await env.DB.prepare(`SELECT id FROM legal_chunks WHERE id IN (${marks})`)
       .bind(...snaps.map((s) => s.chunk_id))
@@ -2940,28 +2972,43 @@ export async function rollbackBatch(
       pending.push(...statements);
       restored++;
     }
-    if (pending.length) await env.DB.batch(pending);
+    pending.push(
+      env.DB.prepare('UPDATE legal_batches SET rollback_after = ?, updated_at = ? WHERE batch_id = ?').bind(
+        last, Date.now(), batchId
+      )
+    );
+    await env.DB.batch(pending);
+    after = last;
+    budget -= snaps.length;
   }
 
   // ٢) ما أدرجته يُحذف: معرّفاتُ الملف بلا صورة — قيدُها في `legal_batch_ids`، أو
-  //    إدراجُها بعد بدء الكتابة إن فاتها القيد.
+  //    إدراجُها بعد بدء الكتابة إن فاتها القيد. والمحذوفُ يخرج من الاستعلام نفسه،
+  //    فما بقي منه يُقرأ في النداء التالي بلا موضع.
   const inserted = await env.DB.prepare(
     `SELECT c.id, c.seq FROM legal_chunks c
      WHERE NOT EXISTS (SELECT 1 FROM legal_snapshots s WHERE s.batch_id = ? AND s.chunk_id = c.id)
        AND (c.id IN (SELECT chunk_id FROM legal_batch_ids WHERE batch_id = ?)
-            OR (c.id IN (SELECT id FROM legal_staging WHERE batch_id = ?) AND c.imported_at >= ?))`
+            OR (c.id IN (SELECT id FROM legal_staging WHERE batch_id = ?) AND c.imported_at >= ?))
+     LIMIT ?`
   )
-    .bind(batchId, batchId, batchId, batch.commit_started_at ?? now)
+    .bind(batchId, batchId, batchId, batch.commit_started_at ?? now, Math.max(1, budget) + 1)
     .all<{ id: string; seq: number }>();
-  const removedRows = inserted.results ?? [];
+  const found = inserted.results ?? [];
+  const removedRows = found.slice(0, Math.max(1, budget));
   for (let i = 0; i < removedRows.length; i += DB_BATCH) {
     const slice = removedRows.slice(i, i + DB_BATCH);
     await env.DB.batch(slice.map((r) => env.DB.prepare('DELETE FROM legal_chunks WHERE id = ?').bind(r.id)));
     if (env.VECTORIZE) await env.VECTORIZE.deleteByIds(slice.map((r) => vectorId(r.seq))).catch(() => {});
   }
+  if (found.length > removedRows.length) {
+    await env.DB.prepare('UPDATE legal_batches SET updated_at = ? WHERE batch_id = ?').bind(Date.now(), batchId).run();
+    return { restored, removed: removedRows.length, done: false };
+  }
 
   // ٣) آثارُها تُمحى أخيراً — ما أرّخته في سجلّ التحديث، وقيودُها، وما جُمع — ثم يُفكّ
-  //    التجميد في المعاملة نفسها.
+  //    التجميد في المعاملة نفسها. والسببُ ما كُتب أوّلَ الردّ، لا سببُ النداء الأخير.
+  const first = (await getBatch(env, batchId))?.error ?? reason ?? null;
   await env.DB.batch([
     ...(batch.import_id
       ? [env.DB.prepare('DELETE FROM legal_chunk_versions WHERE import_id = ?').bind(batch.import_id)]
@@ -2970,13 +3017,13 @@ export async function rollbackBatch(
     env.DB.prepare('DELETE FROM legal_snapshots WHERE batch_id = ?').bind(batchId),
     env.DB.prepare('DELETE FROM legal_staging WHERE batch_id = ?').bind(batchId),
     env.DB.prepare(`UPDATE legal_batches SET state = 'rolled_back', error = ?, updated_at = ? WHERE batch_id = ?`).bind(
-      reason ?? null, Date.now(), batchId
+      first, Date.now(), batchId
     ),
     env.DB.prepare('DELETE FROM legal_law_locks WHERE batch_id = ?').bind(batchId),
   ]);
   // ما أغلقته الدفعة من بنود الفحص الشهري يُفتح ثانيةً: ما كتبته رُدّ.
   await reopenForBatch(env, batchId);
-  return { restored, removed: removedRows.length };
+  return { restored, removed: removedRows.length, done: true };
 }
 
 /**
@@ -2987,21 +3034,34 @@ export async function rollbackBatch(
  */
 export async function recoverStaleBatches(
   env: Env,
-  now = Date.now()
+  now = Date.now(),
+  opts: { budget?: number } = {}
 ): Promise<{ rolledBack: number; abandoned: number }> {
+  // ما سكت وهو يُكتب، وما بدأ ردُّه أيّاً كان وقتُه: يُكمَل من موضعه.
   const stale = await env.DB.prepare(
-    `SELECT batch_id FROM legal_batches WHERE state = 'committing' AND updated_at < ?`
+    `SELECT batch_id FROM legal_batches
+     WHERE state = 'committing' AND (updated_at < ? OR rollback_after IS NOT NULL)`
   )
     .bind(now - BATCH_STALE_MS)
     .all<{ batch_id: string }>();
-  for (const { batch_id } of stale.results ?? []) await rollbackBatch(env, batch_id, 'stale');
+  // والميزانية واحدةٌ للنداء كلِّه: ما يُردّ هنا من سقف استعلامات النداء الذي استدعاه.
+  // ودفعةٌ لم يتمّ ردُّها يكملها النداء التالي، ولا تُعدّ حتى تتمّ.
+  let budget = Math.max(1, opts.budget ?? ROLLBACK_BUDGET);
+  let rolledBack = 0;
+  for (const { batch_id } of stale.results ?? []) {
+    const r = await rollbackBatch(env, batch_id, 'stale', { budget });
+    if (!r.done) break;
+    rolledBack++;
+    budget -= r.restored + r.removed;
+    if (budget <= 0) break;
+  }
 
   const old = await env.DB.prepare(`SELECT batch_id FROM legal_batches WHERE state = 'staging' AND updated_at < ?`)
     .bind(now - STAGING_TTL_MS)
     .all<{ batch_id: string }>();
   for (const { batch_id } of old.results ?? []) await rollbackBatch(env, batch_id, 'stale');
 
-  return { rolledBack: stale.results?.length ?? 0, abandoned: old.results?.length ?? 0 };
+  return { rolledBack, abandoned: old.results?.length ?? 0 };
 }
 
 /** بصمات ما أُرشِف لهذه المواد — بها لا يتكرّر النصّ السابق عند إعادة الرفع. */
