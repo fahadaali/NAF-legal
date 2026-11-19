@@ -196,15 +196,31 @@ export function noticesFor(kind: string, run: string, data: FindingData): { arti
 /**
  * معرّف ما ليس في القاعدة بعدُ من رابطه الرسمي: `boe:<GUID>` من البوابة، و`uqn:<رقم>`
  * من جريدة أم القرى (الإصدار الثالث من الفحص يقرؤها: نظامٌ أو لائحةٌ نُشرت ولم تُدرجها
- * البوابة). ويُغلق البند حين يُستورد نظامٌ مصدرُه الرابطُ نفسه.
+ * البوابة)، و`moj:<معرّف>` من بوابة وزارة العدل (`laws.moj.gov.sa/ar/legislation/<معرّف>`).
+ * ويُغلق البند حين يُستورد نظامٌ مصدرُه الرابطُ نفسه.
+ *
+ * ومعرّف بوابة وزارة العدل يُحفظ بحالة حروفه: هو ترميزٌ يفرّق بين الكبير والصغير
+ * («JmI0BPgVlA5GuIxkJUi08A»)، فتصغيره يجمع وثيقتين في بندٍ واحد.
  */
 export const sourceId = (url: string | undefined, guid?: string) => {
   const u = String(url ?? '');
   const g = guid || (u.match(/LawDetails\/([0-9a-f-]{36})/i) ?? [])[1];
   if (g) return `boe:${g.toLowerCase()}`;
+  const moj = (u.match(/laws\.moj\.gov\.sa\/(?:ar|en)\/legislation\/([\w-]{6,})/i) ?? [])[1];
+  if (moj) return `moj:${moj}`;
   const q = (u.match(/uqn\.gov\.sa\/(?:[\w-]+\/)*decisions-and-regulations\/(?:[\w-]+\/)?(\d+)/i) ??
              u.match(/uqn\.gov\.sa\/details\?p=(\d+)/i) ?? [])[1];
   return q ? `uqn:${q}` : null;
+};
+
+/**
+ * موضعُ ما رُصد كما يُقال: «جريدة أم القرى» للجريدة، و«بوابة وزارة العدل» باسمها —
+ * لا «جريدة» قبل كل مصدر.
+ */
+const sourcePlace = (source: string | undefined) => {
+  const s = String(source ?? '').trim();
+  if (!s) return 'المصدر الرسمي';
+  return /^جريدة\s|أم القرى/.test(s) ? `جريدة ${s.replace(/^جريدة\s+/, '')}` : s;
 };
 
 async function sha256Hex(text: string): Promise<string> {
@@ -267,7 +283,7 @@ async function collect(report: UpdateReport): Promise<Collected[]> {
       law_title: n.name,
       kind: 'new_law',
       level: 2,
-      detail: `في ${n.source ? `جريدة ${n.source.replace(/^جريدة\s+/, '')}` : 'المصدر الرسمي'} وليس في القاعدة` +
+      detail: `في ${sourcePlace(n.source)} وليس في القاعدة` +
         `${n.issued_hijri ? ` — ${n.source ? 'نُشر' : 'صدر'} ${n.issued_hijri}هـ` : ''}${n.status ? ` · ${n.status}` : ''}`,
       data: { url: n.url },
     });

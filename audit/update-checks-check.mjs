@@ -242,6 +242,27 @@ await t.check('معرّف ما ليس في القاعدة من رابطه: ال�
   assert.equal(lib.sourceId('https://example.com/x.pdf'), null);
 });
 
+await t.check('وبوابة وزارة العدل moj: بحالة حروف معرّفها، والبند يقول «في بوابة وزارة العدل» ويُغلق بالاستيراد من رابطها', async () => {
+  assert.equal(lib.sourceId('https://laws.moj.gov.sa/ar/legislation/JmI0BPgVlA5GuIxkJUi08A'), 'moj:JmI0BPgVlA5GuIxkJUi08A');
+  assert.notEqual(lib.sourceId('https://laws.moj.gov.sa/ar/legislation/jmi0bpgvla5guixkjui08a'),
+    lib.sourceId('https://laws.moj.gov.sa/ar/legislation/JmI0BPgVlA5GuIxkJUi08A'), 'معرّفان يختلفان بحالة حروفهما جُمعا');
+  const { db, env } = await fixture();
+  await lib.ingestReport(env, JSON.stringify({
+    ...REPORT, version: 3, findings: [],
+    newLaws: [{ name: 'قواعد السلوك المهني للمحامين', url: 'https://laws.moj.gov.sa/ar/legislation/JmI0BPgVlA5GuIxkJUi08A',
+      issued_hijri: '1443-01-26', status: 'ساري', source: 'بوابة وزارة العدل' }],
+  }));
+  const nl = openOf(db, 'moj:JmI0BPgVlA5GuIxkJUi08A');
+  assert.equal(nl.length, 1, 'وثيقة بوابة وزارة العدل لم تصر بنداً');
+  assert.match(nl[0].detail, /^في بوابة وزارة العدل وليس في القاعدة — نُشر 1443-01-26هـ · ساري$/);
+  await lib.upsertLegalChunks(env, lib.parseJsonl(JSON.stringify({
+    id: 'قواعد-السلوك-المهني-للمحامين/art-001', law_id: 'قواعد-السلوك-المهني-للمحامين', law_title: 'قواعد السلوك المهني للمحامين',
+    article_no: '1', doc_type: 'regulation', status: 'active', captured_at: '2026-11-19T00:00:00Z',
+    source_url: 'https://laws.moj.gov.sa/ar/legislation/JmI0BPgVlA5GuIxkJUi08A', text: 'نص', embed_text: 'نص',
+  })).rows);
+  assert.equal(openOf(db, 'moj:JmI0BPgVlA5GuIxkJUi08A').length, 0, 'الاستيراد من رابطها لم يُغلق البند');
+});
+
 await t.check('تعديلٌ منشور في أم القرى ولم تُدرجه البوابة يُنبِّه على مادته — والنظام الجديد منها بندٌ بمعرّفها', async () => {
   const { db, env } = await fixture();
   const r = await lib.ingestReport(env, JSON.stringify(GAZETTE_REPORT));
