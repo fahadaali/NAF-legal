@@ -166,13 +166,18 @@ app.use('/api/*', async (c, next) => {
   // الكوكي المحلي بعد الربط كان يهبط بكل مستخدم إلى حدّ العنوان المشترك.
   const user = c.get('user');
   const key = user ? user.id : `ip:${c.req.header('cf-connecting-ip') ?? 'x'}`;
-  // 60 طلباً في الدقيقة — الرقم في `wrangler.toml` (`API_RATE_LIMITER`)، وهنا لعدّاد KV البديل.
+  /* شبكةُ أمانٍ لا سقفُ عمل: ستمئة في الدقيقة — عشرةٌ في الثانية لكل مستخدم — لا
+     يبلغها إنسانٌ يعمل بيده، ويبلغها خللٌ يدور بلا توقّف أو سكربتٌ بجلسةٍ مسروقة.
+     وكانت ستّين، فكان التنقّل السريع والاستيراد يبلغانها ويتعطّلان. وتكلفةُ الذكاء
+     الاصطناعي لا تُضبط بهذا الحدّ: ذاك حدٌّ خاصٌّ بمساراته.
+     والرقم في `wrangler.toml` (`API_RATE_LIMITER`)، وهنا لعدّاد KV البديل. */
   const allowed = await allowRequest(c.env.API_RATE_LIMITER, c.env, key, {
-    limit: 60,
+    limit: 600,
     windowSec: 60,
     defer: (p) => c.executionCtx.waitUntil(p),
   });
-  if (!allowed) return c.json({ error: RATE_LIMIT_MESSAGE }, 429);
+  // `Retry-After`: الاستيراد يصبر بها ويعيد (`fetchHeld` في `web/src/lib/api.ts`).
+  if (!allowed) return c.json({ error: RATE_LIMIT_MESSAGE }, 429, { 'retry-after': '10' });
   await next();
 });
 

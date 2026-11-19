@@ -57,7 +57,7 @@ const limited = async (c: Context<{ Bindings: Env }>, next: () => Promise<void>)
   const ip = c.req.header('cf-connecting-ip') ?? 'x';
   // الحدُّ في `wrangler.toml` (`MCP_AUTH_RATE_LIMITER`)، و`PUBLIC_LIMIT` لعدّاد KV البديل.
   if (!(await allowRequest(c.env.MCP_AUTH_RATE_LIMITER, c.env, `mcp-auth:${ip}`, { limit: PUBLIC_LIMIT, windowSec: 60 }))) {
-    return c.json({ error: RATE_LIMIT_MESSAGE }, 429, CORS);
+    return c.json({ error: RATE_LIMIT_MESSAGE }, 429, { ...CORS, 'retry-after': '10' });
   }
   await next();
 };
