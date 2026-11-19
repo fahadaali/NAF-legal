@@ -1162,9 +1162,15 @@ export const api = {
   kbVersionTextUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/text`,
   kbVersionFileUrl: (id: string, vid: string) => `/api/kb/documents/${id}/versions/${vid}/file`,
   // المحتوى النظامي المستورد — عقد الاستيراد في docs/legal-import.md
-  /** و`vectors` يسأل الفهرس المتجهي عن عدده — لصحّة القاعدة لا لجسّ الشريط. */
-  legalStats: (background = false, vectors = false) =>
-    req<LegalStats>(`/legal/stats${vectors ? '?vectors=1' : ''}`, {}, background),
+  /**
+   * و`vectors` يسأل الفهرس المتجهي عن عدده — لصحّة القاعدة لا لجسّ الشريط.
+   * و`cached` للجسّ الدوريّ: آخرُ إحصاءٍ في نصف الدقيقة الأخيرة لا مسحٌ جديد للقاعدة.
+   */
+  legalStats: (background = false, vectors = false, cached = false) =>
+    req<LegalStats>(`/legal/stats${vectors ? '?vectors=1' : cached ? '?cached=1' : ''}`, {}, background),
+  /** ما ينتظر التضمين وحده — لجسّ التضمين الجاري كل خمس ثوانٍ. */
+  legalPending: (background = true) =>
+    req<{ pending_embeddings: number }>('/legal/stats?light=1', {}, background),
   legalLaws: () => req<{ laws: LegalLaw[] }>('/legal/laws'),
   /** بحث المسؤول في المحتوى النظامي — لفظيّ بلا نموذج تضمين. */
   legalSearch: (q: string, limit = 20) =>

@@ -203,11 +203,27 @@ function KbTab() {
        الحدَّ وهو يتنقّل ويُقطع عليه الاستيراد. فالآن: خمسُ ثوانٍ ما دام تضمينٌ
        جارياً، ونصفُ دقيقة إذا سكن، ولا نبضة والنافذة في الخلفية. والنبضة التالية
        تُجدوَل بعد ردّ السابقة لا على ساعةٍ ثابتة، فلا تتراكم إن أبطأ الخادم. */
+    /* والإحصاءُ الكامل يمسح القاعدة كلَّها: الجسُّ يأخذ آخرَ ما حُسب في نصف الدقيقة
+       الأخيرة (`cached`)، وما دام تضمينٌ جارياً يسأل عمّا بقي منه وحده كل خمس ثوانٍ.
+       وحين يفرغ الطابور يُعاد الإحصاء حيّاً مرّة: الأعدادُ بعد التضمين لا قبله. */
     let alive = true;
     let t: number | undefined;
+    let wasBusy = false;
     const tick = async () => {
-      if (!document.hidden) await Promise.all([loadDocs(true), loadStats(true)]);
+      const busyNow = (statsRef.current?.pending_embeddings ?? 0) > 0;
+      if (!document.hidden) {
+        const stats = busyNow
+          ? api.legalPending(true)
+              .then((p) => {
+                setStats((s) => (s ? { ...s, pending_embeddings: p.pending_embeddings } : s));
+                if (!p.pending_embeddings) return api.legalStats(true).then(setStats);
+              })
+              .catch(() => {})
+          : api.legalStats(true, false, !wasBusy).then(setStats).catch(() => {});
+        await Promise.all([loadDocs(true), stats]);
+      }
       if (!alive) return;
+      wasBusy = busyNow;
       const busy = (statsRef.current?.pending_embeddings ?? 0) > 0 || (docsRef.current?.pending_embeddings ?? 0) > 0;
       t = window.setTimeout(tick, busy ? 5000 : 30000);
     };
