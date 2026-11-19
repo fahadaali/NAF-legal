@@ -3381,6 +3381,12 @@ export interface LegalFilters {
 
   /** حصر البحث في الموادّ الموسومة بمسألةٍ معتمدة (`legal_issue_vocab`). */
   issueKey?: string | null;
+
+  /**
+   * طلبُ المادة محلولاً بعلامات وثيقته (`resolveArticleRequest`) — يُقدَّم على
+   * `articleNo` حين يُمرَّر. داخليّ: يملؤه مسار الاستدعاء لا المستدعي.
+   */
+  articleRequest?: ArticleRequest | null;
 }
 
 /**
@@ -3424,7 +3430,7 @@ function buildFilters(f: LegalFilters): { sql: string; binds: unknown[] } {
     binds.push(f.issueKey);
   }
   if (f.articleNo) {
-    const byNo = articleNoClause(articleRequest(f.articleNo));
+    const byNo = articleNoClause(f.articleRequest ?? articleRequest(f.articleNo));
     clauses.push(byNo.sql);
     binds.push(...byNo.binds);
   }
@@ -3433,9 +3439,14 @@ function buildFilters(f: LegalFilters): { sql: string; binds: unknown[] } {
 }
 
 /** رقمُ مادةٍ مطلوب: الرقم مطبَّعاً، وهل طُلبت مادة «مكرر» بعينها. */
-interface ArticleRequest {
+export interface ArticleRequest {
   no: string;
   mukarrar: boolean;
+  /**
+   * مقاطعُ المادة بعلامتها في وثيقةٍ مرقّمةٍ بعلاماتها (`resolveArticleRequest`).
+   * حين تُعرف يُستدعى بها لا بالرقم — ومصفوفةٌ فارغة: لا بند بهذه العلامة.
+   */
+  seqs?: number[];
 }
 
 /** «مكرر» و«مكرراً» و«مكرّر» بعد التطبيع — والتشكيل والتنوين يسقطان به. */
@@ -3470,6 +3481,13 @@ function articleFromQuery(query: string): ArticleRequest | null {
  *   وحدها — ولا تُرجَع مع الأصل إلا بما يأتي به البحث.
  */
 function articleNoClause(r: ArticleRequest): { sql: string; binds: unknown[] } {
+  if (r.seqs) {
+    if (!r.seqs.length) return { sql: '0 = 1', binds: [] };
+    return {
+      sql: `c.seq IN (${r.seqs.map(() => '?').join(',')}) AND c.is_annex = 0 AND c.is_attachment = 0`,
+      binds: [...r.seqs],
+    };
+  }
   return {
     sql: `(c.article_no_norm = ? OR c.former_article_no_norm = ?)
           AND c.is_annex = 0 AND c.is_attachment = 0 AND c.is_mukarrar = ${r.mukarrar ? 1 : 0}`,
@@ -3479,8 +3497,86 @@ function articleNoClause(r: ArticleRequest): { sql: string; binds: unknown[] } {
 
 /** هل تقع النتيجة على الرقم المطلوب؟ بالشرط نفسه الذي يُستدعى به. */
 function matchesArticle(h: LegalHit, r: ArticleRequest): boolean {
+  if (r.seqs) return !h.isAnnex && !h.isAttachment && r.seqs.includes(h.seq);
   if (h.isAnnex || h.isAttachment || h.isMukarrar !== r.mukarrar) return false;
   return normalizeArticleNo(h.articleNo) === r.no || normalizeArticleNo(h.formerArticleNo) === r.no;
+}
+
+/** أقصى ما يُردّ بعلامةٍ واحدة — بنودُ مادةٍ واحدة من النظام لا تبلغه، وهو دون سقف معاملات العبارة. */
+const LABEL_SEQS_MAX = 60;
+
+/** العلامة نصّاً بلا لفظ وحدتها: «القاعدة التاسعة» و«التاسعة» شيءٌ واحد، و«أولاً» و«أولا». */
+function labelText(label: string): string {
+  return normalizeArabic(label)
+    .replace(/[:：]\s*$/, '')
+    .replace(/^(?:الماده رقم|الماده|القاعده|البند)\s+/, '')
+    .replace(/\s*مكرر[اً]*\s*$/, '')
+    .trim();
+}
+
+/**
+ * يحلّ طلبَ المادة بعلامات وثيقته — لوثيقةٍ لا تُعنون وحدتها «المادة» (§3-١٣ في
+ * دليل الاستيراد): بنودٌ برقم مادة النظام «١/٣» (البند 1 من المادة 3)، أو «أولاً»،
+ * أو «القاعدة التاسعة». فيها `article_label` العلامة و`article_no` تسلسلُها لا
+ * العلامة: البند «٥/٣» رقمه 6.
+ *
+ * - **وثيقة البنود برقم مادة النظام:** «5/3» يُصيب البند بعلامته، و«3» وحده بنودَ
+ *   المادة الثالثة كلَّها (١/٣، ٢/٣…) — لا السجلَّ الثالث في التسلسل، فذاك بندٌ
+ *   لم يُطلب ويُستشهد به على غير وجهه. وما لا بند له بالعلامة لا يُرَدّ بالرقم.
+ * - **علامةٌ نصّاً** («أولاً» · «التاسعة»): تُطابَق بالعلامة، فالرقم لا يحملها.
+ * - **وغير ذلك** — الأنظمة كلّها تقريباً — يبقى الطلب كما هو، بلا استعلامٍ زائد
+ *   إلا سؤالاً واحداً مفهرساً عن وجود علامةٍ فيها «/».
+ */
+export async function resolveArticleRequest(
+  env: Env,
+  lawId: string | null | undefined,
+  raw: string
+): Promise<ArticleRequest> {
+  const base = articleRequest(raw);
+  if (!lawId || !base.no) return base;
+  const numeric = /^\d+(?:\/\d+)*$/.test(base.no);
+  if (numeric) {
+    const probe = await env.DB.prepare(
+      `SELECT 1 FROM legal_chunks WHERE law_id = ? AND is_annex = 0 AND is_attachment = 0
+         AND instr(article_label, '/') > 0 LIMIT 1`
+    )
+      .bind(lawId)
+      .first();
+    if (!probe) return base;
+  }
+  const rows = await env.DB.prepare(
+    `SELECT seq, article_no_norm, article_label, is_mukarrar FROM legal_chunks
+     WHERE law_id = ? AND is_annex = 0 AND is_attachment = 0 AND article_label IS NOT NULL
+       AND (part IS NULL OR part <= 1)
+     ORDER BY seq`
+  )
+    .bind(lawId)
+    .all<{ seq: number; article_no_norm: string | null; article_label: string; is_mukarrar: number }>();
+  const list = rows.results ?? [];
+  const pick = (ok: (r: (typeof list)[number]) => boolean) =>
+    list.filter((r) => (r.is_mukarrar ? 1 : 0) === (base.mukarrar ? 1 : 0) && ok(r)).map((r) => r.seq).slice(0, LABEL_SEQS_MAX);
+
+  if (numeric) {
+    // وثيقةُ بنودٍ برقم مادة النظام: علامةٌ فيها «/» لا تساوي الرقم المخزّن.
+    const slashDoc = list.some((r) => {
+      const n = normalizeArticleNo(r.article_label);
+      return !!n && n.includes('/') && n !== r.article_no_norm;
+    });
+    if (!slashDoc) return base;
+    const want = base.no;
+    const seqs = want.includes('/')
+      ? pick((r) => normalizeArticleNo(r.article_label) === want)
+      : pick((r) => {
+          const parts = (normalizeArticleNo(r.article_label) ?? '').split('/');
+          return parts.length === 2 && parts[1] === want;
+        });
+    return { ...base, seqs };
+  }
+
+  const want = labelText(raw);
+  if (!want) return base;
+  const seqs = pick((r) => labelText(r.article_label) === want);
+  return seqs.length ? { ...base, seqs } : base;
 }
 
 /**
@@ -3846,6 +3942,10 @@ export interface LegalSearchOptions extends LegalFilters {
  */
 export async function searchLegal(env: Env, query: string, opts: LegalSearchOptions = {}): Promise<LegalHit[]> {
   const limit = Math.min(Math.max(opts.limit ?? 10, 1), SEARCH_DEPTH);
+  // رقمُ المادة محلولاً بعلامات وثيقته قبل كل مسار (§3-١٣): التصفيةُ والاستدعاءُ والترجيح بشرطٍ واحد.
+  if (opts.articleNo && opts.lawId && !opts.articleRequest) {
+    opts = { ...opts, articleRequest: await resolveArticleRequest(env, opts.lawId, opts.articleNo) };
+  }
   const filters = buildFilters(opts);
   // أربعةُ أضعاف المطلوب مرشّحين حتى خمسين — كما كان لكل نداءٍ في المنصة. وما
   // طلب أكثر من خمسين (خادم MCP) فمرشّحوه بعدده: لا يُرتَّب ما لم يُسترجع.
@@ -3866,7 +3966,9 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     return withParts(env, hits, opts);
   }
 
-  const articleInQuery = opts.articleNo ? articleRequest(opts.articleNo) : articleFromQuery(query);
+  const articleInQuery = opts.articleNo
+    ? (opts.articleRequest ?? articleRequest(opts.articleNo))
+    : articleFromQuery(query);
 
   // ── المسار اللفظي ──
   const match = ftsMatchExpression(query);
@@ -3963,7 +4065,7 @@ export async function searchLegal(env: Env, query: string, opts: LegalSearchOpti
     const scope = buildFilters({ ...opts, articleNo: null });
     const byNo = articleNoClause(articleInQuery);
     const exact = await env.DB.prepare(
-      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${byNo.sql}${scope.sql} ORDER BY c.seq LIMIT 20`
+      `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE ${byNo.sql}${scope.sql} ORDER BY c.seq LIMIT ${articleInQuery.seqs ? LABEL_SEQS_MAX : 20}`
     )
       .bind(...byNo.binds, ...scope.binds)
       .all<HitRow>();
@@ -4039,9 +4141,12 @@ export async function getArticle(
     includeRepealed: opts.includeRepealed,
     includeDefective: opts.includeDefective,
   };
-  const filters = buildFilters({ ...scope, articleNo: opts.articleNo });
+  const request = await resolveArticleRequest(env, opts.lawId, opts.articleNo);
+  const filters = buildFilters({ ...scope, articleNo: opts.articleNo, articleRequest: request });
+  // بنودُ مادةٍ كاملة بعلاماتها قد تتجاوز العشرة (§3-١٣) — وما سواها يبقى بسقفه.
+  const cap = request.seqs ? LABEL_SEQS_MAX : 10;
   const rows = await env.DB.prepare(
-    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE 1 = 1${filters.sql} ORDER BY c.seq LIMIT 10`
+    `SELECT ${HIT_COLUMNS} FROM legal_chunks c WHERE 1 = 1${filters.sql} ORDER BY c.seq LIMIT ${cap}`
   )
     .bind(...filters.binds)
     .all<HitRow>();

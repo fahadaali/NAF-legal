@@ -3064,6 +3064,56 @@ await check('٣٣ · وما يُقدَّم إلى الدائرة فقراتٌ ب
   assert.match(style, /في غير التماس إعادة النظر/, '«ألتمس» مُنعت حتى في الالتماس');
 });
 
+// ── ٣٤ · وثائق البنود بعلاماتها (دليل الاستيراد §3-١٣) ──
+// لائحةٌ بنودها برقم مادة النظام «١/٣»، ودليلٌ بنوده «أولاً · ثانياً»، وقواعدُ
+// بوحدة «القاعدة». فيها `article_no` تسلسلٌ لا العلامة: البند «٥/٣» رقمه 6.
+const LBL = { doc_type: 'لائحة', retrieval_status: 'نافذ' };
+const LABEL_LINES = [
+  ...[['1/1', 1], ['1/3', 2], ['2/3', 3], ['1/5', 4], ['2/5', 5], ['5/3', 6]].map(([label, no]) =>
+    v6line({ ...LBL, id: `لائحة-بنود/art-${String(no).padStart(3, '0')}`, law_id: 'label-reg',
+      law_name: 'اللائحة التنفيذية لنظام البنود', article_no: no, article_label: label,
+      text: `نصُّ البند ${label} من اللائحة.` })),
+  ...[['أولاً', 1], ['ثانياً', 2], ['ثالثاً', 3]].map(([label, no]) =>
+    v6line({ ...LBL, id: `دليل-بنود/art-${String(no).padStart(3, '0')}`, law_id: 'label-guide',
+      law_name: 'الدليل الإجرائي للبنود', article_no: no, article_label: label,
+      text: `نصُّ البند ${label} من الدليل.` })),
+  v6line({ ...LBL, id: 'قواعد-بنود/art-009', law_id: 'label-rules', law_name: 'قواعد البنود',
+    article_no: 9, article_label: 'القاعدة التاسعة', text: 'نصُّ القاعدة التاسعة.' }),
+  v6line({ ...LBL, id: 'قواعد-بنود/art-009-mukarrar', law_id: 'label-rules', law_name: 'قواعد البنود',
+    article_no: 9, article_label: 'القاعدة التاسعة مكرر', text: 'نصُّ القاعدة التاسعة مكرر.' }),
+];
+await lib.upsertLegalChunks(env, lib.parseJsonl(LABEL_LINES.join('\n')).rows, { importId: 'imp-labels' });
+
+await check('٣٤ · البند يُستدعى بعلامته: «٥/٣» بعلامته، و«3» بنودُ المادة الثالثة لا السجلُّ الثالث', async () => {
+  const get = async (lawId, articleNo) => ids(await lib.getArticle(env, { lawId, articleNo }));
+  assert.deepEqual(await get('label-reg', '5/3'), ['لائحة-بنود/art-006'], '«5/3» لم يُصب البند بعلامته');
+  assert.deepEqual(await get('label-reg', '٥/٣'), ['لائحة-بنود/art-006'], 'العلامة بالأرقام العربية لم تُطابَق');
+  assert.deepEqual(await get('label-reg', '3'),
+    ['لائحة-بنود/art-002', 'لائحة-بنود/art-003', 'لائحة-بنود/art-006'],
+    '«3» لم تُرجع بنود المادة الثالثة كلَّها بترتيبها');
+  assert.deepEqual(await get('label-reg', '6'), [], '«6» أرجعت السجلَّ السادس وليس للمادة السادسة بند');
+  assert.deepEqual(await get('label-reg', '1'), ['لائحة-بنود/art-001']);
+});
+
+await check('٣٤ · والعلامة نصّاً تُطابَق، و«مكرر» بشرطها، والأنظمة العادية بالرقم كما كانت', async () => {
+  const get = async (lawId, articleNo) => ids(await lib.getArticle(env, { lawId, articleNo }));
+  assert.deepEqual(await get('label-guide', 'أولاً'), ['دليل-بنود/art-001'], '«أولاً» لم تُطابَق');
+  assert.deepEqual(await get('label-guide', 'ثانيا'), ['دليل-بنود/art-002'], '«ثانيا» بلا تنوين لم تُطابَق');
+  assert.deepEqual(await get('label-guide', '3'), ['دليل-بنود/art-003'], 'الرقم في دليلٍ بلا «/» تغيّر');
+  assert.deepEqual(await get('label-rules', 'القاعدة التاسعة'), ['قواعد-بنود/art-009'], '«القاعدة التاسعة» أرجعت المكرر معها');
+  assert.deepEqual(await get('label-rules', 'التاسعة مكرر'), ['قواعد-بنود/art-009-mukarrar']);
+  assert.deepEqual(await get('label-rules', '9 مكرر'), ['قواعد-بنود/art-009-mukarrar']);
+  assert.deepEqual(await get('sixth', '15'), ['سادسة/art-015'], 'نظامٌ عادي تغيّر استدعاؤه بالرقم');
+  assert.deepEqual(await get('sixth', 'الخامسة عشرة'), ['سادسة/art-015'], 'المادة بعنوانها نصّاً لم تُطابَق');
+});
+
+await check('٣٤ · والبحث المحصور برقمٍ في وثيقة البنود يردّ بنودَ المادة وحدها', async () => {
+  const hits = await lib.searchLegal(env, 'نص البند', { lawId: 'label-reg', articleNo: '3', limit: 10, lexicalOnly: true });
+  const got = ids(hits).sort();
+  assert.deepEqual(got, ['لائحة-بنود/art-002', 'لائحة-بنود/art-003', 'لائحة-بنود/art-006'],
+    `البحث برقم المادة خرج عن بنودها: ${got.join('، ')}`);
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(
