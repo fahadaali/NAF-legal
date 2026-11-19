@@ -741,6 +741,10 @@ export interface LegalChunkChange {
   new_status: string;
   old_text: string;
   new_text: string;
+  /** التنبيه الجديد — حين تغيّر وحده أو مع غيره. */
+  new_amend_note?: string | null;
+  /** تاريخ الإلغاء المجدول الجديد `YYYY-MM-DD`. */
+  new_scheduled_repeal_from?: string | null;
 }
 
 /** فرقُ ملفٍ عن القاعدة قبل أن يُكتب منه شيء. */

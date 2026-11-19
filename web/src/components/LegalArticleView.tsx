@@ -39,7 +39,7 @@ function isoDay(value: string): Date {
  * تاريخٌ نظاميّ — نفاذُ نظامٍ أو إلغاؤه: ميلاديٌّ يتبعه الهجريّ بين قوسين
  * (CLAUDE.md §8). والصيغةُ من المكتبة المشتركة لا مركّبةٌ هنا.
  */
-function statutoryDate(value: string): string {
+export function statutoryDate(value: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? formatDualDate(isoDay(value)) : value;
 }
 

@@ -1408,6 +1408,14 @@ const COMPARED_FIELDS = [
   'text', 'article_no', 'status', 'is_repealed', 'instrument_no', 'issue_date', 'amendment_applied',
 ] as const;
 
+/**
+ * حقولٌ تظهر في المقارنة ولا تُنشئ نسخةً في السجلّ: تنبيهُ المادة وتاريخُ إلغائها
+ * المجدول. يتغيّران بلا حرفٍ من النصّ ولا الحال — ربطُ نظامٍ ملغى ببديله، أو نسبةُ
+ * إلغائه إلى مصدره — والاعتمادُ يكتبهما. فكانت المقارنة تقول «تتغيّر 0» والاعتماد
+ * يغيّر سجلات النظام كلّها: ما سيقع لا يُعرض.
+ */
+const SHOWN_FIELDS = ['amend_note', 'scheduled_repeal_from'] as const;
+
 /** صفٌّ قائم كما تحتاجه المقارنة — بلا `embed_text` كعادة كل مسار عرض. */
 interface ExistingRow {
   seq: number;
@@ -1421,6 +1429,8 @@ interface ExistingRow {
   text: string;
   law_id: string | null;
   amendment_applied: number;
+  amend_note: string | null;
+  scheduled_repeal_from: string | null;
 }
 
 export interface ChunkChange {
@@ -1433,12 +1443,16 @@ export interface ChunkChange {
   new_status: string;
   old_text: string;
   new_text: string;
+  /** التنبيه الجديد حين تغيّر — لا يُنشئ نسخة (`SHOWN_FIELDS`). */
+  new_amend_note?: string | null;
+  /** تاريخ الإلغاء المجدول الجديد حين تغيّر. */
+  new_scheduled_repeal_from?: string | null;
 }
 
 export interface ImportDiff {
   /** مواد لا وجود لها في القاعدة. */
   added: number;
-  /** مواد قائمة تغيّر فيها شيء. */
+  /** مواد قائمة تغيّر فيها شيء — نصُّها أو حالُها، أو تنبيهُها وتاريخ إلغائها (`SHOWN_FIELDS`). */
   changed: number;
   /** مواد قائمة لم يتغيّر فيها شيء — لا تُؤرشَف ولا تُعاد فهرستها. */
   unchanged: number;
@@ -1467,6 +1481,11 @@ function differingFields(existing: ExistingRow, incoming: PreparedChunk): string
   return fields;
 }
 
+/** ما تغيّر من `SHOWN_FIELDS` — الفارغُ والغائبُ شيءٌ واحد. */
+function shownFields(existing: ExistingRow, incoming: PreparedChunk): string[] {
+  return SHOWN_FIELDS.filter((f) => ((existing as any)[f] ?? null) !== ((incoming as any)[f] ?? null));
+}
+
 async function fetchExisting(env: Env, ids: string[]): Promise<Map<string, ExistingRow>> {
   const found = new Map<string, ExistingRow>();
   for (let i = 0; i < ids.length; i += DB_BATCH) {
@@ -1474,7 +1493,7 @@ async function fetchExisting(env: Env, ids: string[]): Promise<Map<string, Exist
     const marks = slice.map(() => '?').join(',');
     const rows = await env.DB.prepare(
       `SELECT seq, id, article_no, status, is_repealed, instrument_no, issue_date, issue_date_hijri, text, law_id,
-              amendment_applied
+              amendment_applied, amend_note, scheduled_repeal_from
        FROM legal_chunks WHERE id IN (${marks})`
     )
       .bind(...slice)
@@ -1548,7 +1567,9 @@ async function compareRows(
       added++;
       continue;
     }
-    const fields = differingFields(old, row);
+    // ما يُنشئ نسخةً وما يظهر وحده: المقارنة تعرض الاثنين، والأرشفة بالأول وحده.
+    const shown = shownFields(old, row);
+    const fields = [...differingFields(old, row), ...shown];
     if (!fields.length) {
       unchanged++;
       continue;
@@ -1558,6 +1579,8 @@ async function compareRows(
       changes.push({
         id: row.id,
         fields,
+        ...(shown.includes('amend_note') ? { new_amend_note: row.amend_note ?? null } : {}),
+        ...(shown.includes('scheduled_repeal_from') ? { new_scheduled_repeal_from: row.scheduled_repeal_from ?? null } : {}),
         old_article_no: old.article_no,
         new_article_no: row.article_no,
         old_status: old.status,

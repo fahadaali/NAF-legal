@@ -10,6 +10,7 @@ import { type LegalImportDiff } from '../lib/api';
 import { formatNumber } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 import { modalCardProps, useModalDismiss } from '../lib/modal';
+import { statutoryDate } from './LegalArticleView';
 
 /** ألفاظ الحالة كما تظهر في بقيّة اللوحة — لا لفظان لمعنى واحد. */
 const STATUS_LABELS: Record<string, string> = { active: 'ساري', amended: 'معدَّل', repealed: 'ملغى' };
@@ -22,6 +23,8 @@ const FIELD_LABELS: Record<string, string> = {
   is_repealed: 'النسخ',
   instrument_no: 'رقم الأداة',
   issue_date: 'تاريخ الإصدار',
+  // المصطلحان المسجَّلان في naf-terms.md («تنبيهات المادة» · «تُلغى في ‹التاريخ›»)
+  amend_note: 'تنبيهات المادة',
 };
 
 export function ImportCompare({
@@ -90,9 +93,20 @@ export function ImportCompare({
               <div key={ch.id} className="compare-row">
                 <h4>
                   المادة <bdi>{ch.old_article_no ?? ch.id}</bdi>
-                  {ch.fields.map((f) => (
-                    <span key={f} className="pill warn">{FIELD_LABELS[f] ?? f}</span>
-                  ))}
+                  {ch.fields.map((f) =>
+                    f === 'scheduled_repeal_from' ? (
+                      ch.new_scheduled_repeal_from ? (
+                        <span key={f} className="pill warn">
+                          <Icon.scheduledRepeal size={ICON_SM} aria-hidden />
+                          <span>
+                            تُلغى في <bdi className="pill-date">{statutoryDate(ch.new_scheduled_repeal_from)}</bdi>
+                          </span>
+                        </span>
+                      ) : null
+                    ) : (
+                      <span key={f} className="pill warn">{FIELD_LABELS[f] ?? f}</span>
+                    )
+                  )}
                 </h4>
                 {ch.old_article_no !== ch.new_article_no ? (
                   <p>
@@ -105,6 +119,8 @@ export function ImportCompare({
                     {STATUS_LABELS[ch.new_status] ?? ch.new_status}
                   </p>
                 ) : null}
+                {/* التنبيه الجديد نصُّه كما سيُكتب — بلا عنوانٍ آخر: الشارة فوقه تسمّيه. */}
+                {ch.fields.includes('amend_note') && ch.new_amend_note ? <p>{ch.new_amend_note}</p> : null}
                 {/* النصّان لا يُعرضان إلا إن تغيّر النصّ: عرضُ نصٍّ واحد
                     مرّتين تحت عنوانَي «الحالي» و«الجديد» يُوهم فرقاً لا وجود له. */}
                 {ch.fields.includes('text') ? (

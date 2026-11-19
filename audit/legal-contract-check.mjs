@@ -3114,6 +3114,25 @@ await check('٣٤ · والبحث المحصور برقمٍ في وثيقة ال
     `البحث برقم المادة خرج عن بنودها: ${got.join('، ')}`);
 });
 
+await check('٣٥ · المقارنة تعدّ تغيّر التنبيه وتاريخ الإلغاء «تتغيّر» — ولا تُنشئ بهما نسخةً في السجلّ', async () => {
+  const base = { ...LBL, id: 'قواعد-بنود/art-009', law_id: 'label-rules', law_name: 'قواعد البنود',
+    article_no: 9, article_label: 'القاعدة التاسعة', text: 'نصُّ القاعدة التاسعة.' };
+  const noted = lib.parseJsonl(v6line({ ...base, amend_note: 'النظام لاغٍ بحسب بوابة وزارة العدل',
+    scheduled_repeal_from: FUTURE })).rows;
+  const diff = await lib.diffChunks(env, noted);
+  assert.equal(diff.changed, 1, 'تغيّر التنبيه وتاريخ الإلغاء عُدّ «بلا تغيير»');
+  assert.deepEqual(diff.changes[0].fields.sort(), ['amend_note', 'scheduled_repeal_from']);
+  assert.equal(diff.changes[0].new_amend_note, 'النظام لاغٍ بحسب بوابة وزارة العدل');
+  assert.equal(diff.changes[0].new_scheduled_repeal_from, FUTURE);
+  const before = q("SELECT COUNT(*) AS n FROM legal_chunk_versions WHERE chunk_id = 'قواعد-بنود/art-009'")[0].n;
+  await lib.upsertLegalChunks(env, noted, { importId: 'imp-noted' });
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_chunk_versions WHERE chunk_id = 'قواعد-بنود/art-009'")[0].n, before,
+    'التنبيه أنشأ نسخةً في سجلّ التحديث');
+  assert.equal(q("SELECT amend_note FROM legal_chunks WHERE id = 'قواعد-بنود/art-009'")[0].amend_note,
+    'النظام لاغٍ بحسب بوابة وزارة العدل', 'الاعتماد لم يكتب التنبيه');
+  assert.equal((await lib.diffChunks(env, noted)).changed, 0, 'بعد الكتابة بقي «يتغيّر»');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(
