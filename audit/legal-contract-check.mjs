@@ -3133,6 +3133,27 @@ await check('٣٥ · المقارنة تعدّ تغيّر التنبيه وتا�
   assert.equal((await lib.diffChunks(env, noted)).changed, 0, 'بعد الكتابة بقي «يتغيّر»');
 });
 
+await check('٣٦ · إحصاءُ الجسّ: آخرُ ما حُسب في نصف الدقيقة، والمتزامنان مسحٌ واحد، وما ينتظر التضمين بشرط الإحصاء', async () => {
+  const t0 = 10_000_000_000_000;
+  const a = lib.cachedLegalStats(env, t0);
+  const b = lib.cachedLegalStats(env, t0 + 1);
+  assert.equal(a, b, 'طلبان متزامنان مسحا القاعدة مرّتين');
+  const first = await a;
+  q("UPDATE legal_chunks SET needs_review = 1 - needs_review WHERE id = 'قواعد-بنود/art-009'");
+  try {
+    assert.deepEqual(await lib.cachedLegalStats(env, t0 + lib.STATS_TTL_MS - 1), first, 'الإحصاء أُعيد قبل نصف دقيقته');
+    const fresh = await lib.legalStats(env);
+    assert.deepEqual(await lib.cachedLegalStats(env, t0 + lib.STATS_TTL_MS), fresh, 'الإحصاء لم يُعَد بعد نصف دقيقته');
+    lib.rememberLegalStats({ ...fresh, chunks: -1 }, t0 + lib.STATS_TTL_MS + 5);
+    assert.equal((await lib.cachedLegalStats(env, t0 + lib.STATS_TTL_MS + 6)).chunks, -1, 'ما حُفظ بعد الاستيراد لم يُعرض');
+  } finally {
+    q("UPDATE legal_chunks SET needs_review = 1 - needs_review WHERE id = 'قواعد-بنود/art-009'");
+    lib.rememberLegalStats(await lib.legalStats(env), 0);
+  }
+  assert.equal(await lib.pendingEmbeddings(env), (await lib.legalStats(env)).pending_embeddings,
+    'ما ينتظر التضمين في الجسّ الخفيف غيرُ عدّه في الإحصاء');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

@@ -55,6 +55,9 @@ import {
   BULK_LIMIT,
   getLawWithRegulations,
   legalStats,
+  cachedLegalStats,
+  rememberLegalStats,
+  pendingEmbeddings,
   type ReviewAction,
   type ReviewQueueKey,
 } from '../lib/legal';
@@ -232,6 +235,7 @@ app.post('/import', requireAdmin, async (c) => {
   c.executionCtx.waitUntil(embedPending(c.env, IMPORT_EMBED_BUDGET).then(() => {}));
 
   const stats = await legalStats(c.env);
+  rememberLegalStats(stats);
   return c.json({
     ...full,
     ok: true,
@@ -612,10 +616,19 @@ app.post('/revert', requireAdmin, async (c) => {
  * و`vectors=1` يسأل الفهرس المتجهي نفسه عن عدده ويقابله بسجلاته (§6-7). وهو
  * بطلبٍ صريح لا مع كل جسّ: شريط الحال يجسّ كل خمس ثوانٍ، وسؤالُ الفهرس نداءٌ
  * خارج القاعدة لا يستحقّ هذا الإيقاع.
+ *
+ * و`cached=1` للجسّ الدوريّ: آخرُ إحصاءٍ في نصف الدقيقة الأخيرة (`cachedLegalStats`).
+ * و`light=1` لجسّ التضمين الجاري: ما ينتظر التضمين وحده (`pendingEmbeddings`).
+ * وبلا أيٍّ منهما عدٌّ حيّ — فتحُ التبويب وما بعد فعلٍ — ويُحفظ للجسّ بعده.
  */
-app.get('/stats', requireAdmin, async (c) =>
-  c.json(await legalStats(c.env, { vectors: c.req.query('vectors') === '1' }))
-);
+app.get('/stats', requireAdmin, async (c) => {
+  if (c.req.query('light') === '1') return c.json({ pending_embeddings: await pendingEmbeddings(c.env) });
+  const vectors = c.req.query('vectors') === '1';
+  if (!vectors && c.req.query('cached') === '1') return c.json(await cachedLegalStats(c.env));
+  const stats = await legalStats(c.env, { vectors });
+  if (!vectors) rememberLegalStats(stats);
+  return c.json(stats);
+});
 
 /**
  * سجلّ الدفعات — وأثرُ كلٍّ: مضاف ومحدَّث ومحذوف.

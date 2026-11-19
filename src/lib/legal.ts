@@ -5281,6 +5281,51 @@ export interface VectorCheck {
  * الحالات وما يُفهرَس. ورقمٌ مكتوبٌ في وثيقة يتقادم مع أوّل دفعة، فيُقارَن به
  * ويُظَنّ الاستيراد ناقصاً — ولذلك يُقرأ من القاعدة في كل فتحة.
  */
+/**
+ * كم يبقى الإحصاء الأخير صالحاً للجسّ الدوريّ.
+ *
+ * `legalStats` يمسح جدول المواد كلَّه بعشرين مجموعاً — ثوانٍ في القاعدة الهادئة.
+ * وكان كلُّ جسٍّ يعيده، فإذا أبطأ الخادم تراكمت المسوحُ واحداً فوق آخر وأثقلت
+ * القاعدة كلَّها: البحثُ والاستيراد معها (19 نوفمبر 2026). فالجسُّ يأخذ آخر ما
+ * حُسب في هذا المنفّذ ما لم يمضِ عليه نصف دقيقة، والمسوحُ المتزامنة مسحٌ واحد.
+ */
+export const STATS_TTL_MS = 30_000;
+
+let statsMemo: { at: number; value: Promise<LegalStats> } | null = null;
+
+/**
+ * الإحصاء للجسّ الدوريّ: آخرُ ما حُسب إن كان حديثاً، وإلا مسحٌ واحد يشترك فيه
+ * كلُّ من طلبه معاً. ومسحٌ فشل لا يُحفظ: الطلبُ التالي يعيده.
+ */
+export function cachedLegalStats(env: Env, now = Date.now()): Promise<LegalStats> {
+  if (statsMemo && now - statsMemo.at < STATS_TTL_MS) return statsMemo.value;
+  const value = legalStats(env);
+  const memo = { at: now, value };
+  statsMemo = memo;
+  value.catch(() => {
+    if (statsMemo === memo) statsMemo = null;
+  });
+  return value;
+}
+
+/** يحفظ إحصاءً حُسب للتوّ — بعد استيرادٍ أو طلبٍ صريح — فلا يعرض الجسُّ ما قبله. */
+export function rememberLegalStats(value: LegalStats, now = Date.now()): void {
+  statsMemo = { at: now, value: Promise.resolve(value) };
+}
+
+/**
+ * ما ينتظر التضمين وحده — للجسّ ما دام التضمين جارياً.
+ *
+ * بالشرط الذي يعدّ به `legalStats` (`pending`)، وعلى فهرس `embedded_at`: يقرأ
+ * المعلَّق وحده لا الجدول كلَّه، فيصلح لإيقاع خمس ثوانٍ.
+ */
+export async function pendingEmbeddings(env: Env): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM legal_chunks c WHERE c.embedded_at IS NULL AND ${EMBEDDABLE_SQL_C}`
+  ).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 export async function legalStats(env: Env, opts: { vectors?: boolean } = {}): Promise<LegalStats> {
   const row = await env.DB.prepare(
     `SELECT COUNT(*) AS chunks,
