@@ -84,7 +84,8 @@ export function AiToolsMember() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = () => {
-    setLoading(true);
+    /* الدوّار للتحميل الأول وحده (الحالة تبدأ به): إعادةُ الجلب بعد فعلٍ تجري بهدوء،
+       فلا يختفي الجدول خلف دوّارٍ ولا يضيع موضعُ التمرير بعد كل تغيير. */
     api
       .mcpConnections()
       .then((r) => setRows(r.connections))
@@ -215,7 +216,8 @@ export function AiToolsAdmin() {
   const [pendingRemove, setPendingRemove] = useState<McpGuest | null>(null);
 
   const load = () => {
-    setLoading(true);
+    /* الدوّار للتحميل الأول وحده (الحالة تبدأ به): إعادةُ الجلب بعد فعلٍ تجري بهدوء،
+       فلا يختفي الجدول خلف دوّارٍ ولا يضيع موضعُ التمرير بعد كل تغيير. */
     Promise.all([api.mcpGuests(), api.mcpAdminConnections()])
       .then(([g, c]) => {
         setGuests(g.guests);

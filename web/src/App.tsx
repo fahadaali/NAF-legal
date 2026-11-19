@@ -174,13 +174,7 @@ export default function App() {
     setView('chat');
   };
 
-  if (loading) {
-    return (
-      <div className="center-load">
-        <div className="spinner" style={{ width: 32, height: 32 }} />
-      </div>
-    );
-  }
+  if (loading) return <ScreenFallback />;
 
   // بابُ المنصة المركزُ وحده، فبلوغُ هذه النقطة يعني أن الوسيط سمح بالطلب
   // ثم تعذّرت قراءة الحساب — خللٌ في النظام لا نقصُ دخول. ولا تُعرض هنا

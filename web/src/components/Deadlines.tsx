@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { Icon, ICON_SM } from '../lib/icons';
 
@@ -9,7 +9,15 @@ export default function Deadlines() {
   const [form, setForm] = useState({ title: '', kind: 'اعتراض', base_date: '', days: '', due_date: '', notes: '' });
   const [busy, setBusy] = useState(false);
 
-  const load = () => api.deadlinesList(status).then((r) => setItems(r.deadlines)).catch(() => {});
+  /* رمزُ آخر طلب — ردٌّ لحالةٍ سابقة (مفتوحة ثم «الكل») لا يكتب فوق الأحدث. */
+  const loadToken = useRef(0);
+  const load = () => {
+    const token = ++loadToken.current;
+    return api
+      .deadlinesList(status)
+      .then((r) => token === loadToken.current && setItems(r.deadlines))
+      .catch(() => {});
+  };
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
