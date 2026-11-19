@@ -11,7 +11,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../types';
-import { withinRateLimit, RATE_LIMIT_MESSAGE } from '../lib/rateLimit';
+import { allowRequest, RATE_LIMIT_MESSAGE } from '../lib/rateLimit';
 import {
   protectedResourceMetadata,
   authorizationServerMetadata,
@@ -55,7 +55,8 @@ const origin = (c: Context) => new URL(c.req.url).origin;
 const PUBLIC_LIMIT = 30;
 const limited = async (c: Context<{ Bindings: Env }>, next: () => Promise<void>) => {
   const ip = c.req.header('cf-connecting-ip') ?? 'x';
-  if (!(await withinRateLimit(c.env, `rl:mcp-auth:${ip}`, PUBLIC_LIMIT, 60))) {
+  // الحدُّ في `wrangler.toml` (`MCP_AUTH_RATE_LIMITER`)، و`PUBLIC_LIMIT` لعدّاد KV البديل.
+  if (!(await allowRequest(c.env.MCP_AUTH_RATE_LIMITER, c.env, `mcp-auth:${ip}`, { limit: PUBLIC_LIMIT, windowSec: 60 }))) {
     return c.json({ error: RATE_LIMIT_MESSAGE }, 429, CORS);
   }
   await next();

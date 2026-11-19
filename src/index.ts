@@ -33,7 +33,7 @@ import { purgeExpired as purgeMcpExpired } from './mcp/oauth';
 import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery, runLinkExtraction, runAttachmentRecovery } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
-import { withinRateLimit, RATE_LIMIT_MESSAGE } from './lib/rateLimit';
+import { allowRequest, RATE_LIMIT_MESSAGE } from './lib/rateLimit';
 import { framedFileMiddleware } from './lib/framedFile';
 import type { Env, Variables } from './types';
 
@@ -165,9 +165,14 @@ app.use('/api/*', async (c, next) => {
   // المفتاح يأتي من المستخدم الذي حقنه وسيط الدخول الموحّد. وبقاؤه على
   // الكوكي المحلي بعد الربط كان يهبط بكل مستخدم إلى حدّ العنوان المشترك.
   const user = c.get('user');
-  const key = user ? `rl:${user.id}` : `rl:ip:${c.req.header('cf-connecting-ip') ?? 'x'}`;
-  // 60 طلباً في الدقيقة
-  if (!(await withinRateLimit(c.env, key, 60, 60, (p) => c.executionCtx.waitUntil(p)))) return c.json({ error: RATE_LIMIT_MESSAGE }, 429);
+  const key = user ? user.id : `ip:${c.req.header('cf-connecting-ip') ?? 'x'}`;
+  // 60 طلباً في الدقيقة — الرقم في `wrangler.toml` (`API_RATE_LIMITER`)، وهنا لعدّاد KV البديل.
+  const allowed = await allowRequest(c.env.API_RATE_LIMITER, c.env, key, {
+    limit: 60,
+    windowSec: 60,
+    defer: (p) => c.executionCtx.waitUntil(p),
+  });
+  if (!allowed) return c.json({ error: RATE_LIMIT_MESSAGE }, 429);
   await next();
 });
 

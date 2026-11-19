@@ -56,5 +56,31 @@ export async function withinRateLimit(
   }
 }
 
+/**
+ * الحكمُ بالخاصية المدمجة في Cloudflare متى رُبطت، وإلا بعدّاد KV أعلاه.
+ *
+ * الحدُّ والمدة في `wrangler.toml` لا هنا: الربطُ يحملهما، والمستدعي يمرّرهما
+ * لعدّاد KV وحده — وهو للفحوص والتطوير بلا ربط، لا للإنتاج.
+ *
+ * والمفتاح يبدأ بـ`legal:`: معرّفُ المساحة فريدٌ في الحساب، ومنصةٌ أخرى تساويه
+ * خطأً تشارك هذه العدَّ للمفتاح نفسه — والبادئة تجعل المفتاح لا يلتقي بمفاتيحها.
+ *
+ * وعطلُ الخاصية يُمرّر الطلب، كما يفعل عطلُ KV: الحدّ حمايةٌ لا شرطٌ لعمل المنصة.
+ */
+export async function allowRequest(
+  binding: RateLimit | undefined,
+  env: Env,
+  key: string,
+  fallback: { limit: number; windowSec: number; defer?: (pending: Promise<unknown>) => void }
+): Promise<boolean> {
+  if (!binding) return withinRateLimit(env, `rl:${key}`, fallback.limit, fallback.windowSec, fallback.defer);
+  try {
+    const { success } = await binding.limit({ key: `legal:${key}` });
+    return success;
+  } catch {
+    return true;
+  }
+}
+
 /** رسالةُ تجاوز الحدّ — نصُّ المنصة نفسه في كل موضع. */
 export const RATE_LIMIT_MESSAGE = 'تجاوزت حد الطلبات، حاول بعد قليل';

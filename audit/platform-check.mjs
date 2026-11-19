@@ -34,6 +34,7 @@ const routes = await bundle(
    export { default as conversations } from './conversations';
    export { default as cases } from './cases';
    export { default as members } from './members';
+   export { allowRequest } from '../lib/rateLimit';
    export { framedFileMiddleware, FRAMED_FILE_HEADER } from '../lib/framedFile';
    export { Hono } from 'hono';
    export { secureHeaders } from 'hono/secure-headers';
@@ -773,6 +774,28 @@ await t.check('مسؤولان يُنزل كلٌّ منهما الآخر: يبق�
   } finally {
     globalThis.__naf_user = undefined;
   }
+});
+
+await t.check('حدُّ المعدّل: الخاصية المدمجة تحكم متى رُبطت، وعدّادُ KV بدونها', async () => {
+  const keys = [];
+  const binding = (outcome) => ({
+    async limit({ key }) {
+      keys.push(key);
+      if (outcome === 'throw') throw new Error('down');
+      return { success: outcome };
+    },
+  });
+  const env = { KV: makeKv() };
+  const opts = { limit: 2, windowSec: 60 };
+  assert.equal(await routes.allowRequest(binding(true), env, 'u1', opts), true);
+  assert.equal(await routes.allowRequest(binding(false), env, 'u1', opts), false, 'تجاوزٌ مرّ');
+  assert.equal(await routes.allowRequest(binding('throw'), env, 'u1', opts), true, 'عطلُ الخاصية أغلق المنصة');
+  assert.deepEqual(keys, ['legal:u1', 'legal:u1', 'legal:u1'], 'المفتاح بلا بادئة المنصة');
+  // وبلا ربط: عدّاد KV بمفتاحه القديم، ويُردّ الثالث.
+  assert.equal(await routes.allowRequest(undefined, env, 'u2', opts), true);
+  assert.equal(await routes.allowRequest(undefined, env, 'u2', opts), true);
+  assert.equal(await routes.allowRequest(undefined, env, 'u2', opts), false);
+  assert.ok(await env.KV.get('rl:u2'), 'العدّاد البديل لم يُكتب بمفتاحه');
 });
 
 await t.check('الاستيعاب من رابط: مصادر رسمية بـhttps وحدها', async () => {
