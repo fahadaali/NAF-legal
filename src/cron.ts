@@ -3,7 +3,10 @@
 import { callClaude, webSearchTool, TRACKING_DOMAINS } from './lib/claude';
 import { notify } from './lib/notify';
 import { dualDate } from './lib/hijri';
-import { embedPending, vectorHealth, vectorCheck, recoverStaleBatches } from './lib/legal';
+import {
+  embedPending, vectorHealth, vectorCheck, recoverStaleBatches,
+  drainVectorDeletes, startVectorSweep, stepVectorSweep,
+} from './lib/legal';
 import { extractPendingLinks } from './lib/research/links';
 import { stemPending } from './lib/research/stem';
 import { reindexDocuments } from './lib/research/documents';
@@ -369,10 +372,21 @@ export async function runLegalEmbedding(env: Env): Promise<{
     const check = await vectorCheck(env);
 
     // ويُقال في سجلّ الدورة: إصلاحٌ صامت لعطبٍ متكرّر يُخفي سببه.
+    // والمتجه اليتيم يبدأ له كنسٌ يمضي في النبضات بعدها (`runVectorMaintenance`)،
+    // ويُقال ما بدأ وما انتهى إليه — والفحص في الليلة التالية يقيس أثره.
+    let sweep = false;
+    // ولا يُسقط فشلُه تقريرَ التضمين قبله: هجرةٌ لم تُطبَّق تمنع الكنس وحده.
+    if (check.orphans) {
+      try {
+        sweep = await startVectorSweep(env);
+      } catch (e: any) {
+        console.error('vector sweep start failed:', e?.message ?? e);
+      }
+    }
     if (health.stale || check.orphans) {
       console.warn(
         'legal vector health:',
-        JSON.stringify({ stale_vector: health.stale, orphan_vectors: check.orphans, actual: check.actual, expected: check.expected })
+        JSON.stringify({ stale_vector: health.stale, orphan_vectors: check.orphans, actual: check.actual, expected: check.expected, sweep_started: sweep })
       );
     }
 
@@ -386,6 +400,21 @@ export async function runLegalEmbedding(env: Env): Promise<{
     };
   } catch {
     return { embedded: 0, remaining: 0, purged: 0, missing_vector: 0, stale_vector: 0, orphan_vectors: null };
+  }
+}
+
+// ── صيانة الفهرس المتجهي في كل نبضة ──
+//
+// حذفٌ فشل يُعاد (`legal_vector_deletes`)، وكنسٌ بدأه الفحص الليلي يمضي جزءاً
+// (`legal_vector_sweep`). كلاهما محدود في النبضة، ويبتلع خطأه كأخواته.
+export async function runVectorMaintenance(env: Env): Promise<{ retried: number; swept: number }> {
+  try {
+    const retried = await drainVectorDeletes(env);
+    const step = await stepVectorSweep(env);
+    return { retried, swept: step.sent };
+  } catch (e: any) {
+    console.error('vector maintenance failed:', e?.message ?? e);
+    return { retried: 0, swept: 0 };
   }
 }
 

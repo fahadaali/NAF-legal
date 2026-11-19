@@ -3,6 +3,7 @@
 import { chunkText, embedBatch } from './lib/rag';
 import { normalizeArabic, stemText } from './lib/arabic';
 import { DOC_NAMESPACE, DOC_INDEX_VERSION } from './lib/research/documents';
+import { deleteVectors } from './lib/legal';
 import type { Env } from './types';
 
 /**
@@ -65,7 +66,7 @@ async function runIngest(env: Env, docId: string): Promise<IngestOutcome> {
     ...(prev.results ?? []).map((r) => r.id),
     ...Array.from({ length: doc.chunk_count ?? 0 }, (_, i) => `${docId}:${i}`),
   ];
-  if (env.VECTORIZE && staleIds.length) await env.VECTORIZE.deleteByIds(staleIds).catch(() => {});
+  if (staleIds.length) await deleteVectors(env, staleIds, 'kb-reingest');
 
   const now = Date.now();
   const rows = chunks.map((chunk, i) => ({

@@ -30,7 +30,7 @@ import caseRoutes from './routes/cases';
 import regulationRequestRoutes from './routes/regulationRequests';
 import legalRoutes from './routes/legal';
 import { purgeExpired as purgeMcpExpired } from './mcp/oauth';
-import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery, runLinkExtraction, runAttachmentRecovery } from './cron';
+import { runTrackingScan, runNewsDigest, runDeadlineReminders, runLegalEmbedding, runImportRecovery, runVectorMaintenance, runLinkExtraction, runAttachmentRecovery } from './cron';
 import { ssoMiddleware } from './lib/sso';
 import { requireWriter } from './lib/auth';
 import { allowRequest, RATE_LIMIT_MESSAGE } from './lib/rateLimit';
@@ -280,6 +280,8 @@ export default {
     // طلباتُ تفويض MCP ورموزه المنتهية — لا يُقرأ منها شيء بعد انتهائه.
     ctx.waitUntil(purgeMcpExpired(env).catch((e) => console.error('mcp purge failed', e)));
     ctx.waitUntil(runAttachmentRecovery(env).then(() => {}));
+    // الفهرس المتجهي: حذفٌ فشل يُعاد، وكنسُ اليتيم يمضي جزءاً — في كل نبضة.
+    ctx.waitUntil(runVectorMaintenance(env).then(() => {}));
     ctx.waitUntil(runImportRecovery(env).then(() => {}));
     if (!isNightlyTick(event.scheduledTime)) return;
     ctx.waitUntil(
