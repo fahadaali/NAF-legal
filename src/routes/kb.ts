@@ -6,6 +6,7 @@ import { uuid } from '../lib/crypto';
 import { extractText } from '../lib/extract';
 import { callClaude } from '../lib/claude';
 import { ingestDocument } from '../ingest';
+import { deleteVectors } from '../lib/legal';
 import type { Env, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -190,7 +191,7 @@ app.delete('/documents/:id', async (c) => {
     ...(fresh.results ?? []).map((r) => r.id),
     ...Array.from({ length: doc.chunk_count ?? 0 }, (_, i) => `${id}:${i}`),
   ];
-  if (ids.length) await c.env.VECTORIZE?.deleteByIds(ids).catch(() => {});
+  if (ids.length) await deleteVectors(c.env, ids, 'kb-document');
   if (doc.r2_key) await c.env.R2.delete(doc.r2_key).catch(() => {});
   await c.env.R2.delete(`kb-text/${id}.txt`).catch(() => {});
   await c.env.DB.prepare('DELETE FROM kb_documents WHERE id = ?').bind(id).run();

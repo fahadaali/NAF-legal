@@ -2361,7 +2361,7 @@ export async function deleteOrphans(
     // ومتجهاتها معها: سجلٌّ حُذف ومتجهُه باقٍ يُرجع نتيجةً لا صفَّ لها.
     if (env.VECTORIZE) {
       const seqs = slice.map((id) => existing.get(id)?.seq).filter((n): n is number => typeof n === 'number');
-      if (seqs.length) await env.VECTORIZE.deleteByIds(seqs.map(vectorId)).catch(() => {});
+      if (seqs.length) await deleteVectors(env, seqs.map(vectorId), 'deleted');
     }
   }
   return deleted;
@@ -2999,7 +2999,7 @@ export async function rollbackBatch(
   for (let i = 0; i < removedRows.length; i += DB_BATCH) {
     const slice = removedRows.slice(i, i + DB_BATCH);
     await env.DB.batch(slice.map((r) => env.DB.prepare('DELETE FROM legal_chunks WHERE id = ?').bind(r.id)));
-    if (env.VECTORIZE) await env.VECTORIZE.deleteByIds(slice.map((r) => vectorId(r.seq))).catch(() => {});
+    await deleteVectors(env, slice.map((r) => vectorId(r.seq)), 'rollback');
   }
   if (found.length > removedRows.length) {
     await env.DB.prepare('UPDATE legal_batches SET updated_at = ? WHERE batch_id = ?').bind(Date.now(), batchId).run();
@@ -3194,6 +3194,156 @@ export async function listLawChanges(
 // ── ٢) الفهرسة: `embed_text` وحده يصير متجهاً ──
 
 /** معرّف المتجه من المفتاح الداخلي — قصير وثابت مهما طال `id` في الملف. */
+// ── حذف المتجهات: ما فشل يُعاد، وما بقي بلا سجلّ يُكنس (هجرة 0049) ──
+
+/** أقصى ما يُرسل في `deleteByIds` الواحد — ما يحذفه `purgeRepealedVectors` في دورته منذ بدء الفهرس. */
+export const VECTOR_DELETE_MAX = 500;
+
+/** كم `seq` يُكنس في النبضة الواحدة — عشرةُ نداءات حذف، ودون سقف طلبات النداء الفرعية بمريح. */
+export const VECTOR_SWEEP_STEP = 5000;
+
+/**
+ * يحذف متجهاتٍ من الفهرس — ولا يبتلع فشله.
+ *
+ * كان كلُّ حذفٍ يُختم بـ`.catch(() => {})`: يفشل مرّةً فيبقى المتجه بلا سجلّ ولا
+ * يعلم به أحد (178 قبل 19 نوفمبر 2026). فما فشل يُقال في السجلّ ويُحفظ في
+ * `legal_vector_deletes`، وتعيده كلُّ نبضة (`drainVectorDeletes`). ولا يرمي: الحذفُ
+ * يلحق كتابةً تمّت، وفشلُه لا يُبطلها.
+ */
+export async function deleteVectors(env: Env, ids: string[], reason: string): Promise<void> {
+  if (!env.VECTORIZE || !ids.length) return;
+  const unique = [...new Set(ids)];
+  for (let i = 0; i < unique.length; i += VECTOR_DELETE_MAX) {
+    const slice = unique.slice(i, i + VECTOR_DELETE_MAX);
+    try {
+      await env.VECTORIZE.deleteByIds(slice);
+    } catch (e: any) {
+      console.warn('legal vector delete failed — queued:', reason, slice.length, e?.message ?? e);
+      await queueVectorDeletes(env, slice, reason);
+    }
+  }
+}
+
+async function queueVectorDeletes(env: Env, ids: string[], reason: string): Promise<void> {
+  const now = Date.now();
+  try {
+    for (let i = 0; i < ids.length; i += DB_BATCH) {
+      await env.DB.batch(
+        ids.slice(i, i + DB_BATCH).map((id) =>
+          env.DB.prepare(
+            `INSERT INTO legal_vector_deletes (vector_id, reason, tries, first_at, last_at) VALUES (?, ?, 1, ?, ?)
+             ON CONFLICT(vector_id) DO UPDATE SET tries = tries + 1, last_at = excluded.last_at`
+          ).bind(id, reason, now, now)
+        )
+      );
+    }
+  } catch (e: any) {
+    console.error('legal vector delete queue failed:', e?.message ?? e);
+  }
+}
+
+/** يعيد حذفَ ما فشل حذفُه — أقدمه أوّلاً. ويُرجع كم حُذف. */
+export async function drainVectorDeletes(env: Env, limit = VECTOR_DELETE_MAX): Promise<number> {
+  if (!env.VECTORIZE) return 0;
+  const rows = await env.DB.prepare('SELECT vector_id FROM legal_vector_deletes ORDER BY first_at LIMIT ?')
+    .bind(Math.min(limit, VECTOR_DELETE_MAX))
+    .all<{ vector_id: string }>();
+  const ids = (rows.results ?? []).map((r) => r.vector_id);
+  if (!ids.length) return 0;
+  const now = Date.now();
+  try {
+    await env.VECTORIZE.deleteByIds(ids);
+  } catch (e: any) {
+    console.warn('legal vector delete retry failed:', ids.length, e?.message ?? e);
+    for (let i = 0; i < ids.length; i += DB_BATCH) {
+      await env.DB.batch(
+        ids.slice(i, i + DB_BATCH).map((id) =>
+          env.DB.prepare('UPDATE legal_vector_deletes SET tries = tries + 1, last_at = ? WHERE vector_id = ?').bind(now, id)
+        )
+      );
+    }
+    return 0;
+  }
+  for (let i = 0; i < ids.length; i += DB_BATCH) {
+    await env.DB.batch(
+      ids.slice(i, i + DB_BATCH).map((id) => env.DB.prepare('DELETE FROM legal_vector_deletes WHERE vector_id = ?').bind(id))
+    );
+  }
+  return ids.length;
+}
+
+/**
+ * يبدأ كنسَ الفهرس بـ`seq` إن لم يكن جارياً — يبدؤه الفحص الليلي حين يجد يتيماً.
+ *
+ * و`until` أعلى `seq` اليوم: `seq` بـ`AUTOINCREMENT` لا يُعاد استعماله بعد حذف، فما
+ * غاب دونه سجلٌّ حُذف لا يحمل متجهُه سجلاً آخر، وما يُكتب بعد البدء فوقه لا يُكنس.
+ */
+export async function startVectorSweep(env: Env, now = Date.now()): Promise<boolean> {
+  // يبدؤه الفحص الليلي وحده — نداءٌ واحد في الليلة — فالقراءةُ قبل الكتابة تكفي.
+  const running = await env.DB.prepare('SELECT cursor FROM legal_vector_sweep WHERE id = 1').first<{ cursor: number | null }>();
+  if (running && running.cursor !== null) return false;
+  const top = await env.DB.prepare('SELECT MAX(seq) AS n FROM legal_chunks').first<{ n: number | null }>();
+  if (!top?.n) return false;
+  await env.DB.prepare(
+    `INSERT INTO legal_vector_sweep (id, cursor, until, sent, started_at, updated_at) VALUES (1, 0, ?, 0, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET cursor = 0, until = excluded.until, sent = 0,
+       started_at = excluded.started_at, updated_at = excluded.updated_at`
+  )
+    .bind(top.n, now, now)
+    .run();
+  return true;
+}
+
+/**
+ * جزءٌ من الكنس — `span` من `seq` بعد موضعه.
+ *
+ * يُحذف متجهُ كلِّ `seq` غاب سجلُّه، أو حضر وهو لا يستحقّ متجهاً ولا يحمله (`embedded_at`
+ * فارغ): متجهٌ هناك يتيم. ويبقى ما ضُمِّن وما ينتظر التضمين — متجهُه القديم يُكتب فوقه.
+ * وحذفُ ما لا وجود له في الفهرس لا يضرّ، فلا يُسأل الفهرس قبل الحذف.
+ *
+ * ولا يمضي والتضمين جارٍ: سجلٌّ صار يستحقّ متجهاً بعد قراءة هذا الجزء قد يُضمَّن قبل
+ * الحذف فيُحذف متجهُه الجديد. والتضمين الجاري علامةُ استيرادٍ قريب.
+ */
+export async function stepVectorSweep(
+  env: Env,
+  now = Date.now(),
+  span = VECTOR_SWEEP_STEP
+): Promise<{ active: boolean; sent: number; done: boolean }> {
+  const row = await env.DB.prepare('SELECT cursor, until, sent FROM legal_vector_sweep WHERE id = 1').first<{
+    cursor: number | null; until: number | null; sent: number;
+  }>();
+  if (!row || row.cursor === null || row.until === null || !env.VECTORIZE) return { active: false, sent: 0, done: false };
+  if ((await pendingEmbeddings(env)) > 0) return { active: true, sent: 0, done: false };
+
+  const from = row.cursor + 1;
+  const to = Math.min(row.cursor + Math.max(1, span), row.until);
+  let sent = 0;
+  if (from <= to) {
+    const keep = await env.DB.prepare(
+      `SELECT seq FROM legal_chunks WHERE seq BETWEEN ? AND ? AND (embedded_at IS NOT NULL OR (${EMBEDDABLE_SQL}))`
+    )
+      .bind(from, to)
+      .all<{ seq: number }>();
+    const kept = new Set((keep.results ?? []).map((r) => r.seq));
+    const ids: string[] = [];
+    for (let seq = from; seq <= to; seq++) if (!kept.has(seq)) ids.push(vectorId(seq));
+    await deleteVectors(env, ids, 'sweep');
+    sent = ids.length;
+  }
+  const total = row.sent + sent;
+  if (to >= row.until) {
+    await env.DB.prepare('UPDATE legal_vector_sweep SET cursor = NULL, until = NULL, sent = ?, updated_at = ? WHERE id = 1')
+      .bind(total, now)
+      .run();
+    console.warn('legal vector sweep done:', JSON.stringify({ until: row.until, sent: total }));
+    return { active: false, sent, done: true };
+  }
+  await env.DB.prepare('UPDATE legal_vector_sweep SET cursor = ?, sent = ?, updated_at = ? WHERE id = 1')
+    .bind(to, total, now)
+    .run();
+  return { active: true, sent, done: false };
+}
+
 function vectorId(seq: number): string {
   return `legal:${seq}`;
 }
@@ -3344,7 +3494,8 @@ async function purgeRepealedVectors(env: Env, limit: number): Promise<number> {
   // الحذف أوّلاً ثم التصفير: لو انقطع الشوط بينهما بقي الصفّ موسوماً
   // بمتجهٍ حُذف، فيُعاد الحذف في الشوط التالي بلا ضرر. والعكس يترك متجهاً
   // لا يعرف أحدٌ أنه بقي.
-  await env.VECTORIZE!.deleteByIds(stale.map((r) => vectorId(r.seq))).catch(() => {});
+  // وما فشل حذفُه يُحفظ ليُعاد (`deleteVectors`): التصفيرُ بعده لا يترك متجهاً لا يعرفه أحد.
+  await deleteVectors(env, stale.map((r) => vectorId(r.seq)), 'repealed');
   await env.DB.batch(
     stale.map((r) => env.DB.prepare('UPDATE legal_chunks SET embedded_at = NULL WHERE seq = ?').bind(r.seq))
   );

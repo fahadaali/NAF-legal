@@ -3085,6 +3085,59 @@ await check('٣٦ · إحصاءُ الجسّ: آخرُ ما حُسب في نصف
     'ما ينتظر التضمين في الجسّ الخفيف غيرُ عدّه في الإحصاء');
 });
 
+await check('٣٧ · حذفُ المتجه الفاشل يُحفظ ويُعاد — لا يُبتلع', async () => {
+  const realDelete = VECTORIZE.deleteByIds;
+  vectorStore.set('legal:4242424', { id: 'legal:4242424', values: new Array(DIM).fill(0) });
+  VECTORIZE.deleteByIds = async () => { throw new Error('vectorize unavailable'); };
+  try {
+    await lib.deleteVectors(env, ['legal:4242424'], 'test');
+  } finally {
+    VECTORIZE.deleteByIds = realDelete;
+  }
+  assert.ok(vectorStore.has('legal:4242424'));
+  assert.equal(q("SELECT COUNT(*) AS n FROM legal_vector_deletes WHERE vector_id = 'legal:4242424'")[0].n, 1, 'الحذف الفاشل لم يُحفظ');
+  assert.equal(await lib.drainVectorDeletes(env), 1);
+  assert.ok(!vectorStore.has('legal:4242424'), 'إعادة الحذف لم تحذف المتجه');
+  assert.equal(q('SELECT COUNT(*) AS n FROM legal_vector_deletes')[0].n, 0, 'ما أُعيد حذفُه بقي في الطابور');
+});
+
+const LBL = { doc_type: 'لائحة', retrieval_status: 'نافذ' };
+await check('٣٧ · كنسُ اليتيم: متجهُ سجلٍّ حُذف ومتجهُ ملغاةٍ بلا تضمين يُحذفان، وما ضُمِّن يبقى', async () => {
+  for (let i = 0; i < 10 && (await lib.pendingEmbeddings(env)) > 0; i++) await lib.embedPending(env, 1000);
+  assert.equal(await lib.pendingEmbeddings(env), 0, 'طابور التضمين لم يفرغ قبل الفحص');
+  const kept = q('SELECT seq FROM legal_chunks WHERE embedded_at IS NOT NULL ORDER BY seq LIMIT 1')[0].seq;
+  assert.ok(vectorStore.has(`legal:${kept}`), 'المادة المضمَّنة بلا متجه قبل الكنس');
+  const repealed = q(`SELECT seq FROM legal_chunks WHERE embedded_at IS NULL AND (is_repealed = 1 OR retrieval_status = 'ملغى') ORDER BY seq LIMIT 1`)[0].seq;
+  vectorStore.set(`legal:${repealed}`, { id: `legal:${repealed}`, values: new Array(DIM).fill(0) });
+  // سجلٌّ حُذف ومتجهُه باقٍ: يُكتب ويُضمَّن ثم يُحذف صفُّه بلا متجهه.
+  await lib.upsertLegalChunks(env, lib.parseJsonl(v6line({ ...LBL, id: 'يتيم/art-001', law_id: 'orphan-law',
+    law_name: 'نظام اليتيم', article_no: 1, article_label: 'المادة الأولى', text: 'نصٌّ سيُحذف صفُّه.' })).rows);
+  await lib.embedPending(env, 100);
+  const gone = q("SELECT seq FROM legal_chunks WHERE id = 'يتيم/art-001'")[0].seq;
+  assert.ok(vectorStore.has(`legal:${gone}`));
+  // وسجلٌّ بعده يجعل `seq` المحذوف دون أعلى `seq` — كما في القاعدة الحقيقية.
+  await lib.upsertLegalChunks(env, lib.parseJsonl(v6line({ ...LBL, id: 'يتيم/art-002', law_id: 'orphan-law',
+    law_name: 'نظام اليتيم', article_no: 2, article_label: 'المادة الثانية', text: 'نصٌّ يبقى.' })).rows);
+  await lib.embedPending(env, 100);
+  q("DELETE FROM legal_chunks WHERE id = 'يتيم/art-001'");
+
+  assert.equal(await lib.startVectorSweep(env, 1), true);
+  assert.equal(await lib.startVectorSweep(env, 2), false, 'كنسٌ ثانٍ بدأ فوق الجاري');
+  let step;
+  for (let i = 0; i < 10000; i++) {
+    step = await lib.stepVectorSweep(env, 3 + i, 50);
+    if (step.done) break;
+  }
+  assert.ok(step.done, 'الكنس لم ينتهِ');
+  assert.ok(!vectorStore.has(`legal:${gone}`), 'متجهُ السجلّ المحذوف بقي');
+  assert.ok(!vectorStore.has(`legal:${repealed}`), 'متجهُ الملغاة بلا تضمين بقي');
+  assert.ok(vectorStore.has(`legal:${kept}`), 'الكنس حذف متجه مادةٍ مضمَّنة');
+  const survivor = q("SELECT seq FROM legal_chunks WHERE id = 'يتيم/art-002'")[0].seq;
+  assert.ok(vectorStore.has(`legal:${survivor}`), 'الكنس حذف متجه السجلّ الأخير');
+  assert.equal((await lib.stepVectorSweep(env, 99_999)).active, false, 'الكنس بقي جارياً بعد ختامه');
+  q("DELETE FROM legal_chunks WHERE law_id = 'orphan-law'");
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(
