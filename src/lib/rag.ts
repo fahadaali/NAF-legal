@@ -276,8 +276,16 @@ export function fromLegalHit(h: LegalHit): RagResult {
  */
 function articleRefOf(h: LegalHit): string | undefined {
   if (h.isAnnex || h.isAttachment || h.isMukarrar) return h.articleLabel ?? undefined;
+  // والبندُ في وثيقةٍ لا تُعنون وحدتها «المادة» بعلامته كما كُتبت: «٥/٣» · «أولاً» ·
+  // «القاعدة التاسعة» (§3-١٣) — رقمُه تسلسلٌ في الوثيقة، و«المادة 6» لا وجود لها فيها.
+  // وعلامةٌ هي رقمٌ وحده («1») رقمُ المادة نفسه، فيبقى «المادة 1».
+  if (h.articleLabel && !UNIT_ARTICLE.test(h.articleLabel) && !BARE_NUMBER.test(h.articleLabel)) return h.articleLabel;
   return h.articleNo ? `المادة ${h.articleNo}` : undefined;
 }
+
+/** عنوانٌ وحدتُه «المادة» — يُستشهد به برقمه كما كان. */
+const UNIT_ARTICLE = /^\s*(?:ال)?ماد[ةه](?:\s|$)/;
+const BARE_NUMBER = /^\s*[\d٠-٩]+\s*$/;
 
 /* ══ فهرس المحادثات المتجهي — أُسقط ══
  *

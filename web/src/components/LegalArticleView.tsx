@@ -48,8 +48,15 @@ export function statutoryDate(value: string): string {
  * يُستشهد به أبداً (§3-12)، ورقمُ المرفق ومادة «مكرر» رقمُ مادةٍ أخرى.
  */
 function byLabel(a: LegalArticle): boolean {
-  return !!(a.isAnnex || a.isAttachment || a.isMukarrar);
+  // والبندُ في وثيقةٍ لا تُعنون وحدتها «المادة» بعلامته: «٥/٣» · «أولاً» · «القاعدة التاسعة»
+  // (§3-١٣ في دليل الاستيراد) — رقمُه تسلسلٌ في الوثيقة لا يُعرض ولا يُستشهد به.
+  return !!(a.isAnnex || a.isAttachment || a.isMukarrar || (a.articleLabel && !UNIT_ARTICLE.test(a.articleLabel) && !BARE_NUMBER.test(a.articleLabel)));
 }
+
+/** عنوانٌ وحدتُه «المادة» — يُسمّى برقمه كما كان. */
+const UNIT_ARTICLE = /^\s*(?:ال)?ماد[ةه](?:\s|$)/;
+/** وعلامةٌ هي رقمٌ وحده («1») رقمُ المادة نفسه — «المادة 1». */
+const BARE_NUMBER = /^\s*[\d٠-٩]+\s*$/;
 
 /**
  * اسمُ المادة القصير — لسطر النتيجة وشارة الطابور.

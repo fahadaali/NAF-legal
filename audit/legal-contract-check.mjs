@@ -3206,6 +3206,16 @@ await check('٣٧ · كنسُ اليتيم: متجهُ سجلٍّ حُذف وم�
   q("DELETE FROM legal_chunks WHERE law_id = 'orphan-law'");
 });
 
+await check('٣٨ · البندُ يُستشهد بعلامته في سياق المساعد — «5/3» لا «المادة 6» — والمادة برقمها كما كانت', async () => {
+  const items = lib.formatRagContext(await lib.retrieve(env, ['نصُّ البند 5/3 من اللائحة'], 10));
+  assert.match(items, /اللائحة التنفيذية لنظام البنود — 5\/3/, 'البند لم يُستشهد بعلامته');
+  assert.ok(!/اللائحة التنفيذية لنظام البنود — المادة \d/.test(items), 'البند استُشهد برقم تسلسله');
+  const rules = lib.formatRagContext(await lib.retrieve(env, ['نصُّ القاعدة التاسعة'], 10));
+  assert.match(rules, /قواعد البنود — القاعدة التاسعة/, 'القاعدة لم تُستشهد بعنوانها');
+  const law = lib.formatRagContext(await lib.retrieve(env, ['انتهاء عقد العمل باتفاق الطرفين'], 10));
+  assert.match(law, /نظام العمل — المادة 74/, 'المادة في نظامٍ عادي تغيّر استشهادها');
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(
