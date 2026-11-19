@@ -105,10 +105,18 @@ app.post('/proofread', async (c) => {
  * و`language` معه: النموذج يكشف اللغة وحدَه، وكشفُه يخطئ على مقطعٍ عربيٍّ
  * قصير فيفرّغه بحروفٍ لاتينية. والمنصة عربية، فتُقال اللغة ولا تُخمَّن.
  */
+const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
+
 app.post('/transcribe', async (c) => {
   const user = c.get('user');
+  /* سقفُ الرفع نفسه (15MB): كان المسار يقرأ أيَّ جسمٍ ويحوّله base64 في الذاكرة
+     قبل أن يسأل عن حجمه. ويُرفض من ترويسته قبل قراءته متى أعلنها المرسِل. */
+  if (Number(c.req.header('content-length') ?? 0) > MAX_AUDIO_BYTES) {
+    return c.json({ error: 'حجم الملف يتجاوز الحد (15MB)' }, 413);
+  }
   const buf = await c.req.arrayBuffer();
   if (!buf.byteLength) return c.json({ error: 'لا يوجد صوت' }, 400);
+  if (buf.byteLength > MAX_AUDIO_BYTES) return c.json({ error: 'حجم الملف يتجاوز الحد (15MB)' }, 413);
   try {
     const res = await c.env.AI.run('@cf/openai/whisper-large-v3-turbo', {
       audio: base64(buf),
@@ -119,7 +127,8 @@ app.post('/transcribe', async (c) => {
     return c.json({ text: res?.text ?? '' });
   } catch (e: any) {
     console.error('transcribe failed:', e?.message ?? e);
-    return c.json({ error: 'تعذّر التفريغ الصوتي', detail: String(e?.message ?? e) }, 502);
+    // السبب في السجلّ لا في الردّ: نصُّ استثناءٍ من وقت التشغيل لا يقول للقارئ شيئاً يفعله.
+    return c.json({ error: 'تعذّر التفريغ الصوتي' }, 502);
   }
 });
 

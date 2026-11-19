@@ -283,13 +283,19 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
   }, [lawId]);
 
   useEffect(() => {
+    /* نظامٌ بُدّل أو صفحةٌ قُلبت قبل وصول سابقتها: ردُّ السابقة لا يكتب فوق اللاحقة. */
+    let live = true;
     api
       .legalLawArticles(lawId, offset, PAGE)
       .then((r) => {
+        if (!live) return;
         setArticles(r.articles);
         setTotal(r.total);
       })
       .catch(() => {});
+    return () => {
+      live = false;
+    };
   }, [lawId, offset]);
 
   return (

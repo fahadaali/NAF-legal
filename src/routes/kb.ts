@@ -1,5 +1,6 @@
 // إدارة قاعدة المعرفة (للمسؤول) — §6
 import { Hono } from 'hono';
+import { FRAMED_FILE_HEADER } from '../lib/framedFile';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
 import { uuid } from '../lib/crypto';
 import { extractText } from '../lib/extract';
@@ -244,6 +245,9 @@ async function serveR2File(c: any, key: string, name: string): Promise<Response>
     headers: {
       'content-type': ct,
       'content-disposition': `inline; filename="${encodeURIComponent(name)}"`,
+      /* يُعرض في إطار المنصة (`KbViewer`). ونوعُه كما رُفع لا من جدولٍ مضبوط، فما
+         ليس PDF معزولٌ: صفحةٌ أو SVG رُفع بنوعه لا يعمل فيه نصٌّ بصلاحيات المنصة. */
+      [FRAMED_FILE_HEADER]: ct.startsWith('application/pdf') ? 'pdf' : 'sandbox',
     },
   });
 }

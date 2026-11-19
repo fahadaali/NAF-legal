@@ -32,6 +32,12 @@ const routes = await bundle(
    export { default as files } from './files';
    export { default as folders } from './folders';
    export { default as conversations } from './conversations';
+   export { default as cases } from './cases';
+   export { default as members } from './members';
+   export { allowRequest } from '../lib/rateLimit';
+   export { framedFileMiddleware, FRAMED_FILE_HEADER } from '../lib/framedFile';
+   export { Hono } from 'hono';
+   export { secureHeaders } from 'hono/secure-headers';
    export { isOfficialUrl } from './admin';
    export { default as evalRoutes } from './eval';
    export { extractPendingLinks, parseRefs, ordinalToNumber } from '../lib/research/links';
@@ -637,7 +643,8 @@ await t.check('نوع الملف المرفوع من الخادم لا من ال
   const served = await routes.files.request('/attachments/old/file', {}, { ...env, R2 });
   assert.equal(served.headers.get('content-type'), 'text/plain; charset=utf-8');
   assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
-  assert.equal(served.headers.get('content-security-policy'), 'sandbox');
+  // السياسة يكتبها وسيطٌ بعد `secureHeaders` من هذا الوسم — فحصُها مركَّباً في «الملفُّ المعروض في إطار المنصة».
+  assert.equal(served.headers.get(routes.FRAMED_FILE_HEADER), 'sandbox');
 });
 
 await t.check('ملفٌّ بنوعٍ غير مدعوم يُرفض', async () => {
@@ -671,6 +678,124 @@ await t.check('حذف المحادثة يحذف ملفاتها من R2 وما ت
   assert.equal(res.status, 200);
   assert.equal(R2._map.size, 0, 'بقي ملفُّ العميل في R2');
   assert.equal(db.q('SELECT COUNT(*) AS n FROM draft_versions')[0].n, 0, 'بقيت نسخ المسودّة يتيمة');
+});
+
+await t.check('فتحُ المحادثة يحمل تقييم كل ردّ ومرفقاتها، ولا يفتحها غيرُ صاحبها', async () => {
+  const { env, db } = await chatFixture();
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('q1','c1','user','سؤال',1)");
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('m1','c1','assistant','ردّ أول',2)");
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('m2','c1','assistant','ردّ ثان',3)");
+  db.q("INSERT INTO message_feedback (id, message_id, user_id, rating, created_at) VALUES ('f1','m1','u1',1,1)");
+  // تقييمُ غيره على الردّ نفسه لا يظهر له.
+  db.q("INSERT INTO message_feedback (id, message_id, user_id, rating, created_at) VALUES ('f2','m2','u9',-1,1)");
+  db.q("INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, created_at) VALUES ('a1','c1','k','a.pdf','application/pdf',1,1)");
+
+  const res = await routes.conversations.request('/c1', {}, env);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.messages.map((m) => [m.id, m.rating ?? null]), [['q1', null], ['m1', 1], ['m2', null]]);
+  assert.equal(body.attachments.length, 1);
+  assert.equal(body.conversation.id, 'c1');
+
+  globalThis.__naf_user = { id: 'u2', email: 'u2@x', role: 'editor' };
+  try {
+    const other = await routes.conversations.request('/c1', {}, env);
+    assert.equal(other.status, 404, 'فتح غيرُ صاحبها محادثتَه');
+  } finally {
+    globalThis.__naf_user = undefined;
+  }
+});
+
+await t.check('ملفُّ قضيةٍ بأكثر من مئة محادثة يُفتح، بمقتطفٍ لا بنصٍّ كامل، ولصاحبه وحده', async () => {
+  const { env, db } = await chatFixture();
+  db.q("INSERT INTO case_folders (id, user_id, name, color, created_at) VALUES ('f1','u1','قضية','primary',1)");
+  // مئةٌ وعشرون: كان الملفُّ يطلب مسوّداتها بمعاملٍ لكل محادثة، وD1 يرفض ما فوق المئة.
+  for (let i = 0; i < 120; i++) {
+    db.q('INSERT INTO conversations (id, user_id, title, folder_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', `k${i}`, 'u1', `م${i}`, 'f1', i, i);
+  }
+  db.q("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ('d1','k7','assistant',?,5)", 'أ'.repeat(5000));
+  db.q("INSERT INTO attachments (id, conversation_id, r2_key, filename, mime, size, created_at) VALUES ('a9','k9','k','a.pdf','application/pdf',1,1)");
+
+  const res = await routes.cases.request('/f1', {}, env);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.conversations.length, 120);
+  assert.equal(body.drafts.length, 1);
+  assert.equal(body.drafts[0].content, undefined, 'العرض حمل نصَّ المسوّدة كاملاً');
+  assert.equal(body.drafts[0].excerpt.length, 200);
+  assert.equal(body.attachments.length, 1);
+
+  globalThis.__naf_user = { id: 'u2', email: 'u2@x', role: 'editor' };
+  try {
+    assert.equal((await routes.cases.request('/f1', {}, env)).status, 404, 'فتح غيرُ صاحبها قضيتَه');
+  } finally {
+    globalThis.__naf_user = undefined;
+  }
+});
+
+await t.check('الملفُّ المعروض في إطار المنصة يأخذ سياسته لا سياسة الصفحة', async () => {
+  // بترتيب `src/index.ts`: وسيطُ الملف ثم `secureHeaders` بسياسة الصفحة.
+  const app = new routes.Hono();
+  app.use('*', routes.framedFileMiddleware);
+  app.use('*', routes.secureHeaders({ contentSecurityPolicy: { defaultSrc: ["'self'"], frameAncestors: ["'none'"] } }));
+  app.get('/doc', () => new Response('x', { headers: { [routes.FRAMED_FILE_HEADER]: 'sandbox' } }));
+  app.get('/pdf', () => new Response('x', { headers: { [routes.FRAMED_FILE_HEADER]: 'pdf' } }));
+  app.get('/page', () => new Response('x'));
+
+  const doc = await app.request('/doc');
+  assert.equal(doc.headers.get('content-security-policy'), "sandbox; frame-ancestors 'self'", 'ضاع العزل أو مُنع الإطار');
+  assert.equal(doc.headers.get(routes.FRAMED_FILE_HEADER), null, 'بقي الوسم في الردّ');
+  assert.equal((await app.request('/pdf')).headers.get('content-security-policy'), "frame-ancestors 'self'");
+  assert.match((await app.request('/page')).headers.get('content-security-policy'), /frame-ancestors 'none'/, 'الصفحة فقدت سياستها');
+});
+
+await t.check('مسؤولان يُنزل كلٌّ منهما الآخر: يبقى أحدُهما مسؤولاً', async () => {
+  const db = await makeDb();
+  db.q("INSERT INTO members (user_id, role, is_active, created_at) VALUES ('A','admin',1,1), ('B','admin',1,1), ('E','editor',1,1)");
+  const env = { ...ENV_BASE, DB: db.DB, KV: makeKv() };
+  const as = (memberId) => (globalThis.__naf_user = { id: memberId, email: '', role: 'admin', memberId });
+  const patch = (path, body) =>
+    routes.members.request(path, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, env, makeCtx());
+  try {
+    as('A');
+    assert.equal((await patch('/B/role', { role: 'editor' })).status, 200);
+    // وصل طلبُ B بعد أن نزل — والفحص قبل الكتابة كان قد مرّ وهو مسؤول.
+    as('B');
+    const second = await patch('/A/role', { role: 'editor' });
+    assert.equal(second.status, 409);
+    assert.equal((await second.json()).error, 'لا بد من مسؤول واحد على الأقل');
+    const revoke = await patch('/A/active', { is_active: false, reason: 'سبب' });
+    assert.equal(revoke.status, 409);
+    assert.deepEqual({ ...db.q("SELECT role, is_active FROM members WHERE user_id = 'A'")[0] }, { role: 'admin', is_active: 1 });
+    // وما سوى المسؤول الأخير يمرّ كما كان.
+    as('A');
+    assert.equal((await patch('/E/role', { role: 'viewer' })).status, 200);
+    assert.equal((await patch('/E/active', { is_active: false, reason: 'سبب' })).status, 200);
+  } finally {
+    globalThis.__naf_user = undefined;
+  }
+});
+
+await t.check('حدُّ المعدّل: الخاصية المدمجة تحكم متى رُبطت، وعدّادُ KV بدونها', async () => {
+  const keys = [];
+  const binding = (outcome) => ({
+    async limit({ key }) {
+      keys.push(key);
+      if (outcome === 'throw') throw new Error('down');
+      return { success: outcome };
+    },
+  });
+  const env = { KV: makeKv() };
+  const opts = { limit: 2, windowSec: 60 };
+  assert.equal(await routes.allowRequest(binding(true), env, 'u1', opts), true);
+  assert.equal(await routes.allowRequest(binding(false), env, 'u1', opts), false, 'تجاوزٌ مرّ');
+  assert.equal(await routes.allowRequest(binding('throw'), env, 'u1', opts), true, 'عطلُ الخاصية أغلق المنصة');
+  assert.deepEqual(keys, ['legal:u1', 'legal:u1', 'legal:u1'], 'المفتاح بلا بادئة المنصة');
+  // وبلا ربط: عدّاد KV بمفتاحه القديم، ويُردّ الثالث.
+  assert.equal(await routes.allowRequest(undefined, env, 'u2', opts), true);
+  assert.equal(await routes.allowRequest(undefined, env, 'u2', opts), true);
+  assert.equal(await routes.allowRequest(undefined, env, 'u2', opts), false);
+  assert.ok(await env.KV.get('rl:u2'), 'العدّاد البديل لم يُكتب بمفتاحه');
 });
 
 await t.check('الاستيعاب من رابط: مصادر رسمية بـhttps وحدها', async () => {

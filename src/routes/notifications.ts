@@ -8,19 +8,17 @@ app.use('*', requireAuth);
 
 app.get('/', async (c) => {
   const user = c.get('user');
-  const rows = await c.env.DB.prepare(
-    'SELECT id, kind, title, body, link, read_at, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'
-  )
-    .bind(user.id)
-    .all();
   /* العدّاد على الجدول لا على الخمسين المعروضة.
      كان يُحسب من نتيجة `LIMIT 50` نفسها، فمن تجاوز غيرُ المقروء عنده
-     الخمسين يرى عدداً أقلّ من الحقيقة — والشارة تقول «خمسون» وهي مئة. */
-  const unread = await c.env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL'
-  )
-    .bind(user.id)
-    .first<{ n: number }>();
+     الخمسين يرى عدداً أقلّ من الحقيقة — والشارة تقول «خمسون» وهي مئة.
+     والاستعلامان في دفعةٍ واحدة: الجرس يُجلب مع كل صفحةٍ وكل دقيقة. */
+  const [rows, counted] = await c.env.DB.batch([
+    c.env.DB.prepare(
+      'SELECT id, kind, title, body, link, read_at, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'
+    ).bind(user.id),
+    c.env.DB.prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL').bind(user.id),
+  ]);
+  const unread = (counted.results?.[0] as { n: number } | undefined) ?? null;
   return c.json({ notifications: rows.results, unread: unread?.n ?? 0 });
 });
 

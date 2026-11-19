@@ -14,7 +14,7 @@ app.get('/', async (c) => {
   const status = c.req.query('status') ?? 'open';
   const rows = await c.env.DB.prepare(
     `SELECT d.*, f.name AS folder_name FROM deadlines d
-     LEFT JOIN case_folders f ON f.id = d.folder_id
+     LEFT JOIN case_folders f ON f.id = d.folder_id AND f.user_id = d.user_id
      WHERE d.user_id = ? AND (? = 'all' OR d.status = ?)
      ORDER BY d.due_date ASC LIMIT 200`
   )

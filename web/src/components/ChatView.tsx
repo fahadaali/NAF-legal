@@ -221,21 +221,14 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         return [...r.attachments, ...prev.filter((a) => !a.message_id && !known.has(a.id))];
       });
 
-      /* التقييمات تُجلب عند فتح المحادثة وحدها.
-         نداءٌ لكل رسالة مساعد — ومحادثةٌ ذات عشرين ردّاً تعني إحدى وعشرين
-         نداءً في الجلبة الواحدة. وحدّ المعدّل ستون في الدقيقة، فجلبةٌ متكرّرة
-         كلَّ أربع ثوانٍ أثناء الجسّ تُحرق الحدّ وتُغلق المنصة على صاحبها.
-         والجسُّ لا يحتاجها أصلاً: التقييم لا يتغيّر إلا بيد صاحبه، ورسالةٌ
-         وُلدت للتوّ لا تقييم لها. */
+      /* التقييماتُ مع المحادثة نفسها (`rating` على كل رسالة).
+         كانت نداءً لكل ردّ — محادثةٌ بعشرين ردّاً عشرون نداءً بعد الفتح من حدٍّ
+         قدره ستون في الدقيقة، فتنقّلٌ سريع بين محادثاتٍ طويلة كان يُغلق المنصة
+         على صاحبها وتُفتح المحادثة التالية فارغة. والجسُّ لا يمسّها: التقييم لا
+         يتغيّر إلا بيد صاحبه، ورسالةٌ وُلدت للتوّ لا تقييم لها. */
       if (opts.withFeedback === false) return;
-      const pairs = await Promise.all(
-        msgs
-          .filter((m) => m.role === 'assistant')
-          .map((m) => api.getFeedback(m.id).then((f) => [m.id, f.feedback?.rating] as const).catch(() => [m.id, undefined] as const))
-      );
-      if (token !== loadToken.current) return;
       const map: Record<string, number> = {};
-      for (const [id, rating] of pairs) if (rating) map[id] = rating;
+      for (const m of r.messages) if (m.role === 'assistant' && m.rating) map[m.id] = m.rating;
       setFeedback(map);
     } catch {
       // محادثةٌ لم تُجلب لا تُفرَّغ: ما على الشاشة أصدق من شاشةٍ خاوية.
@@ -398,6 +391,10 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
   /* أنظمةُ كل ردٍّ من استشهاداته — ولا يُربط في نصّه إلا ما طابق واحداً منها.
      والسببُ في ترويسة `lib/articleLinks.ts`: استخراجُ اسم النظام من النثر
      تخمين، ورابطٌ يفتح المادة الخطأ في مستندٍ قانوني أسوأ من غياب الرابط. */
+  /* والقائمة نفسها تُعاد لكل ردٍّ لم تتغيّر استشهاداته: `shown` يتجدّد مع كل مقطعٍ
+     يصل، وقائمةٌ جديدة بالمحتوى نفسه كانت تُعيد ربطَ الموادّ وتظليلَها في كل ردٍّ
+     قديم مع كل مقطع. */
+  const lawsCache = useRef(new Map<string, { key: string; laws: KnownLaw[] }>());
   const lawsByMessage = useMemo(() => {
     const map = new Map<string, KnownLaw[]>();
     for (const m of shown) {
@@ -406,7 +403,16 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
         if (c.source === 'document' || !c.title?.trim()) continue;
         if (!seen.has(c.title)) seen.set(c.title, { title: c.title, lawId: c.lawId });
       }
-      if (seen.size) map.set(m.id, Array.from(seen.values()));
+      if (!seen.size) continue;
+      const laws = Array.from(seen.values());
+      const key = laws.map((l) => `${l.title}\u0000${l.lawId ?? ''}`).join('\u0001');
+      const prev = lawsCache.current.get(m.id);
+      if (prev && prev.key === key) {
+        map.set(m.id, prev.laws);
+      } else {
+        lawsCache.current.set(m.id, { key, laws });
+        map.set(m.id, laws);
+      }
     }
     return map;
   }, [shown]);
@@ -549,7 +555,9 @@ export default function ChatView({ conversationId, initialMessage, onInitialCons
     if (!pinned.current) return;
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed && messagesBox.current?.contains(sel.anchorNode)) return;
-    messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
+    /* أثناء البثّ قفزٌ لا انزلاق: انزلاقٌ يُبدأ من جديد مع كل مقطعٍ يصل لا يبلغ
+       غايته أبداً، فترتجّ الشاشة وتتأخّر عن آخر سطر. والانزلاق لما سواه. */
+    messagesEnd.current?.scrollIntoView({ behavior: stream?.streaming ? 'auto' : 'smooth' });
   }, [shown, generating]);
 
   const onMessagesScroll = () => {

@@ -70,14 +70,18 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
   useEffect(() => {
     if (!q.trim()) {
       setResult(null);
+      setBusy(false);
       return;
     }
     // مهلةٌ قصيرة قبل النداء: كل حرفٍ يُكتب نداءٌ، والبحث يمسح جداول.
+    // و`live`: نتيجةُ كلمةٍ سابقة أبطأَ من اللاحقة لا تكتب فوقها.
+    let live = true;
     const t = setTimeout(() => {
       setBusy(true);
       api
         .search(q, scope, undefined, semantic, kbInScope ? legal : {})
         .then((r) => {
+          if (!live) return;
           setResult(r);
           if (r.external?.length) {
             setKnown((prev) => {
@@ -87,10 +91,13 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
             });
           }
         })
-        .catch(() => setResult(null))
-        .finally(() => setBusy(false));
+        .catch(() => live && setResult(null))
+        .finally(() => live && setBusy(false));
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
   }, [q, scope, semantic, legal, kbInScope]);
 
   const empty =

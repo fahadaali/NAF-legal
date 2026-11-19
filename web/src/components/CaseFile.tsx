@@ -21,8 +21,17 @@ export default function CaseFile({ onOpenConversation }: { onOpenConversation: (
 
   useEffect(() => {
     if (!active) return;
+    /* قضيةٌ بُدّلت قبل أن يصل ملفُّ سابقتها: ردُّ السابقة لا يُعرض تحت اسم اللاحقة. */
+    let live = true;
     setLoading(true);
-    api.caseFile(active).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+    api
+      .caseFile(active)
+      .then((d) => live && setData(d))
+      .catch(() => live && setData(null))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
   }, [active]);
 
   return (

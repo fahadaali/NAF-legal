@@ -86,9 +86,12 @@ app.get('/', async (c) => {
   const folderCond = folder ? ' AND c.folder_id = ?' : '';
   const folderArg = folder ? [folder] : [];
 
+  /* المراحل الأربع مستقلّة، فتجري معاً لا واحدةً بعد أخرى — كانت كلُّ كلمةٍ
+     تُكتب في شاشة البحث تنتظر رحلاتها إلى القاعدة متتاليةً ثم المصدر الخارجي. */
+
   // ── المحادثات ──
-  let chats: unknown[] = [];
-  if (wants('chats')) {
+  const searchChats = async (): Promise<unknown[]> => {
+    if (!wants('chats')) return [];
     const chatMatch = matchIn('m.content', q);
     const rows = await c.env.DB.prepare(
       `SELECT c.id AS conversation_id, c.title, c.origin, c.origin_client, m.id AS message_id, m.role, m.created_at,
@@ -102,12 +105,12 @@ app.get('/', async (c) => {
       // يطابق صفّاً، ويرجع كل بحثٍ في المحادثات والمخرجات فارغاً.
       .bind(q, user.id, ...chatMatch.binds, ...folderArg, LIMIT)
       .all();
-    chats = rows.results ?? [];
-  }
+    return rows.results ?? [];
+  };
 
   // ── المخرجات: نُسخ المسودّات المحفوظة ──
-  let outputs: unknown[] = [];
-  if (wants('outputs')) {
+  const searchOutputs = async (): Promise<unknown[]> => {
+    if (!wants('outputs')) return [];
     const outMatch = matchIn('d.content', q);
     const rows = await c.env.DB.prepare(
       `SELECT d.id, d.message_id, d.version, d.note, d.created_at,
@@ -124,32 +127,33 @@ app.get('/', async (c) => {
       // يطابق صفّاً، ويرجع كل بحثٍ في المحادثات والمخرجات فارغاً.
       .bind(q, user.id, ...outMatch.binds, ...folderArg, LIMIT)
       .all();
-    outputs = rows.results ?? [];
-  }
+    return rows.results ?? [];
+  };
 
   // ── قاعدة المعرفة ──
-  let articles: unknown[] = [];
-  let documents: unknown[] = [];
-  if (wants('kb')) {
+  const searchKb = async (): Promise<{ articles: unknown[]; documents: unknown[] }> => {
+    if (!wants('kb')) return { articles: [], documents: [] };
     // المقاطع المستوردة: فهرسٌ لفظيّ مطبَّع عربياً — والتصفية على السريان
     // فيه كما في كل مسار، فلا يُعرض للمستخدم نصٌّ منسوخ.
-    try {
-      // ومرشّحاتُ المواد (§6-1) — النظام والنوع والباب، و«تشمل الملغاة» للباحث
-      // القانوني. تُمرَّر إلى طبقة الاسترجاع فتُصفّى هناك كما يُصفّى كل نداء.
-      articles = await searchLegal(c.env, q, {
+    // ومرشّحاتُ المواد (§6-1) — النظام والنوع والباب، و«تشمل الملغاة» للباحث
+    // القانوني. تُمرَّر إلى طبقة الاسترجاع فتُصفّى هناك كما يُصفّى كل نداء.
+    const findArticles = async (): Promise<unknown[]> => {
+      try {
+        return await searchLegal(c.env, q, {
         limit: LIMIT,
         lexicalOnly: true,
         lawId: c.req.query('law_id') || null,
         docType: c.req.query('doc_type') || null,
         book: c.req.query('book') || null,
         includeRepealed: c.req.query('include_repealed') === '1',
-      });
-    } catch {
-      articles = [];
-    }
+        });
+      } catch {
+        return [];
+      }
+    };
     // الوثائق المرفوعة: بالعنوان — نصُّها في R2 لا في القاعدة فلا يُبحث فيه.
     const docMatch = matchIn('title', q);
-    const rows = await c.env.DB.prepare(
+    const findDocuments = c.env.DB.prepare(
       `SELECT id, title, category, source_authority, status
        FROM kb_documents
        WHERE ${docMatch.sql} AND (status IS NULL OR status != 'repealed')
@@ -157,17 +161,19 @@ app.get('/', async (c) => {
     )
       .bind(...docMatch.binds, LIMIT)
       .all();
-    documents = rows.results ?? [];
-  }
+    const [articles, docRows] = await Promise.all([findArticles(), findDocuments]);
+    return { articles, documents: docRows.results ?? [] };
+  };
 
   /* ── المصادر الخارجية ──
      تُنادى متى لم يُضيَّق النطاق إلى موضعٍ داخليّ. و`scope` قد يكون معرّف
      مصدرٍ بعينه، فيُنادى وحده.
 
      ولا شيء من هذا يقع إن لم يكن ثمّة مصدرٌ مربوط — وهي الحال اليوم. */
-  let external: SourceOutcome[] = [];
   const internalScopes = ['all', 'chats', 'outputs', 'kb'];
-  if (scope === 'all' || !internalScopes.includes(scope)) {
+  const searchExternal = async (): Promise<SourceOutcome[]> => {
+    if (!(scope === 'all' || !internalScopes.includes(scope))) return [];
+    let external: SourceOutcome[] = [];
     try {
       const all = await enabledSources(c.env);
       const picked = scope === 'all' ? all : all.filter((s) => s.id === scope);
@@ -185,7 +191,15 @@ app.get('/', async (c) => {
       // البحث الداخليّ نجح: لا يُفقده عطلُ مصدرٍ خارجيّ.
       console.error('external search failed:', e?.message ?? e);
     }
-  }
+    return external;
+  };
+
+  const [chats, outputs, { articles, documents }, external] = await Promise.all([
+    searchChats(),
+    searchOutputs(),
+    searchKb(),
+    searchExternal(),
+  ]);
 
   return c.json({
     chats,

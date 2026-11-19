@@ -102,7 +102,8 @@ export default function Members() {
   const [pendingRevoke, setPendingRevoke] = useState<Member | null>(null);
 
   const load = () => {
-    setLoading(true);
+    /* الدوّار للتحميل الأول وحده (الحالة تبدأ به): إعادةُ الجلب بعد فعلٍ تجري بهدوء،
+       فلا يختفي الجدول خلف دوّارٍ ولا يضيع موضعُ التمرير بعد كل تغيير. */
     api
       .members()
       .then((r) => setMembers(r.members))

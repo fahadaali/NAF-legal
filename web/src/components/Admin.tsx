@@ -185,15 +185,38 @@ function KbTab() {
     loadStats(background);
   }, [loadDocs, loadStats]);
 
+  /* آخرُ إحصاءٍ وصل — يقرؤه الجسُّ ليختار موعدَه التالي بلا إعادة تركيب الأثر. */
+  const statsRef = useRef(stats);
+  statsRef.current = stats;
+  const docsRef = useRef(docs);
+  docsRef.current = docs;
+
   useEffect(() => {
     reload();
     /* التضمين يمضي في الخادم بعد الردّ، فحالُه يتغيّر بلا فعلٍ من الشاشة.
        والجسُّ موسومٌ خلفيةً: انتهاءُ الرمز بينما المسؤول يقرأ جدولَ الوثائق
        يرفع شريطاً ولا ينتزع الشاشة منه. والجلبة الأولى فعلُه هو — فتحُ
-       التبويب — فتُحوِّل إن انتهت جلستُه قبلها. */
-    const t = setInterval(() => reload(true), 5000);
-    return () => clearInterval(t);
-  }, [reload]);
+       التبويب — فتُحوِّل إن انتهت جلستُه قبلها.
+
+       وكان كلَّ خمس ثوانٍ أبداً: نداءان في كل نبضة، أحدهما يمسح القاعدة القانونية
+       كلَّها — أربعةٌ وعشرون نداءً في الدقيقة من حدٍّ قدره ستون، فيبلغ المسؤولُ
+       الحدَّ وهو يتنقّل ويُقطع عليه الاستيراد. فالآن: خمسُ ثوانٍ ما دام تضمينٌ
+       جارياً، ونصفُ دقيقة إذا سكن، ولا نبضة والنافذة في الخلفية. والنبضة التالية
+       تُجدوَل بعد ردّ السابقة لا على ساعةٍ ثابتة، فلا تتراكم إن أبطأ الخادم. */
+    let alive = true;
+    let t: number | undefined;
+    const tick = async () => {
+      if (!document.hidden) await Promise.all([loadDocs(true), loadStats(true)]);
+      if (!alive) return;
+      const busy = (statsRef.current?.pending_embeddings ?? 0) > 0 || (docsRef.current?.pending_embeddings ?? 0) > 0;
+      t = window.setTimeout(tick, busy ? 5000 : 30000);
+    };
+    t = window.setTimeout(tick, 5000);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+  }, [reload, loadDocs, loadStats]);
 
   useScrollReset(section);
 

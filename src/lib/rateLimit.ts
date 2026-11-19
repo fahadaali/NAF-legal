@@ -14,7 +14,21 @@
  */
 import type { Env } from '../types';
 
-export async function withinRateLimit(env: Env, key: string, limit: number, windowSec: number): Promise<boolean> {
+/**
+ * وكتابةُ العدّاد لا ينتظرها الطلب حين يُعطى `defer` (وهو `waitUntil`).
+ *
+ * كتابةُ KV تذهب إلى المخزن المركزي، وكانت تُنتظر قبل كل نداءٍ إلى `/api/*`
+ * — فيدفع كلُّ ضغطةٍ في المنصة ثمنَ رحلةٍ لا يحتاج نتيجتها: الحكمُ قد صدر
+ * من القراءة قبلها. والعدّ بعدها تقريبيٌّ أصلاً (KV متّسقٌ في النهاية)، فلا
+ * يفقد الحدُّ بالتأجيل شيئاً لم يكن يفقده.
+ */
+export async function withinRateLimit(
+  env: Env,
+  key: string,
+  limit: number,
+  windowSec: number,
+  defer?: (pending: Promise<unknown>) => void
+): Promise<boolean> {
   try {
     const now = Date.now();
     const raw = await env.KV.get(key);
@@ -33,8 +47,36 @@ export async function withinRateLimit(env: Env, key: string, limit: number, wind
     }
     if (count >= limit) return false;
     const ttl = Math.max(60, Math.ceil((resetAt - now) / 1000));
-    await env.KV.put(key, JSON.stringify({ c: count + 1, r: resetAt }), { expirationTtl: ttl });
+    const write = env.KV.put(key, JSON.stringify({ c: count + 1, r: resetAt }), { expirationTtl: ttl });
+    if (defer) defer(write.catch(() => {}));
+    else await write;
     return true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * الحكمُ بالخاصية المدمجة في Cloudflare متى رُبطت، وإلا بعدّاد KV أعلاه.
+ *
+ * الحدُّ والمدة في `wrangler.toml` لا هنا: الربطُ يحملهما، والمستدعي يمرّرهما
+ * لعدّاد KV وحده — وهو للفحوص والتطوير بلا ربط، لا للإنتاج.
+ *
+ * والمفتاح يبدأ بـ`legal:`: معرّفُ المساحة فريدٌ في الحساب، ومنصةٌ أخرى تساويه
+ * خطأً تشارك هذه العدَّ للمفتاح نفسه — والبادئة تجعل المفتاح لا يلتقي بمفاتيحها.
+ *
+ * وعطلُ الخاصية يُمرّر الطلب، كما يفعل عطلُ KV: الحدّ حمايةٌ لا شرطٌ لعمل المنصة.
+ */
+export async function allowRequest(
+  binding: RateLimit | undefined,
+  env: Env,
+  key: string,
+  fallback: { limit: number; windowSec: number; defer?: (pending: Promise<unknown>) => void }
+): Promise<boolean> {
+  if (!binding) return withinRateLimit(env, `rl:${key}`, fallback.limit, fallback.windowSec, fallback.defer);
+  try {
+    const { success } = await binding.limit({ key: `legal:${key}` });
+    return success;
   } catch {
     return true;
   }

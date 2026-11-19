@@ -56,29 +56,43 @@ app.post('/', async (c) => {
 app.get('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const conv = await c.env.DB.prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
-    .first();
+  /* ثلاث قراءاتٍ في رحلةٍ واحدة إلى القاعدة، وعلامةُ «دورٌ يجري» من KV بجانبها.
+     كانت أربعَ رحلاتٍ متتالية يدفعها كلُّ فتحٍ للمحادثة وكلُّ جسٍّ أثناء التوليد.
+
+     والرسائل والمرفقات مقيّدةٌ بالمالك داخل الاستعلام نفسه — لا تُقرأ ثم يُحكم
+     بالمحادثة: الدفعةُ تجري معاً، فلا «بعد» يُنتظر فيه الحكم. ومحادثةُ غيرك
+     تعود بلا صفٍّ في الأولى وبلا رسائل في الثانية، فيُردّ ٤٠٤ كما كان.
+
+     وتقييمُ صاحب المحادثة مع كل رسالة (`rating`): كانت الشاشة تطلبه بنداءٍ لكل
+     ردّ — محادثةٌ بعشرين ردّاً عشرون نداءً بعد الفتح، من حدٍّ قدره ستون في الدقيقة.
+
+     `message_id` و`parse_status` مع المرفقات: الشاشة تقسمها بهما. ما له رسالةٌ
+     يُعرض في فقاعتها، وما لا رسالة له يعود إلى صندوق الكتابة — رُفع ولم يُرسَل.
+
+     و«دورٌ يجري الآن» لمن عاد بعد إعادة تحميل الصفحة: التوليد يمضي في الخلفية،
+     والبثُّ الذي كان يحمله ذهب مع الصفحة. فبلا العلامة يرى العائد محادثةً ساكنة
+     فيعيد السؤال — ويدفع دوراً ثانياً على دورٍ يجري. */
+  const [[convRes, messages, attachments], generating] = await Promise.all([
+    c.env.DB.batch([
+      c.env.DB.prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?').bind(id, user.id),
+      c.env.DB.prepare(
+        `SELECT m.id, m.role, m.content, m.metadata_json, m.created_at, f.rating
+         FROM messages m
+         JOIN conversations cv ON cv.id = m.conversation_id AND cv.user_id = ?
+         LEFT JOIN message_feedback f ON f.message_id = m.id AND f.user_id = ?
+         WHERE m.conversation_id = ? ORDER BY m.created_at ASC`
+      ).bind(user.id, user.id, id),
+      c.env.DB.prepare(
+        `SELECT a.id, a.message_id, a.filename, a.mime, a.size, a.parse_status, a.created_at
+         FROM attachments a
+         JOIN conversations cv ON cv.id = a.conversation_id AND cv.user_id = ?
+         WHERE a.conversation_id = ? ORDER BY a.created_at ASC`
+      ).bind(user.id, id),
+    ]),
+    isGenerating(c.env, id),
+  ]);
+  const conv = convRes.results[0];
   if (!conv) return c.json({ error: 'غير موجودة' }, 404);
-  const messages = await c.env.DB.prepare(
-    'SELECT id, role, content, metadata_json, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
-  )
-    .bind(id)
-    .all();
-  /* `message_id` و`parse_status` معهما: الشاشة تقسم المرفقات بهما.
-     ما له رسالةٌ يُعرض في فقاعتها، وما لا رسالة له يعود إلى صندوق الكتابة —
-     رُفع ولم يُرسَل، فيراه صاحبُه حيث تركه لا في مكانٍ لا يُعرَف. */
-  const attachments = await c.env.DB.prepare(
-    `SELECT id, message_id, filename, mime, size, parse_status, created_at
-     FROM attachments WHERE conversation_id = ? ORDER BY created_at ASC`
-  )
-    .bind(id)
-    .all();
-  /* «دورٌ يجري الآن» — لمن عاد بعد إعادة تحميل الصفحة.
-     التوليد يمضي في الخلفية ولا يتوقّف بانصراف صاحبه، لكن البثّ الذي كان
-     يحمله ذهب مع الصفحة. فبلا هذه العلامة يرى العائد محادثةً ساكنة بلا ردّ
-     ولا أثرِ عمل، فيعيد السؤال — ويدفع دوراً ثانياً على دورٍ يجري. */
-  const generating = await isGenerating(c.env, id);
   return c.json({
     conversation: conv,
     messages: messages.results,

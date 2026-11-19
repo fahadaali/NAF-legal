@@ -19,6 +19,10 @@ export interface Env {
   // `sess:` و `jwks:` وحدها، فلا تزاحم مفاتيح حدّ المعدّل (`rl:`).
   AUTH_KV: KVNamespace;
   ASSETS: Fetcher;
+  /** حدُّ المعدّل المدمج في Cloudflare — `wrangler.toml`. اختياريّ: بلا ربطٍ (فحوصٌ
+      أو تطوير بلا إعداده) يعود الحدُّ إلى عدّاد KV. */
+  API_RATE_LIMITER?: RateLimit;
+  MCP_AUTH_RATE_LIMITER?: RateLimit;
   // vars
   APP_NAME: string;
   /** المُخطِّط والعناوين — توجيهٌ قصير على مسار كل دور. */
