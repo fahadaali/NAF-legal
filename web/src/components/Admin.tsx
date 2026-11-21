@@ -5,6 +5,7 @@ import { AiToolsAdmin } from './AiTools';
 import KbViewer, { fileKind, ViewerTarget } from './KbViewer';
 import { LegalImport } from './LegalImport';
 import { LegalLaws } from './LegalLaws';
+import { PrincipleCollections, PrinciplesImport } from './PrincipleView';
 import { LegalReview } from './LegalReview';
 import ClauseLibrary from './ClauseLibrary';
 import { RequestStatusPill } from './Support';
@@ -435,6 +436,10 @@ function KbContent({
       <div className="kb-section">الأنظمة المستوردة</div>
       <LegalLaws stats={stats} />
 
+      {/* المبادئ القضائية قسمٌ وحده بعد الأنظمة — سوابقُ لا موادّ (§١٦). */}
+      <div className="kb-section">المبادئ القضائية</div>
+      <PrincipleCollections refreshKey={stats} />
+
       <div className="kb-section">الوثائق المرفوعة</div>
       {/* قبل وصول الردّ هيكلٌ بارتفاع الجدول لا فراغ: الجدول يحلّ محلّه في
           موضعه فلا يُزيح ما تحته، ولا يقرأ المسؤول شاشةً فارغة على قاعدةٍ
@@ -540,9 +545,15 @@ const KB_SOURCES: { key: KbSource; label: string; note: string; glyph: keyof typ
     note: 'سطرٌ لكل مادة — تدخل بحدودها كما وردت، بلا استخراج ولا تقطيع ولا تصنيف',
     glyph: 'import',
   },
+  {
+    key: 'principles',
+    label: 'استيراد مبادئ',
+    note: 'ملف المبادئ القضائية — سطرٌ لكل مبدأ معتمد، ويستبدل مدوّناته كاملةً',
+    glyph: 'principle',
+  },
 ];
 
-type KbSource = 'file' | 'text' | 'import';
+type KbSource = 'file' | 'text' | 'import' | 'principles';
 
 function KbIntake({ onAdded }: { onAdded: () => void }) {
   const [source, setSource] = useState<KbSource>('file');
@@ -633,6 +644,8 @@ function KbIntake({ onAdded }: { onAdded: () => void }) {
 
       {source === 'import' ? (
         <LegalImport />
+      ) : source === 'principles' ? (
+        <PrinciplesImport onDone={onAdded} />
       ) : source === 'file' ? (
         <div className="dropzone" onClick={() => !busy && fileInput.current?.click()}>
           {busy ? (

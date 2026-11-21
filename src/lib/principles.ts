@@ -426,6 +426,85 @@ export async function listPrincipleCollections(env: Env): Promise<PrincipleColle
   }
 }
 
+/** سقفُ صفحة التصفّح. */
+export const PRINCIPLE_PAGE_MAX = 50;
+
+export interface PrincipleBook {
+  book: string | null;
+  principles: number;
+  first_no: number;
+}
+
+/**
+ * أبوابُ المدوّنة بترتيب ورودها — أوّلُ رقم مبدأٍ فيها — وعددُ مبادئ كلٍّ.
+ * والمبدأ بلا باب يُجمع تحت `null`.
+ */
+export async function listPrincipleBooks(env: Env, collectionId: string): Promise<PrincipleBook[]> {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT book, COUNT(*) AS principles, MIN(principle_no) AS first_no
+       FROM legal_principles WHERE collection_id = ? GROUP BY book ORDER BY first_no`
+    )
+      .bind(collectionId)
+      .all<PrincipleBook>();
+    return rows.results ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export interface PrincipleBrowse {
+  principles: PrincipleHit[];
+  total: number;
+  offset: number;
+}
+
+/**
+ * مبادئُ مدوّنةٍ بترتيب أرقامها، صفحةً صفحة — وحصرٌ في بابٍ أو في حال إن طُلب.
+ * والحالات الأربع كلُّها تُعرض: التصفّح اطّلاعٌ لا استشهاد، وكلٌّ يحمل تحذيره.
+ */
+export async function browsePrinciples(
+  env: Env,
+  collectionId: string,
+  opts: { book?: string | null; status?: string | null; offset?: number; limit?: number } = {}
+): Promise<PrincipleBrowse> {
+  const limit = Math.min(Math.max(opts.limit ?? 25, 1), PRINCIPLE_PAGE_MAX);
+  const offset = Math.max(opts.offset ?? 0, 0);
+  const where = ['p.collection_id = ?'];
+  const binds: unknown[] = [collectionId];
+  if (opts.book) {
+    where.push('p.book = ?');
+    binds.push(opts.book);
+  }
+  if (opts.status && PRINCIPLE_STATUSES.includes(opts.status)) {
+    where.push('p.retrieval_status = ?');
+    binds.push(opts.status);
+  }
+  const cond = where.join(' AND ');
+  try {
+    const [rows, count] = await Promise.all([
+      env.DB.prepare(`SELECT ${HIT_COLUMNS} FROM legal_principles p WHERE ${cond} ORDER BY p.principle_no LIMIT ? OFFSET ?`)
+        .bind(...binds, limit, offset)
+        .all<HitRow>(),
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM legal_principles p WHERE ${cond}`)
+        .bind(...binds)
+        .first<{ n: number }>(),
+    ]);
+    return { principles: (rows.results ?? []).map((r) => toHit(r)), total: count?.n ?? 0, offset };
+  } catch {
+    return { principles: [], total: 0, offset };
+  }
+}
+
+/** عددُ المبادئ كلِّها — لشريط حال قاعدة المعرفة. وجدولٌ لم يُهيّأ صفر. */
+export async function countPrinciples(env: Env): Promise<number> {
+  try {
+    return (await env.DB.prepare('SELECT COUNT(*) AS n FROM legal_principles').first<{ n: number }>())?.n ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 // ── التنسيق للسياق ولأداة MCP ──
 
 /** سطر الإسناد: المدوّنة، ثم المبدأ، ثم القرار وتاريخه، ثم الصفحة. */

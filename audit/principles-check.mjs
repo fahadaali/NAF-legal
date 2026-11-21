@@ -132,6 +132,45 @@ await t.check('الإلغاء يُسقط ما جُمع', async () => {
   assert.equal(c.status, 409);
 });
 
+
+console.log('\nالتصفّح');
+
+await t.check('الأبواب بترتيب ورودها، والتصفّح بأرقام المبادئ صفحةً صفحة', async () => {
+  const { env } = await fixture();
+  await importAll(env);
+  const books = await lib.listPrincipleBooks(env, 'مدونة-المبادئ-العمالية-1431');
+  assert.ok(books.length >= 1);
+  assert.deepEqual(books.map((b) => b.first_no), [...books.map((b) => b.first_no)].sort((a, b) => a - b));
+  const page = await lib.browsePrinciples(env, 'مدونة-المبادئ-العمالية-1431', { limit: 2 });
+  assert.equal(page.total, 6);
+  assert.equal(page.principles.length, 2);
+  const next = await lib.browsePrinciples(env, 'مدونة-المبادئ-العمالية-1431', { limit: 2, offset: 2 });
+  assert.ok(next.principles[0].principleNo > page.principles[1].principleNo);
+});
+
+await t.check('التصفّح يُحصر في حال، وحالٌ مجهولة لا تُحصر', async () => {
+  const { env } = await fixture();
+  await importAll(env);
+  const r = await lib.browsePrinciples(env, 'مدونة-المبادئ-العمالية-1432', { status: 'أساسه ملغى' });
+  assert.equal(r.total, 1);
+  assert.equal(r.principles[0].retrievalStatus, 'أساسه ملغى');
+  assert.equal((await lib.browsePrinciples(env, 'مدونة-المبادئ-العمالية-1432', { status: 'ملغى' })).total, 6);
+});
+
+await t.check('مسارات القراءة: المدوّنات بعددها وحالاتها، والأبواب، والتصفّح', async () => {
+  const { env } = await fixture();
+  await importAll(env);
+  const get = async (u) => (await lib.app.request(u, {}, env)).json();
+  const cols = await get('/api/principles/collections');
+  assert.equal(cols.total, 12);
+  assert.equal(cols.collections.find((c) => c.collection_id.endsWith('1431')).by_status['نافذ'], 2);
+  const books = await get(`/api/principles/books?collection_id=${encodeURIComponent('مدونة-المبادئ-العمالية-1431')}`);
+  assert.ok(books.books.length);
+  const browse = await get(`/api/principles/browse?collection_id=${encodeURIComponent('مدونة-المبادئ-العمالية-1432')}&limit=3`);
+  assert.equal(browse.principles.length, 3);
+  assert.equal(browse.total, 6);
+});
+
 console.log('\nالبحث والعرض');
 
 await t.check('البحث يجد المبدأ بلفظٍ من نصّه ولو بصيغةٍ أخرى («تذكرة» ← «بتأمين تذكرة»)', async () => {

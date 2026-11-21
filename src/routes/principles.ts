@@ -7,6 +7,7 @@
 //   POST /stage?import_id=…&first_line=…   جزءٌ من الملف، يُجمع جانباً
 //   POST /commit {import_id}               يستبدل مدوّنات الملف في دفعةٍ واحدة
 //   POST /abort  {import_id}               يُسقط ما جُمع
+// والقراءة: search · item · collections · books · browse
 // وسطرٌ فاسد واحد يردّ الجزء كلَّه: لا «قبول الصالح» هنا.
 import { Hono } from 'hono';
 import { requireAuth, requireAdmin, audit } from '../lib/auth';
@@ -18,6 +19,9 @@ import {
   searchPrinciples,
   getPrinciple,
   listPrincipleCollections,
+  listPrincipleBooks,
+  browsePrinciples,
+  countPrinciples,
   PRINCIPLE_SEARCH_MAX,
 } from '../lib/principles';
 import type { Env, Variables } from '../types';
@@ -67,7 +71,29 @@ app.post('/abort', requireAdmin, async (c) => {
   return c.json({ aborted: importId });
 });
 
-app.get('/collections', async (c) => c.json({ collections: await listPrincipleCollections(c.env) }));
+app.get('/collections', async (c) => {
+  const [collections, total] = await Promise.all([listPrincipleCollections(c.env), countPrinciples(c.env)]);
+  return c.json({ collections, total });
+});
+
+app.get('/books', async (c) => {
+  const id = c.req.query('collection_id') ?? '';
+  if (!id) return c.json({ error: 'اكتب collection_id' }, 400);
+  return c.json({ books: await listPrincipleBooks(c.env, id) });
+});
+
+app.get('/browse', async (c) => {
+  const id = c.req.query('collection_id') ?? '';
+  if (!id) return c.json({ error: 'اكتب collection_id' }, 400);
+  return c.json(
+    await browsePrinciples(c.env, id, {
+      book: c.req.query('book') || null,
+      status: c.req.query('status') || null,
+      offset: Number(c.req.query('offset') ?? 0) || 0,
+      limit: Number(c.req.query('limit') ?? 25) || 25,
+    })
+  );
+});
 
 app.get('/search', async (c) => {
   const q = c.req.query('q')?.trim() ?? '';
