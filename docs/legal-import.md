@@ -815,8 +815,8 @@ npm run import:principles -- --file principles.jsonl --url https://advisor.nafla
 - **بطاقة المبدأ** (`PrincipleView.tsx`): المدوّنة ورقم المبدأ وشارةُ الحال، ثم القرار
   وتاريخه وصفحته، ثم التحذير فوق النصّ، ثم الموادّ التي بُني عليها والقرارات المشابهة.
 
-ألفاظها وأيقوناتها مقترحةٌ في `docs/naf-ui-proposal-principles.md`، ولا تُدمج قبل
-تسجيلها في `naf-ui`.
+ألفاظها وأيقوناتها مسجَّلة في `naf-ui` (`naf-terms.md` و`naf-icons.md` تحت «المبادئ
+القضائية»)، والمقترح الذي سُجّلت منه في `docs/naf-ui-proposal-principles.md`.
 
 ### الفحوص
 

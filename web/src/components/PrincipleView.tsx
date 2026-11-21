@@ -4,8 +4,8 @@
 // بعد الموادّ، ولا يأخذ شيئاً من مكوّنات المادة — شاراتُ المادة تقول حالَ نصٍّ
 // نافذ، وحالُ المبدأ حالُ ما بُني عليه.
 //
-// والألفاظ والأيقونات مقترحةٌ في `docs/naf-ui-proposal-principles.md`، ولا
-// يُدمج هذا الملف قبل تسجيلها في `naf-terms.md` و`naf-icons.md`.
+// والألفاظ مسجَّلة في `naf-terms.md` تحت «المبادئ القضائية» (§٣) ورسائلُ
+// الاستيراد في §٤، والأيقونات في `naf-icons.md` تحت «المبادئ القضائية».
 import { useEffect, useState } from 'react';
 import { api, type Principle, type PrincipleBook, type PrincipleCollection, type PrincipleStatus } from '../lib/api';
 import { formatNumber, isolate } from '../lib/format';
@@ -359,7 +359,7 @@ export function PrinciplesImport({ onDone }: { onDone?: () => void }) {
         />
         {busy ? (
           <>
-            <span className="spinner" /> جارٍ الاستيراد — <bdi>{formatNumber(state.staged)}</bdi> /{' '}
+            <span className="spinner" /> جارٍ الاستيراد <bdi>{formatNumber(state.staged)}</bdi> /{' '}
             <bdi>{formatNumber(state.total)}</bdi>
           </>
         ) : (
