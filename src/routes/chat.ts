@@ -12,6 +12,7 @@ import { newTrace, saveTrace } from '../lib/research/trace';
 import { buildAnchorsBlock, type BasisAnchor } from '../lib/basis';
 import { enabledSources } from '../lib/sources';
 import { searchSources, formatFiqhContext, type ExternalHit } from '../lib/external';
+import { retrievePrinciples, formatPrinciplesContext, type PrincipleHit } from '../lib/principles';
 import { rerankByMeaning } from '../lib/rerank';
 import {
   streamClaude,
@@ -239,6 +240,8 @@ app.post('/:conversationId', async (c) => {
   let results: RagResult[] = [];
   let groups: ResearchGroup[] = [];
   let gaps: ResearchGap[] = [];
+  /* استعلاماتُ هذا الدور — يُبحث بها في المبادئ القضائية بعد الموادّ. */
+  let principleQueries: string[] = plan.needs_knowledge_base ? plan.kb_queries : [];
   try {
     if (chosenMemo) {
       const h = await hydrateMemo(c.env, chosenMemo, { max: TOTAL_MAX });
@@ -256,6 +259,7 @@ app.post('/:conversationId', async (c) => {
       });
       anchors = gathered.anchors;
       gaps = gathered.gaps;
+      principleQueries = gathered.queries;
       groups = gathered.groups.length
         ? gathered.groups
         : gathered.results.length
@@ -390,6 +394,16 @@ app.post('/:conversationId', async (c) => {
      استُرجعت لها المواد. */
   const anchorsBlock = anchors.length ? buildAnchorsBlock(anchors) : '';
 
+  /* المبادئ القضائية قسمٌ وحده بعد الموادّ (IMPORT-RUNBOOK §5-٩): لا تدخل
+     `groups` فلا تُعدّ مادةً ولا تُرتَّب معها ولا تُحفظ في المذكرة. وما تعذّر
+     بحثُه — جدولٌ لم يُهيّأ بعد — يمضي الدور بلا قسم. */
+  let principleHits: PrincipleHit[] = [];
+  if (principleQueries.length) {
+    principleHits = await retrievePrinciples(c.env, principleQueries).catch(() => []);
+    trace.add({ stage: 'principles', count: principleHits.length });
+  }
+  const principlesBlock = formatPrinciplesContext(principleHits);
+
   const fiqhBlock = formatFiqhContext(fiqhHits);
   const fiqhCitations = fiqhHits.map((h) => ({
     title: h.title,
@@ -406,7 +420,7 @@ app.post('/:conversationId', async (c) => {
   /* الموادّ كتلَ `search_result` حين تكون — فيعود الردّ موسوماً بمصدر كل مقطع —
      وما عداها نصٌّ كما كان. و`ragContext` النصّي يبقى لفحص الإسناد بعد التوليد. */
   const contextBlocks = layeredContextBlocks(groups);
-  const tail = `${fiqhBlock}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
+  const tail = `${principlesBlock}${fiqhBlock}${anchorsBlock}${attachmentsBlock}\n\n${message}`.trim();
   const userContent: string | any[] = contextBlocks.length
     ? [...contextBlocks, { type: 'text', text: tail }]
     : `${ragContext}${tail}`.trim();
