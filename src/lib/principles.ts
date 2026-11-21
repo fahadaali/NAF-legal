@@ -350,34 +350,76 @@ export interface PrincipleSearchOptions {
  * المبدأ ورقم القرار). والترتيب bm25. والجدول غير مهيّأ (هجرة لم تُطبَّق) لا
  * يُسقط ما يناديه: يعود فارغاً.
  */
+/** رقمُ قرارٍ كما يُطبع: «431/1/81» — السنة ثم الدائرة ثم التسلسل. */
+const DECISION_NO = /\d{3,4}\/\d{1,2}\/\d{1,5}/g;
+
 export async function searchPrinciples(env: Env, query: string, opts: PrincipleSearchOptions = {}): Promise<PrincipleHit[]> {
   const limit = Math.min(Math.max(opts.limit ?? 5, 1), PRINCIPLE_SEARCH_MAX);
-  const exprs = [ftsMatchExpression(query), stemMatchExpression(query)].filter((x): x is string => !!x);
-  if (!exprs.length) return [];
-  const match = exprs.map((e) => `(${e})`).join(' OR ');
   const where: string[] = [];
-  const binds: unknown[] = [match];
+  const filters: unknown[] = [];
   if (opts.collectionId) {
     where.push('p.collection_id = ?');
-    binds.push(opts.collectionId);
+    filters.push(opts.collectionId);
   }
   if (opts.parentLawId) {
     where.push('p.parent_law_id = ?');
-    binds.push(opts.parentLawId);
+    filters.push(opts.parentLawId);
   }
+  const and = where.length ? ` AND ${where.join(' AND ')}` : '';
+
+  /* رقمُ القرار يُطابَق بحروفه قبل كل شيء. الفهرس اللفظي يقطّعه أرقاماً —
+     «431» و«1» و«81» — فيُقدّم كلَّ قرارٍ يشاركه رقماً منها، والباحثُ برقم
+     قرارٍ يريد ذلك القرار. فمبادئُ القرار نفسه أوّلاً، ثم ما ذكره قراراً مشابهاً،
+     ثم بحثُ اللفظ لما بقي من المقاعد. */
+  const decisions = [...new Set(query.match(DECISION_NO) ?? [])];
+  const exact: HitRow[] = [];
   try {
-    const rows = await env.DB.prepare(
-      `SELECT ${HIT_COLUMNS}, bm25(legal_principles_fts) AS lex
-       FROM legal_principles_fts JOIN legal_principles p ON p.seq = legal_principles_fts.rowid
-       WHERE legal_principles_fts MATCH ?${where.length ? ` AND ${where.join(' AND ')}` : ''}
-       ORDER BY lex ASC LIMIT ?`
-    )
-      .bind(...binds, limit)
-      .all<HitRow>();
-    return (rows.results ?? []).map((r, i) => toHit(r, 1 / (60 + i)));
+    for (const d of decisions) {
+      const own = await env.DB.prepare(
+        `SELECT ${HIT_COLUMNS} FROM legal_principles p WHERE p.decision_no = ?${and} ORDER BY p.collection_id, p.principle_no LIMIT ?`
+      )
+        .bind(d, ...filters, limit)
+        .all<HitRow>();
+      exact.push(...(own.results ?? []));
+      const similar = await env.DB.prepare(
+        `SELECT ${HIT_COLUMNS} FROM legal_principles p WHERE p.similar_json LIKE ?${and} ORDER BY p.collection_id, p.principle_no LIMIT ?`
+      )
+        .bind(`%"${d}"%`, ...filters, limit)
+        .all<HitRow>();
+      exact.push(...(similar.results ?? []));
+    }
   } catch {
-    return [];
+    /* جدولٌ لم يُهيّأ — يعود البحث فارغاً أدناه. */
   }
+
+  let lexical: HitRow[] = [];
+  const exprs = [ftsMatchExpression(query), stemMatchExpression(query)].filter((x): x is string => !!x);
+  if (exprs.length) {
+    const match = exprs.map((e) => `(${e})`).join(' OR ');
+    try {
+      const rows = await env.DB.prepare(
+        `SELECT ${HIT_COLUMNS}, bm25(legal_principles_fts) AS lex
+         FROM legal_principles_fts JOIN legal_principles p ON p.seq = legal_principles_fts.rowid
+         WHERE legal_principles_fts MATCH ?${and}
+         ORDER BY lex ASC LIMIT ?`
+      )
+        .bind(match, ...filters, limit)
+        .all<HitRow>();
+      lexical = rows.results ?? [];
+    } catch {
+      lexical = [];
+    }
+  }
+
+  const seen = new Set<string>();
+  const out: PrincipleHit[] = [];
+  for (const r of [...exact, ...lexical]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push(toHit(r, 1 / (60 + out.length)));
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /** مبدأٌ بمعرّفه. */
