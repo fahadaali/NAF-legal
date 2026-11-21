@@ -125,6 +125,8 @@ export const DOC_TYPES: Record<string, string> = {
   law: 'نظام',
   regulation: 'لائحة',
   arrangement: 'تنظيم',
+  // الاتفاقيات الدولية والإقليمية بنصها في الجريدة الرسمية — naf-terms §٣، 22 نوفمبر 2026.
+  agreement: 'اتفاقية',
   decision: 'قرار',
   circular: 'تعميم',
 };
@@ -139,6 +141,8 @@ const DOC_TYPE_ALIASES = new Map<string, string>(
       ['لوائح', 'regulation'],
       ['تنظيم', 'arrangement'],
       ['ترتيب', 'arrangement'],
+      ['اتفاقية', 'agreement'],
+      ['اتفاقيات', 'agreement'],
       ['قرار', 'decision'],
       ['تعميم', 'circular'],
     ] as [string, string][]
