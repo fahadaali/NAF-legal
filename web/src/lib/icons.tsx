@@ -12,6 +12,7 @@
 
 import {
   Activity,
+  Milestone,
   ArrowDown,
   Ban,
   BookX,
@@ -143,6 +144,9 @@ export const Icon = {
   // التأصيل الفقهي — النصُّ المنقول من كتاب الفقه، لا الكتاب ولا مكانُه:
   // `BookMarked` بطاقةُ خدمة، و`BookOpen` مركزُ المعرفة، و`BookCheck` شارةُ تحقّق.
   fiqhGrounding: BookOpenText,
+  // مبدأ قضائي — naf-icons.md تحت «المبادئ القضائية». سابقةٌ على طريق القضاء،
+  // لا القضيةُ (`Gavel`) ولا الجلسة (`Scale`) ولا العقد (`Stamp`).
+  principle: Milestone,
   // مصدر خارجي — البنيةُ لا المحتوى: جدولُ المصادر وترويسةُ مجموعة النتائج.
   externalSource: Server,
   litigation: Swords,          // التقاضي — تصنيف لا كيان

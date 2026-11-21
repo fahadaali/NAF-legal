@@ -25,6 +25,7 @@ import { Hono } from 'hono';
 import { requireAuth } from '../lib/auth';
 import { arabicMatchSql } from '../lib/arabic';
 import { searchLegal } from '../lib/legal';
+import { searchPrinciples } from '../lib/principles';
 import { enabledSources } from '../lib/sources';
 import { searchSources, type SourceOutcome } from '../lib/external';
 import { rerankByMeaning } from '../lib/rerank';
@@ -35,6 +36,8 @@ app.use('*', requireAuth);
 
 /** سقف نتائج كل موضع — الشاشة تعرض ما يُقرأ لا كل ما طابق. */
 const LIMIT = 15;
+/** المبادئ بعد الموادّ — أقلُّ منها: سوابقُ تُعين لا سندٌ يُبنى عليه. */
+const PRINCIPLES_LIMIT = 10;
 
 /** طول المقتطف حول موضع المطابقة. */
 const SNIPPET = 300;
@@ -131,8 +134,8 @@ app.get('/', async (c) => {
   };
 
   // ── قاعدة المعرفة ──
-  const searchKb = async (): Promise<{ articles: unknown[]; documents: unknown[] }> => {
-    if (!wants('kb')) return { articles: [], documents: [] };
+  const searchKb = async (): Promise<{ articles: unknown[]; documents: unknown[]; principles: unknown[] }> => {
+    if (!wants('kb')) return { articles: [], documents: [], principles: [] };
     // المقاطع المستوردة: فهرسٌ لفظيّ مطبَّع عربياً — والتصفية على السريان
     // فيه كما في كل مسار، فلا يُعرض للمستخدم نصٌّ منسوخ.
     // ومرشّحاتُ المواد (§6-1) — النظام والنوع والباب، و«تشمل الملغاة» للباحث
@@ -161,8 +164,16 @@ app.get('/', async (c) => {
     )
       .bind(...docMatch.binds, LIMIT)
       .all();
-    const [articles, docRows] = await Promise.all([findArticles(), findDocuments]);
-    return { articles, documents: docRows.results ?? [] };
+    /* المبادئ القضائية مجموعةٌ وحدها بعد الموادّ (IMPORT-RUNBOOK §5-٩) — من
+       جدولها لا من بحث الموادّ. ومرشّحُ النظام يحصرها في مدوّناته (مدوّنات
+       نظام العمل لنظام العمل)؛ ومرشّحا النوع والباب للموادّ وحدها، فإن طُلب
+       أحدُهما فلا مبادئ. والحالات الأربع كلُّها تُعرض بتحذيرها. */
+    const findPrinciples = async (): Promise<unknown[]> => {
+      if (c.req.query('doc_type') || c.req.query('book')) return [];
+      return searchPrinciples(c.env, q, { limit: PRINCIPLES_LIMIT, parentLawId: c.req.query('law_id') || null });
+    };
+    const [articles, docRows, principles] = await Promise.all([findArticles(), findDocuments, findPrinciples()]);
+    return { articles, documents: docRows.results ?? [], principles };
   };
 
   /* ── المصادر الخارجية ──
@@ -194,7 +205,7 @@ app.get('/', async (c) => {
     return external;
   };
 
-  const [chats, outputs, { articles, documents }, external] = await Promise.all([
+  const [chats, outputs, { articles, documents, principles }, external] = await Promise.all([
     searchChats(),
     searchOutputs(),
     searchKb(),
@@ -204,7 +215,7 @@ app.get('/', async (c) => {
   return c.json({
     chats,
     outputs,
-    kb: { articles, documents },
+    kb: { articles, documents, principles },
     external,
     mode: semantic ? 'semantic' : 'lexical',
   });

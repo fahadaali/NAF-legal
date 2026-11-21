@@ -12,6 +12,7 @@ import { api, type PlatformSearch, type ExternalGroup, type LegalLaw, type Legal
 import { formatDate } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 import { docTypeLabel } from '../lib/labels';
+import { PrincipleCard } from './PrincipleView';
 import { ArticleFlags, ArticleName, ArticleNotices, LawIdentity, LawTags, LegalText, groupArticleParts } from './LegalArticleView';
 
 const INTERNAL_SCOPES: [string, string][] = [
@@ -106,6 +107,7 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
     !result.outputs.length &&
     !result.kb.articles.length &&
     !result.kb.documents.length &&
+    !(result.kb.principles ?? []).length &&
     !(result.external ?? []).some((g) => g.hits.length);
 
   return (
@@ -229,6 +231,19 @@ export default function SearchPage({ initial, onOpenConversation }: { initial: s
                   <LegalText key={part.id} text={part.text} />
                 ))}
               </article>
+            ))}
+          </>
+        ) : null}
+
+        {/* المبادئ القضائية بعد الموادّ لا بينها (§5-٩ في دليل nezam): سوابقُ
+            تُعين على فهم كيف قُضي، والسندُ المادة. وكلٌّ بحاله وتحذيره فوق نصّه. */}
+        {result?.kb.principles?.length ? (
+          <>
+            <div className="kb-section">
+              <Icon.principle size={ICON_SM} aria-hidden /> المبادئ القضائية
+            </div>
+            {result.kb.principles.map((p) => (
+              <PrincipleCard key={p.id} p={p} />
             ))}
           </>
         ) : null}

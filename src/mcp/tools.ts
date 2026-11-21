@@ -49,6 +49,7 @@ import {
 import type { LegalHit, LawSummary } from '../lib/legal';
 import { joinArticleParts, fromLegalHit, formatRagBlock } from '../lib/rag';
 import { approvedIssues } from '../lib/research/issues';
+import { searchPrinciples, formatPrincipleBlock, PRINCIPLE_SEARCH_MAX } from '../lib/principles';
 import { arabicGlobPatterns, arabicMatchSql } from '../lib/arabic';
 import { dualDate } from '../lib/hijri';
 import { argBool, argInt, argString } from './protocol';
@@ -782,6 +783,40 @@ export function readTools(env: Env): McpTool[] {
         const def = await getDefinitionsArticle(env, lawId);
         if (!def) return ok('لم يُعثر على مادة تعريفات في هذا النظام.');
         return ok(formatHits([def]));
+      },
+    },
+
+    {
+      name: 'search_principles',
+      title: 'البحث في المبادئ القضائية',
+      description:
+        'بحثٌ لفظيّ في المبادئ القضائية المنشورة في مدوّنات رسمية (كمدوّنتي المبادئ العمالية لعامي 1431 و1432هـ). ' +
+        'المبدأ سابقةٌ لا نصٌّ ملزم: يُستعمل بعد search_regulations لا بدلاً منه، ويُذكر بعد الموادّ. ' +
+        'كلُّ مبدأٍ يصل بمدوّنته ورقمه ورقم قراره وتاريخه وصفحته، وبحاله: نافذ، أو بتحذير، أو أساسه معدَّل، أو أساسه ملغى — ' +
+        'والتحذيرُ سطرٌ يبدأ بـ«تنبيه:» فوق نصّه. وما أساسُه معدَّلٌ أو ملغى يُذكر سابقةً بتحذيرها، لا حكماً جارياً اليوم.',
+      readOnly: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'كلماتٌ بالعربية من المسألة، أو رقمُ قرار.' },
+          parent_law_id: { type: 'string', description: 'حصرٌ في مدوّنات نظامٍ بعينه — law_id من list_laws، مثل «نظام-العمل».' },
+          limit: { type: 'integer', minimum: 1, maximum: PRINCIPLE_SEARCH_MAX, description: 'عدد النتائج. الافتراضي 5.' },
+        },
+        required: ['query'],
+      },
+      async run(args) {
+        const query = argString(args, 'query', 1000) ?? '';
+        if (!query) return refuse('اكتب query.');
+        const hits = await searchPrinciples(env, query, {
+          limit: argInt(args, 'limit', 5, 1, PRINCIPLE_SEARCH_MAX),
+          parentLawId: argString(args, 'parent_law_id', 200),
+        });
+        if (!hits.length) return ok('لم يُعثر على مبادئ قضائية مطابقة. جرّب لفظاً آخر، أو اكتفِ بالموادّ النظامية.');
+        return ok(
+          `النتائج: ${hits.length}\n\n${hits
+            .map((h, i) => `${formatPrincipleBlock(h, String(i + 1))}\nid: ${h.id}`)
+            .join('\n\n---\n\n')}`
+        );
       },
     },
 

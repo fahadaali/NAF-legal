@@ -364,6 +364,61 @@ export interface LegalSearchFilters {
 }
 
 /** نتيجة البحث في المنصة، مقسّمةً بمواضعها. */
+
+/* ══ المبادئ القضائية (docs/legal-import.md §١٦) ══
+   جدولٌ وحده لا مقطعُ مادة: لا يمرّ بأنواع الموادّ ولا بشاشاتها. */
+
+/** حالُ المبدأ كما يكتبها المصدر — أربعٌ، وكلُّها تُعرض بتحذيرها. */
+export type PrincipleStatus = 'نافذ' | 'نافذ_بتحذير' | 'أساسه معدَّل' | 'أساسه ملغى';
+
+export interface Principle {
+  id: string;
+  collectionId: string;
+  collectionTitle: string;
+  edition: string | null;
+  parentLawId: string | null;
+  principleNo: number;
+  principleLabel: string;
+  book: string | null;
+  chapter: string | null;
+  section: string | null;
+  text: string;
+  decisionNo: string | null;
+  decisionDateH: string | null;
+  ref: { volume?: number; page?: number } | null;
+  similar: { decision_no: string | null; decision_date_h?: string; raw?: string; print_erratum?: string }[];
+  related: { article_no: number; law?: string | null; law_id?: string | null; article_id?: string; state?: string }[];
+  retrievalStatus: PrincipleStatus;
+  retrievalWarning: string | null;
+  sourceUrl: string | null;
+  sourcePages: string | null;
+}
+
+export interface PrincipleCollection {
+  collection_id: string;
+  collection_title: string;
+  edition: string | null;
+  parent_law_id: string | null;
+  principles: number;
+  by_status: Partial<Record<PrincipleStatus, number>>;
+}
+
+export interface PrincipleBook {
+  book: string | null;
+  principles: number;
+  first_no: number;
+}
+
+/** ردُّ جمع جزءٍ من ملف المبادئ — بأسطره المرفوضة إن رُفض. */
+export interface PrincipleStageReport {
+  ok: boolean;
+  status: number;
+  staged?: number;
+  collections?: string[];
+  error?: string;
+  errors?: { line: number; error: string }[];
+}
+
 export interface PlatformSearch {
   chats: {
     conversation_id: string;
@@ -389,6 +444,8 @@ export interface PlatformSearch {
   kb: {
     articles: LegalArticle[];
     documents: { id: string; title: string; category: string | null; source_authority: string | null; status: string }[];
+    /** المبادئ القضائية — مجموعةٌ بعد الموادّ. وخادمٌ أقدم لا يردّها. */
+    principles?: Principle[];
   };
   /** مجموعةٌ لكلّ مصدرٍ خارجيّ، بحالتها — ومصدرٌ لم يُجب يُقال ولا يُسكت عنه. */
   external: ExternalGroup[];
@@ -1372,6 +1429,42 @@ export const api = {
     if (handleAuthRedirect(res, data)) return pending<LegalImportReport>();
     return { ...(data as LegalImportReport), ok: res.ok };
   },
+
+  // المبادئ القضائية — قراءةٌ لكل من دخل، واستيرادٌ للمسؤول.
+  principleCollections: () => req<{ collections: PrincipleCollection[]; total: number }>('/principles/collections'),
+  principleBooks: (collectionId: string) =>
+    req<{ books: PrincipleBook[] }>(`/principles/books?collection_id=${encodeURIComponent(collectionId)}`),
+  browsePrinciples: (collectionId: string, opts: { book?: string | null; status?: string | null; offset?: number; limit?: number } = {}) => {
+    const p = new URLSearchParams({ collection_id: collectionId });
+    if (opts.book) p.set('book', opts.book);
+    if (opts.status) p.set('status', opts.status);
+    if (opts.offset) p.set('offset', String(opts.offset));
+    if (opts.limit) p.set('limit', String(opts.limit));
+    return req<{ principles: Principle[]; total: number; offset: number }>(`/principles/browse?${p}`);
+  },
+  /** جزءٌ من ملف المبادئ يُجمع جانباً. يردّ الأسطر المرفوضة بأرقامها ولا يرمي بها. */
+  stagePrinciples: async (importId: string, firstLine: number, lines: string[]): Promise<PrincipleStageReport> => {
+    const { res, data } = await fetchHeld(
+      `/api/principles/stage?import_id=${encodeURIComponent(importId)}&first_line=${firstLine}`,
+      () => ({
+        method: 'POST',
+        headers: { 'content-type': 'application/x-ndjson' },
+        body: lines.join('\n'),
+        credentials: 'same-origin',
+        signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS),
+      })
+    );
+    throwIfSessionExpired(res, data);
+    if (handleAuthRedirect(res, data)) return pending<PrincipleStageReport>();
+    return { ...(data as PrincipleStageReport), ok: res.ok, status: res.status };
+  },
+  commitPrinciples: (importId: string) =>
+    req<{ written: number; replaced: number; collections: string[] }>('/principles/commit', {
+      method: 'POST',
+      body: JSON.stringify({ import_id: importId }),
+    }),
+  abortPrinciples: (importId: string) =>
+    req('/principles/abort', { method: 'POST', body: JSON.stringify({ import_id: importId }) }),
 
   tracking: () => req<{ needs_update: any[] }>('/admin/tracking'),
   resolveTracking: (id: string) => req(`/admin/tracking/${id}/resolve`, { method: 'POST' }),
