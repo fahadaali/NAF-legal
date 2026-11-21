@@ -188,6 +188,27 @@ await t.check('البحث برقم القرار يجد مبدأه', async () => 
   assert.equal(hits[0]?.id, target.id);
 });
 
+await t.check('رقم القرار يُطابَق بحروفه أوّلاً ولو شاركه غيره أرقاماً، وفي جملةٍ أيضاً', async () => {
+  const { env } = await fixture();
+  await importAll(env);
+  const rows = LINES.map((l) => JSON.parse(l)).filter((r) => r.decision_no);
+  for (const r of rows) {
+    const hits = await lib.searchPrinciples(env, r.decision_no, { limit: 5 });
+    const own = rows.filter((x) => x.decision_no === r.decision_no).map((x) => x.id);
+    assert.deepEqual(new Set(hits.slice(0, own.length).map((h) => h.id)), new Set(own), r.decision_no);
+  }
+  const r = rows[5];
+  const inSentence = await lib.searchPrinciples(env, `ما حكم القرار رقم ${r.decision_no} في الأجر`);
+  assert.equal(inSentence[0]?.decisionNo, r.decision_no);
+});
+
+await t.check('رقم قرارٍ لا مبدأ له لا يُسقط البحث — يعود بحثُ اللفظ', async () => {
+  const { env } = await fixture();
+  await importAll(env);
+  const hits = await lib.searchPrinciples(env, 'أجر 999/9/99999');
+  assert.ok(hits.length > 0);
+});
+
 await t.check('الحالات الأربع كلُّها تُسترجع — ما أساسُه ملغى يصل بتحذيره لا يُحجب', async () => {
   const { env } = await fixture();
   await importAll(env);
