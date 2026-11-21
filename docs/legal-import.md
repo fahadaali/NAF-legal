@@ -32,7 +32,7 @@
 | `embed_text` | نعم | **يُحوَّل إلى متجه** — ولا يُعرض ولا يُستشهد به |
 | `law_id` | — | حصر البحث في نظام |
 | `parent_law_id` | — | للائحة: معرّف نظامها، فتُجلب معه |
-| `doc_type` | — | حصر البحث في نوع: `law` · `regulation` · `decision` · `circular` |
+| `doc_type` | — | حصر البحث في نوع: `law` · `regulation` · `arrangement` · `agreement` · `decision` · `circular` (وفي ملف الاستيراد بالعربية أيضاً: نظام · لائحة · تنظيم · اتفاقية · قرار · تعميم) |
 | `article_no` | — | استدعاء مادة بعينها |
 | `instrument_no` | — | رقم الأداة النظامية — للعرض والاستشهاد |
 | `status` | — | `active` · `amended` · `repealed` (الافتراضي `active`) — وتُقبل ألفاظها العربية، انظر أدناه |

@@ -23,6 +23,8 @@ const DOC_TYPES: Record<string, string> = {
      الاعتراضية والاستئنافية — وتسميةُ إحداهما باسم الأخرى خطأٌ مهنيّ لا
      لغويّ، في قاعدةٍ نصفُها مذكرات. */
   regulation: 'اللائحة التنفيذية',
+  arrangement: 'تنظيم',
+  agreement: 'اتفاقية',
   decision: 'قرار',
   circular: 'تعميم',
 };
