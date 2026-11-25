@@ -8,6 +8,7 @@
 // والاستخراج على `text_norm` (النصّ المطبَّع): الأرقام فيه غربية، والهمزات
 // والتاء المربوطة موحّدة، فتكفي القواعدَ صيغةٌ واحدة لكل لفظ.
 import { normalizeArabic } from '../arabic';
+import { isDecisionType } from '../legal';
 import type { Env } from '../../types';
 
 // ── الأعداد الترتيبية بالحروف ──
@@ -231,7 +232,8 @@ export async function knownLaws(env: Env): Promise<KnownLaw[]> {
       title: r.law_title!,
       titleNorm: normalizeArabic(r.law_title!),
       parentLawId: r.parent_law_id,
-      isRegulation: !!r.parent_law_id || r.doc_type === 'regulation',
+      // ما يتبع نظاماً لائحتُه — إلا القرار والتعميم: يتبعانه ولا يكونان لائحته.
+      isRegulation: r.doc_type === 'regulation' || (!!r.parent_law_id && !isDecisionType(r.doc_type)),
     }));
 }
 
@@ -279,7 +281,8 @@ export async function extractPendingLinks(env: Env, limit = 300): Promise<LinkRu
     const laws = await knownLaws(env);
     const regulationOf = new Map<string, string[]>();
     for (const l of laws) {
-      if (l.parentLawId) regulationOf.set(l.parentLawId, [...(regulationOf.get(l.parentLawId) ?? []), l.lawId]);
+      // «اللائحة» في نصّ النظام تُحال إلى لائحته وحدها، لا إلى قرارٍ يتبعه.
+      if (l.parentLawId && l.isRegulation) regulationOf.set(l.parentLawId, [...(regulationOf.get(l.parentLawId) ?? []), l.lawId]);
     }
 
     for (let i = 0; i < rows.length; i += LINK_BATCH) {

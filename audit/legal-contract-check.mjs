@@ -3216,6 +3216,51 @@ await check('٣٨ · البندُ يُستشهد بعلامته في سياق ا
   assert.match(law, /نظام العمل — المادة 74/, 'المادة في نظامٍ عادي تغيّر استشهادها');
 });
 
+await check('٣٩ · «قرار وزاري» نوعٌ مسجَّل يشمل التعميم، ويتبع نظامه ولا يكون لائحته', async () => {
+  assert.equal(lib.canonicalDocType('قرار وزاري'), 'ministerial_decision');
+  assert.equal(lib.canonicalDocType('ministerial_decision'), 'ministerial_decision', 'القيمة المخزَّنة تمرّ كما هي');
+  assert.equal(lib.DOC_TYPES.ministerial_decision, 'قرار وزاري');
+  assert.ok(lib.isDecisionType('ministerial_decision') && !lib.isDecisionType('regulation') && !lib.isDecisionType(null));
+
+  // قرارٌ يتبع نظام العمل، وقرارٌ بلا نظام أصل — كلاهما يدخل.
+  const p = lib.parseJsonl(
+    [
+      line({
+        id: 'labor-md/art-1',
+        law_id: 'labor-md',
+        parent_law_id: 'labor',
+        doc_type: 'قرار وزاري',
+        instrument: 'تعميم',
+        article_no: '1',
+        status: 'active',
+        law_title: 'قرار وزاري في الإخطار',
+        text: 'يُبلَّغ العامل بالإخطار كتابةً.',
+        embed_text: 'قرار وزاري في الإخطار — المادة 1 — الإخطار كتابةً.',
+      }),
+      line({
+        id: 'free-md/art-1',
+        law_id: 'free-md',
+        doc_type: 'قرار وزاري',
+        article_no: '1',
+        status: 'active',
+        law_title: 'قرار وزاري بلا نظام أصل',
+        text: 'نصٌّ لقرارٍ لا نظام أصل له.',
+        embed_text: 'قرار وزاري بلا نظام أصل — المادة 1.',
+      }),
+    ].join('\n')
+  );
+  assert.equal(p.errors.length, 0, JSON.stringify(p.errors));
+  assert.deepEqual(p.rows.map((r) => r.doc_type), ['ministerial_decision', 'ministerial_decision']);
+  await lib.upsertLegalChunks(env, p.rows);
+
+  const { regulations, decisions } = await lib.getLawWithRegulations(env, 'labor');
+  assert.deepEqual(regulations.map((r) => r.law_id), ['labor-regulation'], 'القرار سُرد بين اللوائح');
+  assert.deepEqual(decisions.map((r) => r.law_id), ['labor-md']);
+  const free = await lib.getLawWithRegulations(env, 'free-md');
+  assert.equal(free.law?.law_id, 'free-md', 'القرار بلا نظام أصل لم يُقرأ');
+  q("DELETE FROM legal_chunks WHERE law_id IN ('labor-md', 'free-md')");
+});
+
 console.log('\nفحص عقد استيراد المحتوى النظامي — NAF-legal\n');
 console.log(results.join('\n'));
 console.log(

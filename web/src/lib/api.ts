@@ -386,6 +386,10 @@ export interface Principle {
   decisionNo: string | null;
   decisionDateH: string | null;
   ref: { volume?: number; page?: number } | null;
+  /** مجلدُ المدوّنة الذي فيه صفحاتُ المبدأ — فارغٌ في مدوّنةٍ من مجلدٍ واحد. */
+  volume?: number | null;
+  /** القضية التي صدر فيها القرار كما طُبعت. */
+  caseRef?: { kind: 'استئناف' | 'دعوى'; no: string } | null;
   similar: { decision_no: string | null; decision_date_h?: string; raw?: string; print_erratum?: string }[];
   related: { article_no: number; law?: string | null; law_id?: string | null; article_id?: string; state?: string }[];
   retrievalStatus: PrincipleStatus;
@@ -1262,7 +1266,7 @@ export const api = {
     return req<{ results: LegalArticle[]; count: number }>(`/legal/article?${p.toString()}`);
   },
   legalLaw: (lawId: string) =>
-    req<{ law: LegalLaw; regulations: LegalLaw[] }>(`/legal/laws/${encodeURIComponent(lawId)}`),
+    req<{ law: LegalLaw; regulations: LegalLaw[]; decisions?: LegalLaw[] }>(`/legal/laws/${encodeURIComponent(lawId)}`),
   legalLawArticles: (lawId: string, offset = 0, limit = 25) =>
     req<{ articles: LegalArticle[]; total: number }>(
       `/legal/laws/${encodeURIComponent(lawId)}/articles?offset=${offset}&limit=${limit}`
