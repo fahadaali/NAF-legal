@@ -1685,6 +1685,17 @@ function keepEdits(rows: PreparedChunk[], reviewed: Map<string, ReviewedRow>): P
 const REVIEW_UNCHANGED = `legal_chunks.text = excluded.text
                           AND legal_chunks.amendments_raw IS excluded.amendments_raw`;
 
+/** **ما صعّده المراجع بيده.** الحالُ المخزّنة تغلب حالَ الملف في موضعٍ واحد: مادةٌ
+ *  معتمدة لم يتغيّر نصّها ولا نافذتها، أسقط مراجعٌ تحذيرَها بعد أن فتحها — وقيدُ ذلك
+ *  في سجلّ التدقيق (`retrieval_status` إلى `effective`). وما سواه فالملف أعلمُ بالحال:
+ *  قاعدةٌ جديدة في السلسلة كشفت أن استبدالاً كاملاً لم يُدمج، والمادة معتمدةٌ جملةً
+ *  قبلها، فبقيت «نافذة» بنصٍّ قديم (المنافسة م4 · المرور م7 — 25 نوفمبر 2026).
+ *  والاعتماد نفسه لا يُمسّ: الحالُ وحدها تتبع الملف. */
+const REVIEWER_ESCALATED = `legal_chunks.retrieval_status = '${RETRIEVAL_EFFECTIVE}'
+                            AND EXISTS (SELECT 1 FROM legal_review_audit a
+                                         WHERE a.chunk_id = legal_chunks.id AND a.field = 'retrieval_status'
+                                           AND a.new_value = '${RETRIEVAL_EFFECTIVE}')`;
+
 const UPSERT_SQL = `
   INSERT INTO legal_chunks (
     id, law_id, parent_law_id, doc_type, article_no, article_no_norm,
@@ -1744,12 +1755,15 @@ const UPSERT_SQL = `
     amendments_count = excluded.amendments_count,
     amendments_raw = excluded.amendments_raw,
     amend_note = excluded.amend_note,
-    -- حالُ الاسترجاع من الملف تغلب ما صعّده المراجع: الدفعة الجديدة أحدثُ
-    -- علماً بالمصدر، والتصعيد كان على نصٍّ قد لا يكون هو هذا. وما لم يتغيّر
-    -- فيه شيء يحتفظ بتصعيده — بشرط بقاء المراجعة نفسه المستعمَل أدناه.
+    -- حالُ الاسترجاع من الملف تغلب ما في القاعدة: الدفعة الجديدة أحدثُ علماً
+    -- بالمصدر. إلا تصعيدَ مراجعٍ فتح المادة فأسقط تحذيرها، ونصُّها ونافذتها كما
+    -- كانا — فقراره على هذا النصّ نفسه، ويبقى. والاعتماد جملةً لا يُصعّد، فلا
+    -- يحمي حالاً: مادةٌ اعتُمدت جملةً تأخذ حالَ الملف وإن لم يتغيّر نصّها.
     retrieval_status = CASE WHEN ${REVIEW_UNCHANGED} AND legal_chunks.review_status IN ('approved','edited')
+                                 AND ${REVIEWER_ESCALATED}
                             THEN legal_chunks.retrieval_status ELSE excluded.retrieval_status END,
     retrieval_warning = CASE WHEN ${REVIEW_UNCHANGED} AND legal_chunks.review_status IN ('approved','edited')
+                                  AND ${REVIEWER_ESCALATED}
                              THEN legal_chunks.retrieval_warning ELSE excluded.retrieval_warning END,
     text_versions = excluded.text_versions,
     amendment_events = excluded.amendment_events,
