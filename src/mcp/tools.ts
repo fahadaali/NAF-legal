@@ -25,6 +25,7 @@
 import type { Env } from '../types';
 import {
   DOC_TYPES,
+  isDecisionType,
   RETRIEVAL_REPEALED,
   searchLegal,
   getArticle,
@@ -49,7 +50,7 @@ import {
 import type { LegalHit, LawSummary } from '../lib/legal';
 import { joinArticleParts, fromLegalHit, formatRagBlock } from '../lib/rag';
 import { approvedIssues } from '../lib/research/issues';
-import { searchPrinciples, formatPrincipleBlock, PRINCIPLE_SEARCH_MAX } from '../lib/principles';
+import { searchPrinciples, formatPrincipleBlock, listPrincipleCollections, PRINCIPLE_SEARCH_MAX } from '../lib/principles';
 import { arabicGlobPatterns, arabicMatchSql } from '../lib/arabic';
 import { dualDate } from '../lib/hijri';
 import { argBool, argInt, argString } from './protocol';
@@ -164,7 +165,9 @@ function formatLaw(l: LawSummary): string {
   const date = l.issue_date ? (l.issue_date_hijri ? `${l.issue_date} (${l.issue_date_hijri})` : l.issue_date) : l.issue_date_hijri;
   return [
     `- ${l.law_title ?? l.law_id} — law_id: ${l.law_id}`,
-    `  النوع: ${docTypeLabel(l.doc_type)} · الحال: ${lawState(l)}${l.parent_law_id ? ` · لائحةٌ لـ law_id: ${l.parent_law_id}` : ''}`,
+    `  النوع: ${docTypeLabel(l.doc_type)} · الحال: ${lawState(l)}${
+      l.parent_law_id ? ` · ${isDecisionType(l.doc_type) ? 'يتبع' : 'لائحةٌ لـ'} law_id: ${l.parent_law_id}` : ''
+    }`,
     [issued && `  الأداة: ${issued}`, date && `التاريخ: ${date}`, l.authority && `الجهة: ${l.authority}`]
       .filter(Boolean)
       .join(' · '),
@@ -435,7 +438,7 @@ export function readTools(env: Env): McpTool[] {
       async run(args) {
         const lawId = argString(args, 'law_id', 200);
         if (!lawId) return refuse('law_id مطلوب.');
-        const { law, regulations } = await getLawWithRegulations(env, lawId);
+        const { law, regulations, decisions } = await getLawWithRegulations(env, lawId);
         if (!law) return refuse('النظام غير موجود.');
         const [books, st] = await Promise.all([listLawBooks(env, lawId), lawArticleStats(env, lawId)]);
         const parts = [formatLaw(law)];
@@ -456,6 +459,7 @@ export function readTools(env: Env): McpTool[] {
         );
         parts.push(books.length ? `الأبواب:\n${books.map((b) => `- ${b}`).join('\n')}` : 'لا أبواب مسجّلة.');
         parts.push(regulations.length ? `اللوائح والتنظيمات التابعة:\n${regulations.map(formatLaw).join('\n')}` : 'لا لوائح تابعة.');
+        if (decisions.length) parts.push(`القرارات الوزارية والتعاميم التابعة:\n${decisions.map(formatLaw).join('\n')}`);
         return ok(parts.join('\n\n'));
       },
     },
@@ -790,7 +794,10 @@ export function readTools(env: Env): McpTool[] {
       name: 'search_principles',
       title: 'البحث في المبادئ القضائية',
       description:
-        'بحثٌ لفظيّ في المبادئ القضائية المنشورة في مدوّنات رسمية (كمدوّنتي المبادئ العمالية لعامي 1431 و1432هـ). ' +
+        'بحثٌ لفظيّ في المبادئ القضائية المنشورة في مدوّنات رسمية — العمالية، والمصرفية والتمويلية، ولجان الأوراق المالية، ' +
+        'والسوابق القضائية الإدارية، ولجان الاستئناف الزكوية والضريبية، وما يُضاف بعدها. ' +
+        'ضيّقه بـ collection_id لمدوّنةٍ بعينها (يظهر مع كل نتيجة، وتُسرد المدوّنات إن لم يُعثر على شيء)، ' +
+        'أو بـ parent_law_id لمدوّنات نظامٍ بعينه — ومن المدوّنات ما لا يتبع نظاماً واحداً فلا يحصره إلا collection_id. ' +
         'المبدأ سابقةٌ لا نصٌّ ملزم: يُستعمل بعد search_regulations لا بدلاً منه، ويُذكر بعد الموادّ. ' +
         'كلُّ مبدأٍ يصل بمدوّنته ورقمه ورقم قراره وتاريخه وصفحته، وبحاله: نافذ، أو بتحذير، أو أساسه معدَّل، أو أساسه ملغى — ' +
         'والتحذيرُ سطرٌ يبدأ بـ«تنبيه:» فوق نصّه. وما أساسُه معدَّلٌ أو ملغى يُذكر سابقةً بتحذيرها، لا حكماً جارياً اليوم.',
@@ -800,6 +807,7 @@ export function readTools(env: Env): McpTool[] {
         properties: {
           query: { type: 'string', description: 'كلماتٌ بالعربية من المسألة، أو رقمُ قرار.' },
           parent_law_id: { type: 'string', description: 'حصرٌ في مدوّنات نظامٍ بعينه — law_id من list_laws، مثل «نظام-العمل».' },
+          collection_id: { type: 'string', description: 'حصرٌ في مدوّنةٍ بعينها — collection_id كما يظهر مع النتائج.' },
           limit: { type: 'integer', minimum: 1, maximum: PRINCIPLE_SEARCH_MAX, description: 'عدد النتائج. الافتراضي 5.' },
         },
         required: ['query'],
@@ -810,11 +818,19 @@ export function readTools(env: Env): McpTool[] {
         const hits = await searchPrinciples(env, query, {
           limit: argInt(args, 'limit', 5, 1, PRINCIPLE_SEARCH_MAX),
           parentLawId: argString(args, 'parent_law_id', 200),
+          collectionId: argString(args, 'collection_id', 200),
         });
-        if (!hits.length) return ok('لم يُعثر على مبادئ قضائية مطابقة. جرّب لفظاً آخر، أو اكتفِ بالموادّ النظامية.');
+        if (!hits.length) {
+          // المدوّناتُ بمعرّفاتها — ليُعاد البحث محصوراً لا مخمَّناً.
+          const cols = await listPrincipleCollections(env).catch(() => []);
+          const list = cols.length
+            ? `\n\nالمدوّنات المتاحة:\n${cols.map((c) => `- ${c.collection_title} — collection_id: ${c.collection_id}`).join('\n')}`
+            : '';
+          return ok(`لم يُعثر على مبادئ قضائية مطابقة. جرّب لفظاً آخر، أو اكتفِ بالموادّ النظامية.${list}`);
+        }
         return ok(
           `النتائج: ${hits.length}\n\n${hits
-            .map((h, i) => `${formatPrincipleBlock(h, String(i + 1))}\nid: ${h.id}`)
+            .map((h, i) => `${formatPrincipleBlock(h, String(i + 1))}\nid: ${h.id} · collection_id: ${h.collectionId}`)
             .join('\n\n---\n\n')}`
         );
       },

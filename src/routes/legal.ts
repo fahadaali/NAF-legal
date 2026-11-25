@@ -941,11 +941,11 @@ app.get('/laws/:lawId/changes', async (c) => {
   return c.json({ changes, total });
 });
 
-/** نظامٌ مع لوائحه — العلاقة عبر `parent_law_id`. */
+/** نظامٌ مع لوائحه وقراراته — العلاقة عبر `parent_law_id`. */
 app.get('/laws/:lawId', async (c) => {
-  const { law, regulations } = await getLawWithRegulations(c.env, c.req.param('lawId'));
+  const { law, regulations, decisions } = await getLawWithRegulations(c.env, c.req.param('lawId'));
   if (!law) return c.json({ error: 'النظام غير موجود' }, 404);
-  return c.json({ law, regulations });
+  return c.json({ law, regulations, decisions });
 });
 
 export default app;

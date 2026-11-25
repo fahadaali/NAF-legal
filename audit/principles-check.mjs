@@ -227,6 +227,66 @@ await t.check('سطر الإسناد: المدوّنة، ثم رقم المبد�
   assert.match(cite, /^مدونة المبادئ العمالية لعام 1431هـ — المبدأ 156 — القرار .+ وتاريخ .+هـ — ص \d+/);
 });
 
+// مبدأٌ من مدوّنةٍ متعددة المجلدات صدر قرارُه في استئناف — كما يخرجه
+// `principles-gstc.py` في nezam للمدوّنة الزكوية والضريبية.
+function multiVolume(over = {}) {
+  const o = JSON.parse(LINES[0]);
+  return {
+    ...o,
+    id: 'مجموعة-مبادئ-زكوية/art-0011',
+    law_id: 'مجموعة-مبادئ-زكوية',
+    law_name: 'مجموعة المبادئ الزكوية والضريبية 2020–2021',
+    parent_law_id: null,
+    article_no: 11,
+    article_label: 'المبدأ 11',
+    retrieval_status: 'نافذ',
+    retrieval_warning: null,
+    decision_no: 'IR-2021-139',
+    decision_date_h: null,
+    source_pages: [58],
+    volume: 2,
+    case_no: { kind: 'استئناف', no: 'Z-33106-2020' },
+    related: [],
+    similar_decisions: [],
+    ...over,
+  };
+}
+
+await t.check('المجلد والقضية: سطر الإسناد «… الصادر في الاستئناف رقم … — المجلد 2 — ص 58»', async () => {
+  const { env } = await fixture();
+  await importAll(env, JSON.stringify(multiVolume()), 'test-import-mv01');
+  const h = await lib.getPrinciple(env, 'مجموعة-مبادئ-زكوية/art-0011');
+  assert.equal(h.volume, 2);
+  assert.deepEqual(h.caseRef, { kind: 'استئناف', no: 'Z-33106-2020' });
+  assert.equal(
+    lib.principleCitation(h),
+    'مجموعة المبادئ الزكوية والضريبية 2020–2021 — المبدأ 11 — القرار IR-2021-139 الصادر في الاستئناف رقم Z-33106-2020 — المجلد 2 — ص 58'
+  );
+  // والدعوى بلفظها، ورقمُها يُبحث به فيجد مبدأه.
+  const d = lib.preparePrinciple(multiVolume({ case_no: { kind: 'دعوى', no: 'Z-29888-2020' } }));
+  assert.equal(typeof d, 'object', String(d));
+  assert.equal(lib.caseLabel(JSON.parse(d.case_json)), 'الدعوى رقم');
+  const byCase = await lib.searchPrinciples(env, 'Z-33106-2020');
+  assert.equal(byCase[0]?.id, 'مجموعة-مبادئ-زكوية/art-0011', 'رقم الاستئناف لم يجد مبدأه');
+});
+
+await t.check('مدوّنةٌ من مجلدٍ واحد بلا مجلد ولا قضية — سطرها كما كان', async () => {
+  const { env } = await fixture();
+  await importAll(env);
+  const h = await lib.getPrinciple(env, 'مدونة-المبادئ-العمالية-1431/art-0156');
+  assert.equal(h.volume, null);
+  assert.equal(h.caseRef, null);
+  assert.doesNotMatch(lib.principleCitation(h), /المجلد|الاستئناف|الدعوى/);
+});
+
+await t.check('مجلدٌ ليس عدداً صحيحاً موجباً، أو قضيةٌ بنوعٍ مجهول أو بلا رقم — يُردّ السطر', () => {
+  assert.match(String(lib.preparePrinciple(multiVolume({ volume: 0 }))), /volume/);
+  assert.match(String(lib.preparePrinciple(multiVolume({ volume: 'الثاني' }))), /volume/);
+  assert.match(String(lib.preparePrinciple(multiVolume({ case_no: { kind: 'اعتراض', no: 'X' } }))), /case_no\.kind/);
+  assert.match(String(lib.preparePrinciple(multiVolume({ case_no: { kind: 'دعوى' } }))), /case_no\.no/);
+  assert.match(String(lib.preparePrinciple(multiVolume({ case_no: 'Z-1' }))), /case_no/);
+});
+
 await t.check('النافذ بلا سطر تنبيه', async () => {
   const { env } = await fixture();
   await importAll(env);

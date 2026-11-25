@@ -251,6 +251,7 @@ function LawsTable({ laws, onOpen }: { laws: LegalLaw[]; onOpen: (id: string) =>
 function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => void; onOpen: (id: string) => void }) {
   const [law, setLaw] = useState<LegalLaw | null>(null);
   const [regulations, setRegulations] = useState<LegalLaw[]>([]);
+  const [decisions, setDecisions] = useState<LegalLaw[]>([]);
   const [parentTitle, setParentTitle] = useState<string | null>(null);
   const [changes, setChanges] = useState<LegalChunkVersion[]>([]);
   const [articles, setArticles] = useState<LegalArticle[]>([]);
@@ -264,6 +265,7 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
       .then((r) => {
         setLaw(r.law);
         setRegulations(r.regulations);
+        setDecisions(r.decisions ?? []);
         setParentTitle(null);
         if (r.law?.parent_law_id) {
           api
@@ -359,18 +361,23 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
         </div>
       ) : null}
 
-      {regulations.length > 0 && (
-        <div className="table-scroll">
+      {/* اللوائح والقرارات الوزارية جدولان لا جدول: القرار يتبع النظام ولا يكون
+          لائحته، وسردُه تحت «اللوائح» يجعل المحامي يقرؤه لائحةً تنفيذية. */}
+      {[
+        { title: 'اللوائح', rows: regulations },
+        { title: 'القرارات الوزارية', rows: decisions },
+      ].map(({ title, rows }) => rows.length > 0 && (
+        <div className="table-scroll" key={title}>
           <table className="data-table">
             <thead>
               <tr>
-                <th>اللوائح</th>
+                <th>{title}</th>
                 <th>المواد</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {regulations.map((r) => (
+              {rows.map((r) => (
                 <tr key={r.law_id}>
                   <td><bdi>{r.law_title || r.law_id}</bdi></td>
                   <td><bdi>{formatNumber(r.chunks)}</bdi></td>
@@ -382,7 +389,7 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
             </tbody>
           </table>
         </div>
-      )}
+      ))}
 
       {/* سجلّ التحديث: ما أُزيح من نصوص هذا النظام ومتى. وقضيةٌ وقعت وقت
           سريان النصّ القديم تُحاكَم به لا بالجاري، فبقاؤه ليس ترفاً. */}

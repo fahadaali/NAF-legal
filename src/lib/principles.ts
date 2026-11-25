@@ -58,6 +58,10 @@ export interface PrincipleRow {
   retrieval_warning: string | null;
   source_url: string | null;
   source_pages: string | null;
+  /** مجلدُ المدوّنة الذي فيه صفحاتُ المبدأ — فارغٌ في مدوّنةٍ من مجلدٍ واحد. */
+  volume: number | null;
+  /** القضية التي صدر فيها القرار: `{kind, no}`. */
+  case_json: string | null;
   source_sha256: string | null;
   review: string | null;
   text_norm: string;
@@ -86,7 +90,18 @@ export interface PrincipleHit {
   retrievalWarning: string | null;
   sourceUrl: string | null;
   sourcePages: string | null;
+  volume: number | null;
+  /** القضية التي صدر فيها القرار ونوعها كما طُبعا: الاستئناف أو الدعوى ورقمها. */
+  caseRef: PrincipleCase | null;
   score: number;
+}
+
+/** نوعا القضية كما يطبعهما المصدر. */
+export const PRINCIPLE_CASE_KINDS = ['استئناف', 'دعوى'] as const;
+
+export interface PrincipleCase {
+  kind: (typeof PRINCIPLE_CASE_KINDS)[number];
+  no: string;
 }
 
 export interface PrincipleLineError {
@@ -144,6 +159,15 @@ export function preparePrinciple(raw: unknown): PrincipleRow | string {
   const title = str(o.law_name) || collectionId;
   const label = str(o.article_label) || `المبدأ ${no}`;
   const decisionNo = orNull(o.decision_no);
+  // المجلد عددٌ صحيح موجب أو لا شيء. وما سواه يُردّ: صفحةٌ بمجلدٍ خاطئ أسوأ من صفحةٍ بلا مجلد.
+  let volume: number | null = null;
+  if (o.volume !== undefined && o.volume !== null && o.volume !== '') {
+    const v = Number(o.volume);
+    if (!Number.isInteger(v) || v < 1) return '`volume` ليس رقماً صحيحاً موجباً';
+    volume = v;
+  }
+  const caseRef = prepareCase(o.case_no);
+  if (typeof caseRef === 'string') return caseRef;
   const norm = normalizeArabic(text);
   return {
     id,
@@ -167,12 +191,36 @@ export function preparePrinciple(raw: unknown): PrincipleRow | string {
     retrieval_warning: warning,
     source_url: orNull(o.source_url),
     source_pages: sourcePages,
+    volume,
+    case_json: caseRef ? JSON.stringify(caseRef) : null,
     source_sha256: orNull(o.source_sha256),
     review: 'معتمد',
     // النصّ مطبَّعاً وجذوعُه معاً في عمودٍ واحد: «للعامل» تطابق «العامل».
     text_norm: `${norm} ${stemText(norm)}`,
-    handle_norm: normalizeArabic([title, label, decisionNo && `القرار ${decisionNo}`].filter(Boolean).join(' ')),
+    // ورقمُ القضية في المقبض كرقم القرار: يُبحث به فيجد مبدأه.
+    handle_norm: normalizeArabic(
+      [title, label, decisionNo && `القرار ${decisionNo}`, caseRef && `${caseRef.kind} ${caseRef.no}`].filter(Boolean).join(' ')
+    ),
   };
+}
+
+/**
+ * القضية التي صدر فيها القرار — `{kind, no}` أو لا شيء.
+ *
+ * النوع من اثنين كما يطبعهما المصدر («الصادر في الاستئناف رقم» · «الدعوى رقم»)،
+ * ولا يُستنبط من شكل الرقم: نوعٌ يُخمَّن يقول للمحامي «استئناف» حيث الدعوى.
+ */
+function prepareCase(v: unknown): PrincipleCase | null | string {
+  if (v === undefined || v === null || v === '') return null;
+  if (typeof v !== 'object' || Array.isArray(v)) return '`case_no` ليس كائناً `{kind, no}`';
+  const o = v as Record<string, unknown>;
+  const kind = str(o.kind);
+  const no = str(o.no);
+  if (!no) return '`case_no.no` فارغ';
+  if (!(PRINCIPLE_CASE_KINDS as readonly string[]).includes(kind)) {
+    return `\`case_no.kind\` غير معروف: ${kind || '(فارغ)'} — المسموح: ${PRINCIPLE_CASE_KINDS.join(' | ')}`;
+  }
+  return { kind: kind as PrincipleCase['kind'], no };
 }
 
 export interface ParsedPrinciples {
@@ -246,7 +294,8 @@ export interface PrincipleCommit {
 const COLS = [
   'id', 'collection_id', 'collection_title', 'edition', 'authority', 'parent_law_id', 'principle_no', 'principle_label',
   'book', 'chapter', 'section', 'text', 'decision_no', 'decision_date_h', 'ref_json', 'similar_json', 'related_json',
-  'retrieval_status', 'retrieval_warning', 'source_url', 'source_pages', 'source_sha256', 'review', 'text_norm', 'handle_norm',
+  'retrieval_status', 'retrieval_warning', 'source_url', 'source_pages', 'volume', 'case_json', 'source_sha256', 'review',
+  'text_norm', 'handle_norm',
 ] as const;
 
 /**
@@ -294,7 +343,8 @@ export async function abortPrinciples(env: Env, importId: string): Promise<void>
 
 const HIT_COLUMNS = `p.seq, p.id, p.collection_id, p.collection_title, p.edition, p.parent_law_id, p.principle_no,
   p.principle_label, p.book, p.chapter, p.section, p.text, p.decision_no, p.decision_date_h, p.ref_json,
-  p.similar_json, p.related_json, p.retrieval_status, p.retrieval_warning, p.source_url, p.source_pages`;
+  p.similar_json, p.related_json, p.retrieval_status, p.retrieval_warning, p.source_url, p.source_pages,
+  p.volume, p.case_json`;
 
 type HitRow = Omit<PrincipleRow, 'authority' | 'source_sha256' | 'review' | 'text_norm' | 'handle_norm'> & {
   seq: number;
@@ -333,6 +383,8 @@ function toHit(r: HitRow, score = 0): PrincipleHit {
     retrievalWarning: r.retrieval_warning,
     sourceUrl: r.source_url,
     sourcePages: r.source_pages,
+    volume: r.volume ?? null,
+    caseRef: parseJson<PrincipleCase | null>(r.case_json, null),
     score,
   };
 }
@@ -549,10 +601,26 @@ export async function countPrinciples(env: Env): Promise<number> {
 
 // ── التنسيق للسياق ولأداة MCP ──
 
-/** سطر الإسناد: المدوّنة، ثم المبدأ، ثم القرار وتاريخه، ثم الصفحة. */
+/** «الاستئناف رقم» · «الدعوى رقم» — كما يطبعها المصدر. */
+export function caseLabel(c: PrincipleCase): string {
+  return `${c.kind === 'استئناف' ? 'الاستئناف' : 'الدعوى'} رقم`;
+}
+
+/**
+ * سطر الإسناد: المدوّنة، ثم المبدأ، ثم القرار وتاريخه والقضية التي صدر فيها،
+ * ثم المجلد والصفحة.
+ */
 export function principleCitation(h: PrincipleHit): string {
   const parts = [h.collectionTitle, h.principleLabel];
-  if (h.decisionNo) parts.push(`القرار ${h.decisionNo}${h.decisionDateH ? ` وتاريخ ${h.decisionDateH}هـ` : ''}`);
+  if (h.decisionNo) {
+    const date = h.decisionDateH ? ` وتاريخ ${h.decisionDateH}هـ` : '';
+    const inCase = h.caseRef ? ` الصادر في ${caseLabel(h.caseRef)} ${h.caseRef.no}` : '';
+    parts.push(`القرار ${h.decisionNo}${date}${inCase}`);
+  } else if (h.caseRef) {
+    parts.push(`${caseLabel(h.caseRef)} ${h.caseRef.no}`);
+  }
+  // المجلد قبل الصفحة: صفحاتُ كلِّ مجلدٍ تبدأ من أوّله، فالصفحة وحدها لا تدلّ.
+  if (h.volume) parts.push(`المجلد ${h.volume}`);
   if (h.sourcePages) parts.push(`ص ${h.sourcePages.replace('-', '–')}`);
   return parts.join(' — ');
 }

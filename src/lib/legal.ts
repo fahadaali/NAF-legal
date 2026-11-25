@@ -129,7 +129,24 @@ export const DOC_TYPES: Record<string, string> = {
   agreement: 'اتفاقية',
   decision: 'قرار',
   circular: 'تعميم',
+  // القرار الوزاري والتعميم الوزاري نوعٌ واحد — قرار صاحب المشروع، 24 نوفمبر 2026.
+  // والفرق بينهما في الأداة (`instrument`: «قرار وزاري» أو «تعميم») لا في النوع.
+  // يتبع نظامه بـ`parent_law_id` ولا يصير لائحته، ومنه ما لا نظام أصل له.
+  ministerial_decision: 'قرار وزاري',
 };
+
+/**
+ * القرارات والتعاميم — تتبع نظامها ولا تكون لائحته.
+ *
+ * `parent_law_id` يقول «يتبع»، ولا يقول «لائحةٌ لـ»: القرار الوزاري الصادر تنفيذاً
+ * لنظام العمل ليس لائحته التنفيذية، ونسبتُه إليها تجعل «اللائحة» في نصٍّ يُحال
+ * إلى قرارٍ لا إليها.
+ */
+const DECISION_TYPES = new Set(['decision', 'circular', 'ministerial_decision']);
+
+export function isDecisionType(docType: string | null | undefined): boolean {
+  return !!docType && DECISION_TYPES.has(docType);
+}
 
 const DOC_TYPE_ALIASES = new Map<string, string>(
   (
@@ -145,6 +162,8 @@ const DOC_TYPE_ALIASES = new Map<string, string>(
       ['اتفاقيات', 'agreement'],
       ['قرار', 'decision'],
       ['تعميم', 'circular'],
+      ['قرار وزاري', 'ministerial_decision'],
+      ['قرارات وزارية', 'ministerial_decision'],
     ] as [string, string][]
   ).map(([k, v]) => [normalizeArabic(k), v] as [string, string])
 );
@@ -5359,11 +5378,14 @@ export async function listLawBooks(env: Env, lawId: string): Promise<string[]> {
   return (rows.results ?? []).map((r) => r.book);
 }
 
-/** نظامٌ مع لوائحه — العلاقة عبر `parent_law_id`. */
+/**
+ * نظامٌ مع ما يتبعه — العلاقة عبر `parent_law_id`: لوائحُه، وقراراته الوزارية
+ * وتعاميمه على حدة (`isDecisionType`) — القرار يتبع النظام ولا يكون لائحته.
+ */
 export async function getLawWithRegulations(
   env: Env,
   lawId: string
-): Promise<{ law: LawSummary | null; regulations: LawSummary[] }> {
+): Promise<{ law: LawSummary | null; regulations: LawSummary[]; decisions: LawSummary[] }> {
   /* النظامُ ولوائحُه وحدها — لا القاعدة كلُّها. كان يُجمِّع كلَّ نظامٍ في القاعدة
      ليختار منها واحداً، فكان فتحُ نظامٍ أو لائحةٍ مسحاً للقاعدة القانونية كلِّها.
      والحكم على النتيجة كما كان حرفاً بحرف (`find` و`filter` على المجمَّع): كلُّ
@@ -5379,9 +5401,11 @@ export async function getLawWithRegulations(
     .bind(lawId, lawId)
     .all<LawSummary>();
   const laws = rows.results ?? [];
+  const children = laws.filter((l) => l.parent_law_id === lawId);
   return {
     law: laws.find((l) => l.law_id === lawId) ?? null,
-    regulations: laws.filter((l) => l.parent_law_id === lawId),
+    regulations: children.filter((l) => !isDecisionType(l.doc_type)),
+    decisions: children.filter((l) => isDecisionType(l.doc_type)),
   };
 }
 

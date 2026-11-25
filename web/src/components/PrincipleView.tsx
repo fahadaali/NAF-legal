@@ -47,16 +47,22 @@ export function PrincipleStatusPill({ status }: { status: PrincipleStatus }) {
 }
 
 /**
- * سطر الإسناد: القرار وتاريخه كما طُبعا، ثم صفحتُه في المدوّنة.
+ * سطر الإسناد: القرار وتاريخه كما طُبعا والقضية التي صدر فيها، ثم مجلدُه
+ * وصفحتُه في المدوّنة — والمجلد قبل الصفحة: صفحاتُ كلِّ مجلدٍ تبدأ من أوّله.
  *
  * رقمُ القرار «431/1/81» وتاريخُه الهجريّ نصٌّ مطبوع يُنقل كما هو — لا تاريخٌ
  * يُعاد تنسيقه — فيُعزل اتجاهُه وحده (§2): بلا عزلٍ يقرؤه العربيّ «81/1/431».
  */
 function citationLine(p: Principle): string | null {
   const parts: string[] = [];
+  const inCase = p.caseRef ? `${p.caseRef.kind === 'استئناف' ? 'الاستئناف' : 'الدعوى'} رقم ${isolate(p.caseRef.no)}` : '';
   if (p.decisionNo) {
-    parts.push(`القرار ${isolate(p.decisionNo)}${p.decisionDateH ? ` وتاريخ ${isolate(p.decisionDateH)}هـ` : ''}`);
+    const date = p.decisionDateH ? ` وتاريخ ${isolate(p.decisionDateH)}هـ` : '';
+    parts.push(`القرار ${isolate(p.decisionNo)}${date}${inCase ? ` الصادر في ${inCase}` : ''}`);
+  } else if (inCase) {
+    parts.push(inCase);
   }
+  if (p.volume) parts.push(`المجلد ${isolate(String(p.volume))}`);
   if (p.sourcePages) parts.push(`ص ${isolate(p.sourcePages)}`);
   return parts.length ? parts.join(' — ') : null;
 }
