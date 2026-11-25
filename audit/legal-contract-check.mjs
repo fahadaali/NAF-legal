@@ -1630,6 +1630,32 @@ await check('٢٠ · والتراجع يُعيد التحذير كما يُعي�
   assert.ok(moves.length >= 2, 'تغيّر الحال لم يُقيَّد');
 });
 
+await check('٢٠ · حالُ الملف تغلب الاعتمادَ جملةً — ولا تغلب تصعيدَ مراجعٍ فتح المادة', async () => {
+  /* المادة المعتمدة جملةً لم يُصعّدها أحد: حالُها حالُ الملف يوم رُفع. فإن قال ملفٌّ
+     أحدث إنها بتحذير — قاعدةٌ في السلسلة كشفت استبدالاً كاملاً لم يُدمج — أخذت
+     تحذيره ولو لم يتغيّر نصّها. وكانت تبقى «نافذة» (المنافسة م4 · المرور م7). */
+  const asRow = (src, patch) => lib.parseJsonl(JSON.stringify({ ...JSON.parse(src), ...patch })).rows;
+  await lib.reviewChunks(env, ['ثالثة/art-22'], 'approve', 'مراجع');
+  assert.equal(q("SELECT review_status FROM legal_chunks WHERE id = 'ثالثة/art-22'")[0].review_status, 'approved');
+  await lib.upsertLegalChunks(env, asRow(V3_LINES[0], { retrieval_status: 'نافذ_بتحذير' }));
+  const bulk = q("SELECT retrieval_status, review_status FROM legal_chunks WHERE id = 'ثالثة/art-22'")[0];
+  assert.equal(bulk.retrieval_status, lib.RETRIEVAL_WARNING, 'معتمدةٌ جملةً بقيت «نافذة» والملف يقول بتحذير');
+  assert.equal(bulk.review_status, 'approved', 'تغيّرُ الحال وحدها أسقط الاعتماد');
+
+  // والتصعيد بيد المراجع قرارٌ على هذا النصّ نفسه: ملفٌّ يعيد التحذير نفسه لا يُسقطه.
+  await lib.reviewChunk(env, 'ثالثة/art-74', 'approve', 'مراجع');
+  assert.equal(q("SELECT retrieval_status FROM legal_chunks WHERE id = 'ثالثة/art-74'")[0].retrieval_status, lib.RETRIEVAL_EFFECTIVE);
+  await lib.upsertLegalChunks(env, asRow(V3_LINES[1], {}));
+  const single = q("SELECT retrieval_status, review_status FROM legal_chunks WHERE id = 'ثالثة/art-74'")[0];
+  assert.equal(single.retrieval_status, lib.RETRIEVAL_EFFECTIVE, 'إعادة الرفع أسقطت تصعيد المراجع');
+  assert.equal(single.review_status, 'approved');
+
+  // تُعاد المادتان إلى ما كانتا عليه لما بعدها.
+  await lib.upsertLegalChunks(env, asRow(V3_LINES[0], {}));
+  await lib.reviewChunk(env, 'ثالثة/art-22', 'undo', 'مراجع');
+  await lib.reviewChunk(env, 'ثالثة/art-74', 'undo', 'مراجع');
+});
+
 await check('٢١ · صحّة القاعدة عدٌّ حيّ: توزيعُ الحال ومقياسا المتجه', async () => {
   // رقمٌ مكتوب في وثيقة يتقادم مع أوّل دفعة فيُقارَن به ويُظَنّ الاستيراد
   // ناقصاً. وهذا يُقرأ من القاعدة في كل فتحة، ويُقابَل ببيان `verify-legal`.
