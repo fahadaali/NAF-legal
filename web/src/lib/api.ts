@@ -547,6 +547,14 @@ export interface LegalLaw {
   /** لم يبدأ العمل به — مُقيَّماً بتاريخ اليوم. */
   law_pending?: number;
   law_effective_from?: string | null;
+  /** الأنظمة التي تخصّها الوثيقة غيرَ نظامها الأصل (`related_law_ids`). */
+  related_law_ids?: string[] | null;
+}
+
+/** نظامٌ بعنوانه — لسطر «يتعلق بـ». */
+export interface LegalLawRef {
+  law_id: string;
+  law_title: string | null;
 }
 
 /** مادةٌ كما تُعرض — `text` وحده، ولا أثر لـ`embed_text`. */
@@ -1266,7 +1274,7 @@ export const api = {
     return req<{ results: LegalArticle[]; count: number }>(`/legal/article?${p.toString()}`);
   },
   legalLaw: (lawId: string) =>
-    req<{ law: LegalLaw; regulations: LegalLaw[]; decisions?: LegalLaw[] }>(`/legal/laws/${encodeURIComponent(lawId)}`),
+    req<{ law: LegalLaw; regulations: LegalLaw[]; decisions?: LegalLaw[]; related?: LegalLaw[]; relatedLaws?: LegalLawRef[] }>(`/legal/laws/${encodeURIComponent(lawId)}`),
   legalLawArticles: (lawId: string, offset = 0, limit = 25) =>
     req<{ articles: LegalArticle[]; total: number }>(
       `/legal/laws/${encodeURIComponent(lawId)}/articles?offset=${offset}&limit=${limit}`

@@ -438,7 +438,7 @@ export function readTools(env: Env): McpTool[] {
       async run(args) {
         const lawId = argString(args, 'law_id', 200);
         if (!lawId) return refuse('law_id مطلوب.');
-        const { law, regulations, decisions } = await getLawWithRegulations(env, lawId);
+        const { law, regulations, decisions, related, relatedLaws } = await getLawWithRegulations(env, lawId);
         if (!law) return refuse('النظام غير موجود.');
         const [books, st] = await Promise.all([listLawBooks(env, lawId), lawArticleStats(env, lawId)]);
         const parts = [formatLaw(law)];
@@ -460,6 +460,10 @@ export function readTools(env: Env): McpTool[] {
         parts.push(books.length ? `الأبواب:\n${books.map((b) => `- ${b}`).join('\n')}` : 'لا أبواب مسجّلة.');
         parts.push(regulations.length ? `اللوائح والتنظيمات التابعة:\n${regulations.map(formatLaw).join('\n')}` : 'لا لوائح تابعة.');
         if (decisions.length) parts.push(`القرارات الوزارية والتعاميم التابعة:\n${decisions.map(formatLaw).join('\n')}`);
+        // related_law_ids (§3-13): وثيقةٌ تخصّ أنظمةً عدة ولا تتبع أيّاً منها.
+        if (related.length) parts.push(`وثائق ذات صلة (تخصّ هذا النظام ولا تتبعه):\n${related.map(formatLaw).join('\n')}`);
+        if (relatedLaws.length)
+          parts.push(`يتعلق بـ:\n${relatedLaws.map((r) => `- ${r.law_title ?? r.law_id} (law_id: ${r.law_id})`).join('\n')}`);
         return ok(parts.join('\n\n'));
       },
     },

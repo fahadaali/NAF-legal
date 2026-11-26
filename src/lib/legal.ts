@@ -5221,6 +5221,32 @@ export interface LawSummary {
   chunks: number;
   effective: number;
   repealed: number;
+  /**
+   * الأنظمة التي تخصّها الوثيقة غيرَ نظامها الأصل (`related_law_ids` في ملف
+   * الدفعة، §3-13) — قواعد عمل لجنةٍ تفصل في منازعات أنظمة عدة. محفوظٌ في
+   * `meta_json` كما ورد، ويُقرأ هنا مصفوفةً أو `null`. لا يجعل الوثيقة لائحةً
+   * لأيٍّ منها: يُعرض «يتعلق بـ» في صفحتها، و«وثائق ذات صلة» في صفحة كلٍّ منها.
+   */
+  related_law_ids?: string[] | null;
+}
+
+/** نظامٌ بعنوانه — لسطر «يتعلق بـ». */
+export interface LawRef {
+  law_id: string;
+  law_title: string | null;
+}
+
+/** `related_law_ids` من `meta_json` مجمَّعاً: نصُّ مصفوفةٍ أو لا شيء. */
+function parseRelatedIds(raw: unknown): string[] | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    if (!Array.isArray(v)) return null;
+    const ids = v.filter((x): x is string => typeof x === 'string' && x.length > 0);
+    return ids.length ? ids : null;
+  } catch {
+    return null;
+  }
 }
 
 /** أعمدةُ بطاقة النظام مجمَّعةً من موادّه — واحدةٌ لقائمة الأنظمة ولبطاقة نظامٍ بعينه. */
@@ -5245,7 +5271,8 @@ const LAW_SUMMARY_SELECT = `SELECT c.law_id AS law_id,
             MAX(c.source_url) AS source_url,
             COUNT(*) AS chunks,
             SUM(CASE WHEN ${EFFECTIVE_SQL} THEN 1 ELSE 0 END) AS effective,
-            SUM(CASE WHEN ${REPEALED_SQL} THEN 1 ELSE 0 END) AS repealed
+            SUM(CASE WHEN ${REPEALED_SQL} THEN 1 ELSE 0 END) AS repealed,
+            MAX(json_extract(c.meta_json, '$.related_law_ids')) AS related_law_ids
      FROM legal_chunks c`;
 
 /**
@@ -5260,8 +5287,8 @@ export async function listLaws(env: Env): Promise<LawSummary[]> {
      WHERE c.law_id IS NOT NULL
      GROUP BY c.law_id
      ORDER BY law_title`
-  ).all<LawSummary>();
-  return rows.results ?? [];
+  ).all<LawSummary & { related_law_ids: unknown }>();
+  return (rows.results ?? []).map((l) => ({ ...l, related_law_ids: parseRelatedIds(l.related_law_ids) }));
 }
 
 /**
@@ -5399,7 +5426,15 @@ export async function listLawBooks(env: Env, lawId: string): Promise<string[]> {
 export async function getLawWithRegulations(
   env: Env,
   lawId: string
-): Promise<{ law: LawSummary | null; regulations: LawSummary[]; decisions: LawSummary[] }> {
+): Promise<{
+  law: LawSummary | null;
+  regulations: LawSummary[];
+  decisions: LawSummary[];
+  /** «وثائق ذات صلة»: وثائق تخصّ هذا النظام بـ`related_law_ids` ولا تتبعه. */
+  related: LawSummary[];
+  /** «يتعلق بـ»: الأنظمة التي تخصّها هذه الوثيقة نفسها. */
+  relatedLaws: LawRef[];
+}> {
   /* النظامُ ولوائحُه وحدها — لا القاعدة كلُّها. كان يُجمِّع كلَّ نظامٍ في القاعدة
      ليختار منها واحداً، فكان فتحُ نظامٍ أو لائحةٍ مسحاً للقاعدة القانونية كلِّها.
      والحكم على النتيجة كما كان حرفاً بحرف (`find` و`filter` على المجمَّع): كلُّ
@@ -5409,17 +5444,42 @@ export async function getLawWithRegulations(
   const rows = await env.DB.prepare(
     `${LAW_SUMMARY_SELECT}
      WHERE c.law_id = ? OR c.law_id IN (SELECT law_id FROM legal_chunks WHERE parent_law_id = ?)
+        -- «وثائق ذات صلة»: ما في مصفوفة related_law_ids فيه هذا النظام. المرشَّح
+        -- بـLIKE أولاً — قلّةٌ من الوثائق تحمل الحقل — ثم يُحسم بـjson_each.
+        OR c.law_id IN (SELECT DISTINCT r.law_id
+                          FROM legal_chunks r, json_each(r.meta_json, '$.related_law_ids') j
+                         WHERE r.meta_json LIKE '%related_law_ids%' AND j.value = ?)
      GROUP BY c.law_id
      ORDER BY law_title`
   )
-    .bind(lawId, lawId)
-    .all<LawSummary>();
-  const laws = rows.results ?? [];
+    .bind(lawId, lawId, lawId)
+    .all<LawSummary & { related_law_ids: unknown }>();
+  const laws: LawSummary[] = (rows.results ?? []).map((l) => ({ ...l, related_law_ids: parseRelatedIds(l.related_law_ids) }));
   const children = laws.filter((l) => l.parent_law_id === lawId);
+  const law = laws.find((l) => l.law_id === lawId) ?? null;
+  // الوثيقة التي تتبع النظام وتذكره في related_law_ids معاً تبقى تحت لوائحه — لا تُسرد مرتين.
+  const related = laws.filter(
+    (l) => l.law_id !== lawId && l.parent_law_id !== lawId && (l.related_law_ids ?? []).includes(lawId)
+  );
+  let relatedLaws: LawRef[] = [];
+  const ids = (law?.related_law_ids ?? []).filter((x) => x !== lawId && x !== law?.parent_law_id);
+  if (ids.length) {
+    const ph = ids.map(() => '?').join(',');
+    const t = await env.DB.prepare(
+      `SELECT law_id, MAX(law_title) AS law_title FROM legal_chunks WHERE law_id IN (${ph}) GROUP BY law_id`
+    )
+      .bind(...ids)
+      .all<LawRef>();
+    const byId = new Map((t.results ?? []).map((r) => [r.law_id, r]));
+    // بترتيب الملف، وما ليس في القاعدة يُسقط: رابطٌ إلى نظامٍ غائب لا يُفتح.
+    relatedLaws = ids.map((i) => byId.get(i)).filter((r): r is LawRef => !!r);
+  }
   return {
-    law: laws.find((l) => l.law_id === lawId) ?? null,
+    law,
     regulations: children.filter((l) => !isDecisionType(l.doc_type)),
     decisions: children.filter((l) => isDecisionType(l.doc_type)),
+    related,
+    relatedLaws,
   };
 }
 
