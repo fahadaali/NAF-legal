@@ -7,7 +7,7 @@
 // يضيع عند أوّل إعادة رفع للنظام — الاستبدال على `id` يكتب فوقها. فما
 // يُصحَّح يُصحَّح في الملف ثم يُعاد استيراده.
 import { Fragment, useEffect, useState } from 'react';
-import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw, type LegalStats } from '../lib/api';
+import { api, type LegalArticle, type LegalChunkVersion, type LegalLaw, type LegalLawRef, type LegalStats } from '../lib/api';
 import { formatDate, formatNumber } from '../lib/format';
 import { Icon, ICON_SM } from '../lib/icons';
 import { useScrollReset } from '../lib/scrollBox';
@@ -252,6 +252,8 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
   const [law, setLaw] = useState<LegalLaw | null>(null);
   const [regulations, setRegulations] = useState<LegalLaw[]>([]);
   const [decisions, setDecisions] = useState<LegalLaw[]>([]);
+  const [related, setRelated] = useState<LegalLaw[]>([]);
+  const [relatedLaws, setRelatedLaws] = useState<LegalLawRef[]>([]);
   const [parentTitle, setParentTitle] = useState<string | null>(null);
   const [changes, setChanges] = useState<LegalChunkVersion[]>([]);
   const [articles, setArticles] = useState<LegalArticle[]>([]);
@@ -266,6 +268,8 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
         setLaw(r.law);
         setRegulations(r.regulations);
         setDecisions(r.decisions ?? []);
+        setRelated(r.related ?? []);
+        setRelatedLaws(r.relatedLaws ?? []);
         setParentTitle(null);
         if (r.law?.parent_law_id) {
           api
@@ -361,11 +365,39 @@ function LawDetail({ lawId, onBack, onOpen }: { lawId: string; onBack: () => voi
         </div>
       ) : null}
 
+      {/* «يتعلق بـ»: وثيقةٌ تخصّ أنظمةً عدة (related_law_ids) ولا تتبع أيّاً
+          منها — قواعد عمل لجنةٍ تفصل في منازعاتها. جدولٌ كجدول «النظام الأصل»
+          لا سطرٌ مستقل: الصلة تُقرأ من الطرفين بالشكل نفسه. */}
+      {relatedLaws.length > 0 && (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>يتعلق بـ</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {relatedLaws.map((r) => (
+                <tr key={r.law_id}>
+                  <td><bdi>{r.law_title || r.law_id}</bdi></td>
+                  <td>
+                    <button className="btn-sm primary" onClick={() => onOpen(r.law_id)}>عرض</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* اللوائح والقرارات الوزارية جدولان لا جدول: القرار يتبع النظام ولا يكون
-          لائحته، وسردُه تحت «اللوائح» يجعل المحامي يقرؤه لائحةً تنفيذية. */}
+          لائحته، وسردُه تحت «اللوائح» يجعل المحامي يقرؤه لائحةً تنفيذية.
+          و«وثائق ذات صلة» ثالثٌ: ما يخصّ النظام ولا يتبعه (related_law_ids). */}
       {[
         { title: 'اللوائح', rows: regulations },
         { title: 'القرارات الوزارية', rows: decisions },
+        { title: 'وثائق ذات صلة', rows: related },
       ].map(({ title, rows }) => rows.length > 0 && (
         <div className="table-scroll" key={title}>
           <table className="data-table">
